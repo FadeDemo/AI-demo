@@ -1,0 +1,49 @@
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Agent-created temporary files
+.agent-tmp/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+
+# Node.js
+node_modules/
+.npm/
+coverage/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors and note applications
+.idea/
+.vscode/
+.obsidian/
+.joplin/
+*.swp
+*.swo
+*~
+
+# Logs and local caches
+*.log
+.cache/

@@ -1,0 +1,21 @@
+{
+  "name": "ai-demo-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI learning notes and runnable demo projects",
+  "scripts": {
+    "format": "npm run format:markdown",
+    "format:markdown": "prettier --write \"**/*.md\"",
+    "format:check": "npm run format:markdown:check",
+    "format:markdown:check": "prettier --check \"**/*.md\"",
+    "lint": "npm run lint:markdown",
+    "lint:markdown": "markdownlint-cli2"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "0.23.1",
+    "prettier": "3.9.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

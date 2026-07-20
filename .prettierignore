@@ -1,0 +1,12 @@
+.git/
+.agent-tmp/
+.cache/
+.idea/
+.joplin/
+.obsidian/
+.vscode/
+node_modules/
+projects/**/.venv/
+projects/**/build/
+projects/**/dist/
+projects/**/node_modules/
