@@ -4,7 +4,7 @@ type: roadmap
 area: ai
 status: active
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-07-21
 tags:
   - ai
   - rag
@@ -31,7 +31,7 @@ tags:
 
 ### 开始 RAG 前必须具备
 
-- Python 基础：函数、类、异常、文件处理、虚拟环境、包管理。
+- Python 基础：函数、类、异常、[文件处理](python/file-handling.md)、[虚拟环境](python/virtual-environments.md)、[包管理](python/package-management.md)。
 - 工程基础：Git、命令行、日志、环境变量、基础测试。
 - Web 基础：HTTP、REST API、JSON、同步与异步的基本区别。
 - LLM 使用基础：消息角色、Prompt、Token、上下文窗口、温度、结构化输出。
