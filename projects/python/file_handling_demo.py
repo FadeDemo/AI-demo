@@ -1,4 +1,4 @@
-"""Run every file-reading example against the repository sample data."""
+"""Run the main file-reading workflows against the sample data."""
 
 from pathlib import Path
 

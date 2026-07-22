@@ -37,7 +37,9 @@ coverage/
 
 # Editors and note applications
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
 .obsidian/
 .joplin/
 *.swp

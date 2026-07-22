@@ -17,14 +17,14 @@ tags:
 
 ## 配套示例与测试数据
 
-本文中所有 `data/...` 路径都对应仓库内的 [Python 课程示例项目](../../projects/python/README.md)。先从仓库根目录进入项目，后续代码块即可使用相同的相对路径：
+本文示例中的 `data/...` 都是相对于 [Python 课程示例项目](../../projects/python/README.md) 根目录的路径。先从仓库根目录进入该项目，后续代码块即可直接使用这些相对路径：
 
 ```shell
 cd projects/python
-uv run python demo.py
+uv run python file_handling_demo.py
 ```
 
-如果没有安装 `uv`，也可以运行 `python3 demo.py`。项目只使用 Python 标准库，包含 Markdown、TXT、JSON、JSON Lines 和 CSV 测试数据。可以用下面的命令验证读取结果和异常处理：
+如果没有安装 `uv`，也可以运行 `python3 file_handling_demo.py`。示例程序只使用 Python 标准库，项目包含 Markdown、TXT、JSON、JSON Lines 和 CSV 测试数据。下面的命令会运行配套单元测试，既检查各类数据的读取结果，也验证无效 JSON Lines 能否报告具体的出错行：
 
 ```shell
 uv run python -m unittest discover -s tests -v
@@ -45,7 +45,9 @@ print(document_path.suffix)  # .md
 print(document_path.exists())  # True
 ```
 
-相对路径通常相对于程序启动时的工作目录，而不是当前源码文件所在目录。遇到“文件明明存在却找不到”时，可以先检查：
+相对路径既不是相对于 Python 解释器所在目录，也不会自动相对于源码文件所在目录。操作系统会根据 Python 进程的当前工作目录解析相对路径，这个目录通常是执行命令时终端所在的位置，也可以由编辑器或启动配置指定。例如，在 `projects/python` 中运行 `.venv/bin/python examples/file_handling/01_paths.py` 时，解释器位于 `.venv/bin/`，源码位于 `examples/file_handling/`，但 `Path("data/knowledge")` 仍然从工作目录 `projects/python` 开始查找。
+
+遇到“文件明明存在却找不到”时，可以打印当前工作目录和目标文件解析后的完整路径，确认程序实际会到哪里查找文件：
 
 ```python
 from pathlib import Path
@@ -53,6 +55,8 @@ from pathlib import Path
 print(Path.cwd())
 print(Path("data/knowledge").resolve())
 ```
+
+如果解析后的路径没有指向 `projects/python/data/knowledge`，应先进入 `projects/python` 再运行示例，或者根据实际工作目录调整传入的相对路径。
 
 不要依赖某台电脑上的绝对路径。项目内的输入目录应通过相对路径、配置项或命令行参数指定。
 
@@ -67,12 +71,12 @@ path = Path("data/knowledge/guide.md")
 content = path.read_text(encoding="utf-8")
 ```
 
-写入文本时应明确编码：
+写入文本时应明确编码。下面的示例将结果写入仓库约定的临时目录 `.agent-tmp/`，避免运行示例后产生需要提交的数据变更：
 
 ```python
 from pathlib import Path
 
-output_path = Path("data/output/cleaned.txt")
+output_path = Path("../../.agent-tmp/python-file-handling/cleaned.txt")
 output_path.parent.mkdir(parents=True, exist_ok=True)
 output_path.write_text("清洗后的内容\n", encoding="utf-8")
 ```
@@ -112,14 +116,14 @@ config = read_json(Path("data/config.json"))
 print(config["language"])  # zh-CN
 ```
 
-写入时使用 `ensure_ascii=False` 保留可读的中文，使用 `indent` 便于人工检查：
+写入时使用 `ensure_ascii=False` 保留可读的中文，使用 `indent` 便于人工检查。输出仍放在仓库约定的 `.agent-tmp/` 中：
 
 ```python
 import json
 from pathlib import Path
 
 records = [{"title": "向量检索", "status": "learning"}]
-path = Path("data/output/records.json")
+path = Path("../../.agent-tmp/python-file-handling/records.json")
 path.parent.mkdir(parents=True, exist_ok=True)
 
 with path.open("w", encoding="utf-8") as file:
@@ -160,7 +164,7 @@ print(rows[0]["title"])  # 路径基础
 print(len(rows))  # 3
 ```
 
-当任务涉及缺失值、类型转换、筛选、聚合或大型表格分析时，再考虑在项目依赖中加入 pandas。当前配套示例只使用标准库，避免读者在学习文件 API 前先处理第三方依赖安装。
+当任务涉及缺失值、类型转换、筛选、聚合或大型表格分析时，再考虑在项目运行时依赖中加入 pandas。当前配套示例程序只使用标准库，避免读者在学习文件 API 前先处理第三方运行时依赖。
 
 CSV 可能使用逗号之外的分隔符，也可能采用 UTF-8 之外的编码。不能正确读取时，应先确认数据来源的格式约定，不要盲目忽略解码错误。
 

@@ -29,12 +29,12 @@ tags:
 
 ## 可运行示例
 
-[Python 课程示例项目](../../projects/python/README.md) 统一保存本专题的课程代码、测试和小型数据文件。当前先实现文件处理示例，后续主题继续在同一项目内扩展：
+[Python 课程示例项目](../../projects/python/README.md) 提供与本专题配套的代码、测试和示例数据。下面以文件处理示例说明项目的运行和测试方式：
 
 ```shell
 cd projects/python
 uv sync
-uv run python demo.py
+uv run python file_handling_demo.py
 uv run python -m unittest discover -s tests -v
 ```
 

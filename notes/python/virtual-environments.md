@@ -15,7 +15,7 @@ tags:
 
 虚拟环境为每个项目提供独立的 Python 包安装位置，避免不同项目对同一个包版本的要求互相冲突。这种做法通常称为“隔离依赖”。虚拟环境不等同于虚拟机或容器，也不会把数据库、环境变量和操作系统工具一起隔开。
 
-本文可以使用仓库内的 [Python 课程示例项目](../../projects/python/README.md) 实际验证。该项目目前没有第三方依赖，因此适合先观察解释器和环境的变化，再学习安装包。
+本文可以使用仓库内的 [Python 课程示例项目](../../projects/python/README.md) 实际验证。示例程序目前没有第三方运行时依赖；执行 `uv sync` 时会安装 Ruff 开发工具，因此还可以观察开发依赖如何进入项目环境。
 
 ## 1. 为什么需要虚拟环境
 
@@ -70,7 +70,7 @@ source .venv/bin/activate
 ```shell
 python -c "import sys; print(sys.executable)"
 python -m pip --version
-python demo.py
+python file_handling_demo.py
 python -m unittest discover -s tests -v
 ```
 
@@ -90,7 +90,7 @@ deactivate
 cd projects/python
 uv sync
 uv run python --version
-uv run python demo.py
+uv run python file_handling_demo.py
 uv run python -m unittest discover -s tests -v
 ```
 
@@ -160,7 +160,7 @@ python -m pip --version
 
 1. 在 `projects/python` 中创建 `.venv`。
 2. 分别记录系统 Python 和虚拟环境中 `sys.executable` 的输出。
-3. 在虚拟环境中运行 `demo.py` 和自动化测试。
+3. 在虚拟环境中运行 `file_handling_demo.py` 和自动化测试。
 4. 退出环境，使用 `uv sync` 根据项目文件同步环境。
 5. 不激活环境，使用 `uv run` 再次运行示例和测试。
 6. 配置编辑器使用项目环境中的解释器并运行测试。

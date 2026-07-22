@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: 当前文件（课程环境）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}/projects/python",
+      "python": "${workspaceFolder}/projects/python/.venv/bin/python",
+      "justMyCode": true
+    }
+  ]
+}

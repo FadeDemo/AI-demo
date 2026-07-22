@@ -15,7 +15,7 @@ tags:
 
 包管理解决的是“项目需要哪些第三方包、允许使用哪些版本、实际安装了哪些版本，以及其他人如何重新搭建环境”。它与虚拟环境配合使用，但两者不是同一个概念。
 
-仓库内的 [Python 课程示例项目](../../projects/python/README.md) 提供了真实的 `pyproject.toml` 和 `uv.lock`。它目前只使用标准库，因此 `dependencies = []`；这也是一种有效的依赖声明，而不是缺少配置。
+仓库内的 [Python 课程示例项目](../../projects/python/README.md) 提供了真实的 `pyproject.toml` 和 `uv.lock`。示例程序目前只使用标准库，因此运行时的 `dependencies = []`；Ruff 则记录在开发依赖组中，用于格式化和 lint。这是对运行时依赖与开发依赖的明确区分，而不是缺少配置。
 
 ## 1. 代码里的模块、包与安装名称
 
@@ -67,11 +67,11 @@ dev = [
 ```shell
 cd projects/python
 uv sync
-uv run python demo.py
+uv run python file_handling_demo.py
 uv run python -m unittest discover -s tests -v
 ```
 
-这组命令不需要下载第三方 Python 包。以后项目真正导入第三方包时，再使用 `uv add` 把它写入 `dependencies` 或开发依赖组。
+这组命令会同步开发工具 Ruff，但示例程序本身没有第三方运行时依赖。以后项目代码真正导入第三方包时，再使用 `uv add` 把它写入 `dependencies`；仅供开发使用的工具则写入开发依赖组。
 
 ## 4. 使用 uv 添加和移除依赖
 
@@ -102,7 +102,7 @@ uv sync
 执行项目命令：
 
 ```shell
-uv run python demo.py
+uv run python file_handling_demo.py
 uv run python -m unittest discover -s tests -v
 ```
 
@@ -178,7 +178,7 @@ LLM_API_KEY=replace-with-your-key
 
 ## 10. 练习与验收
 
-先基于配套示例完成一次不依赖第三方包的可复现运行：
+先基于配套示例完成一次不引入第三方运行时包的可复现运行：
 
 1. 查看 `projects/python/pyproject.toml` 中的 Python 版本要求和空依赖列表。
 2. 执行 `uv sync`，观察生成的项目环境。

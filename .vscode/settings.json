@@ -1,0 +1,21 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/projects/python/.venv/bin/python",
+  "python-envs.workspaceSearchPaths": ["./projects/python/.venv"],
+  "python-envs.pythonProjects": [
+    {
+      "path": "projects/python",
+      "envManager": "ms-python.python:venv",
+      "packageManager": "ms-python.python:pip"
+    }
+  ],
+  "python.terminal.executeInFileDir": false,
+  "terminal.integrated.cwd": "${workspaceFolder}/projects/python",
+  "python.analysis.extraPaths": ["${workspaceFolder}/projects/python"],
+  "pylint.interpreter": ["${workspaceFolder}/projects/python/.venv/bin/python"],
+  "autopep8.interpreter": ["${workspaceFolder}/projects/python/.venv/bin/python"],
+  "isort.interpreter": ["${workspaceFolder}/projects/python/.venv/bin/python"],
+  "python.testing.cwd": "${workspaceFolder}/projects/python",
+  "python.testing.unittestEnabled": true,
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestArgs": ["-v", "-s", "tests", "-p", "test_*.py"]
+}
