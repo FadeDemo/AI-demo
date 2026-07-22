@@ -81,6 +81,8 @@ output_path.parent.mkdir(parents=True, exist_ok=True)
 output_path.write_text("清洗后的内容\n", encoding="utf-8")
 ```
 
+`output_path.parent` 表示目标文件所在的父目录。`mkdir()` 用来创建该目录；`parents=True` 会同时创建缺失的上级目录，`exist_ok=True` 则允许目录已经存在。`write_text()` 可以创建或覆盖文件，但不会自动创建父目录，因此写入前需要先确保父目录存在，否则会触发 `FileNotFoundError`。
+
 `read_text()` 适合能够一次放入内存的小型文本。处理很大的日志或语料文件时，应逐行读取：
 
 ```python

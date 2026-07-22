@@ -4,12 +4,16 @@
   "private": true,
   "description": "AI learning notes and runnable demo projects",
   "scripts": {
-    "format": "npm run format:markdown",
+    "format": "npm run format:markdown && npm run format:python",
     "format:markdown": "prettier --write \"**/*.md\"",
-    "format:check": "npm run format:markdown:check",
+    "format:python": "cd projects/python && uv run ruff format .",
+    "format:check": "npm run format:markdown:check && npm run format:python:check",
     "format:markdown:check": "prettier --check \"**/*.md\"",
-    "lint": "npm run lint:markdown",
-    "lint:markdown": "markdownlint-cli2"
+    "format:python:check": "cd projects/python && uv run ruff format --check .",
+    "lint": "npm run lint:markdown && npm run lint:python",
+    "lint:markdown": "markdownlint-cli2",
+    "lint:python": "cd projects/python && uv run ruff check .",
+    "lint:python:fix": "cd projects/python && uv run ruff check --fix ."
   },
   "devDependencies": {
     "markdownlint-cli2": "0.23.1",
