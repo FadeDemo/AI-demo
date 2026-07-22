@@ -4,7 +4,7 @@ type: concept
 area: python
 status: learning
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-07-22
 tags:
   - python
   - dependencies
@@ -14,6 +14,8 @@ tags:
 # Python 包管理
 
 包管理解决的是“项目需要哪些第三方包、允许使用哪些版本、实际安装了哪些版本，以及其他人如何重新搭建环境”。它与虚拟环境配合使用，但两者不是同一个概念。
+
+仓库内的 [Python 课程示例项目](../../projects/python/README.md) 提供了真实的 `pyproject.toml` 和 `uv.lock`。它目前只使用标准库，因此 `dependencies = []`；这也是一种有效的依赖声明，而不是缺少配置。
 
 ## 1. 代码里的模块、包与安装名称
 
@@ -60,6 +62,17 @@ dev = [
 
 运行时依赖是程序正常工作所需的包；开发依赖只用于测试、Lint、格式化或构建。不要把所有工具都混进运行时依赖。
 
+可以先查看示例项目的最小配置，再运行它：
+
+```shell
+cd projects/python
+uv sync
+uv run python demo.py
+uv run python -m unittest discover -s tests -v
+```
+
+这组命令不需要下载第三方 Python 包。以后项目真正导入第三方包时，再使用 `uv add` 把它写入 `dependencies` 或开发依赖组。
+
 ## 4. 使用 uv 添加和移除依赖
 
 添加运行时依赖：
@@ -89,11 +102,11 @@ uv sync
 执行项目命令：
 
 ```shell
-uv run python src/main.py
-uv run pytest
+uv run python demo.py
+uv run python -m unittest discover -s tests -v
 ```
 
-这些命令会更新项目配置，或根据配置安装正确版本的包，减少“已经安装但忘记记录”的情况。
+以上两条运行命令对应配套示例项目。`uv add`、`uv remove` 和 `uv sync` 会更新项目配置或环境，`uv run` 则根据配置在正确环境中执行命令，减少“已经安装但忘记记录”的情况。
 
 ## 5. 版本约束与锁文件
 
@@ -165,7 +178,15 @@ LLM_API_KEY=replace-with-your-key
 
 ## 10. 练习与验收
 
-为一个文档导入项目完成依赖管理：
+先基于配套示例完成一次不依赖第三方包的可复现运行：
+
+1. 查看 `projects/python/pyproject.toml` 中的 Python 版本要求和空依赖列表。
+2. 执行 `uv sync`，观察生成的项目环境。
+3. 使用 `uv run` 运行程序和标准库测试。
+4. 查看 `uv.lock` 如何记录项目自身信息。
+5. 删除本地 `.venv` 后再次执行 `uv sync`，确认项目仍能运行。
+
+然后在单独的练习分支中加入第三方依赖：
 
 1. 使用 `uv` 初始化项目。
 2. 添加 pandas 作为运行时依赖，添加 pytest 和 Ruff 作为开发依赖。

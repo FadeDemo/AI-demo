@@ -4,7 +4,7 @@ type: concept
 area: python
 status: learning
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-07-22
 tags:
   - python
   - files
@@ -14,6 +14,21 @@ tags:
 # Python 文件处理
 
 文件处理是把资料读入 RAG 系统的第一步。本阶段的目标是把本地文件可靠地转换成格式统一的 Python 对象，而不是一开始就掌握复杂的 PDF 或 Markdown 解析工具。
+
+## 配套示例与测试数据
+
+本文中所有 `data/...` 路径都对应仓库内的 [Python 课程示例项目](../../projects/python/README.md)。先从仓库根目录进入项目，后续代码块即可使用相同的相对路径：
+
+```shell
+cd projects/python
+uv run python demo.py
+```
+
+如果没有安装 `uv`，也可以运行 `python3 demo.py`。项目只使用 Python 标准库，包含 Markdown、TXT、JSON、JSON Lines 和 CSV 测试数据。可以用下面的命令验证读取结果和异常处理：
+
+```shell
+uv run python -m unittest discover -s tests -v
+```
 
 ## 1. 路径与文件系统
 
@@ -27,7 +42,7 @@ document_path = knowledge_dir / "guide.md"
 
 print(document_path.name)    # guide.md
 print(document_path.suffix)  # .md
-print(document_path.exists())
+print(document_path.exists())  # True
 ```
 
 相对路径通常相对于程序启动时的工作目录，而不是当前源码文件所在目录。遇到“文件明明存在却找不到”时，可以先检查：
@@ -91,6 +106,10 @@ from typing import Any
 def read_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as file:
         return json.load(file)
+
+
+config = read_json(Path("data/config.json"))
+print(config["language"])  # zh-CN
 ```
 
 写入时使用 `ensure_ascii=False` 保留可读的中文，使用 `indent` 便于人工检查：
@@ -122,6 +141,8 @@ with path.open("r", encoding="utf-8") as file:
             print(line_number, record)
 ```
 
+示例数据共有 3 行有效记录，因此输出的行号是 1、2、3。真实数据可能有空行，所以解析前先使用 `line.strip()` 检查。
+
 ## 4. CSV 与表格数据
 
 小型 CSV 可以使用标准库 `csv`，不需要为了简单读取立即引入 pandas：
@@ -134,16 +155,12 @@ path = Path("data/articles.csv")
 
 with path.open("r", encoding="utf-8", newline="") as file:
     rows = list(csv.DictReader(file))
+
+print(rows[0]["title"])  # 路径基础
+print(len(rows))  # 3
 ```
 
-当任务涉及缺失值、类型转换、筛选、聚合或大型表格分析时，再使用 pandas：
-
-```python
-import pandas as pd
-
-dataframe = pd.read_csv("data/articles.csv")
-dataframe = dataframe.dropna(subset=["content"])
-```
+当任务涉及缺失值、类型转换、筛选、聚合或大型表格分析时，再考虑在项目依赖中加入 pandas。当前配套示例只使用标准库，避免读者在学习文件 API 前先处理第三方依赖安装。
 
 CSV 可能使用逗号之外的分隔符，也可能采用 UTF-8 之外的编码。不能正确读取时，应先确认数据来源的格式约定，不要盲目忽略解码错误。
 
@@ -193,6 +210,12 @@ def read_text_document(path: Path, root: Path) -> Document:
             "file_type": path.suffix.lower(),
         },
     )
+
+
+root = Path("data/knowledge")
+document = read_text_document(root / "guide.md", root)
+print(document.source)  # guide.md
+print(document.metadata["file_type"])  # .md
 ```
 
 `source` 应尽量保存稳定、可展示的相对路径。`metadata` 用来保存文件名、文件类型等附加信息。之后生成答案引用时，可以根据这些信息告诉用户内容来自哪个文件。

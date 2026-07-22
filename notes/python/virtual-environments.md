@@ -4,7 +4,7 @@ type: concept
 area: python
 status: learning
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-07-22
 tags:
   - python
   - virtual-environment
@@ -14,6 +14,8 @@ tags:
 # Python 虚拟环境
 
 虚拟环境为每个项目提供独立的 Python 包安装位置，避免不同项目对同一个包版本的要求互相冲突。这种做法通常称为“隔离依赖”。虚拟环境不等同于虚拟机或容器，也不会把数据库、环境变量和操作系统工具一起隔开。
+
+本文可以使用仓库内的 [Python 课程示例项目](../../projects/python/README.md) 实际验证。该项目目前没有第三方依赖，因此适合先观察解释器和环境的变化，再学习安装包。
 
 ## 1. 为什么需要虚拟环境
 
@@ -44,9 +46,10 @@ project-b → library 2.x
 
 ## 3. 使用标准库 venv
 
-在项目根目录创建名为 `.venv` 的环境：
+从仓库根目录进入示例项目，并创建名为 `.venv` 的环境：
 
 ```shell
+cd projects/python
 python3 -m venv .venv
 ```
 
@@ -67,6 +70,8 @@ source .venv/bin/activate
 ```shell
 python -c "import sys; print(sys.executable)"
 python -m pip --version
+python demo.py
+python -m unittest discover -s tests -v
 ```
 
 结束工作时退出环境：
@@ -82,11 +87,14 @@ deactivate
 本仓库约定未来的 Python 项目使用 `uv` 记录、安装和运行第三方包。已有 `pyproject.toml` 的项目通常执行：
 
 ```shell
+cd projects/python
 uv sync
 uv run python --version
+uv run python demo.py
+uv run python -m unittest discover -s tests -v
 ```
 
-`uv sync` 会根据 `pyproject.toml` 和锁文件安装正确版本的包，`uv run` 会在项目环境中执行命令，无需手动激活。
+`uv sync` 会根据 `pyproject.toml` 和锁文件安装正确版本的包，`uv run` 会在项目环境中执行命令，无需手动激活。示例项目提交了 `uv.lock`，所以这组命令也用于验证项目环境可以被重新创建。
 
 创建新项目时可以使用：
 
@@ -150,11 +158,12 @@ python -m pip --version
 
 ## 7. 练习与验收
 
-1. 创建一个空项目和 `.venv`。
-2. 在环境中安装一个第三方包并成功导入。
-3. 证明系统 Python 和虚拟环境中的包列表不同。
-4. 删除环境后，根据项目依赖文件重新创建它。
-5. 配置编辑器使用重建后的环境并运行测试。
+1. 在 `projects/python` 中创建 `.venv`。
+2. 分别记录系统 Python 和虚拟环境中 `sys.executable` 的输出。
+3. 在虚拟环境中运行 `demo.py` 和自动化测试。
+4. 退出环境，使用 `uv sync` 根据项目文件同步环境。
+5. 不激活环境，使用 `uv run` 再次运行示例和测试。
+6. 配置编辑器使用项目环境中的解释器并运行测试。
 
 你应该能够解释：
 

@@ -1,0 +1,6 @@
+[project]
+name = "python-course-examples"
+version = "0.1.0"
+description = "Runnable examples for the Python course notes"
+requires-python = ">=3.11"
+dependencies = []

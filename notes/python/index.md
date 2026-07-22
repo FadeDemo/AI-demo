@@ -4,7 +4,7 @@ type: index
 area: python
 status: learning
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-07-22
 tags:
   - python
   - engineering
@@ -25,6 +25,17 @@ tags:
 
 ```text
 创建独立环境 → 安装第三方包并记录版本 → 读取和处理知识库文件
+```
+
+## 可运行示例
+
+[Python 课程示例项目](../../projects/python/README.md) 统一保存本专题的课程代码、测试和小型数据文件。当前先实现文件处理示例，后续主题继续在同一项目内扩展：
+
+```shell
+cd projects/python
+uv sync
+uv run python demo.py
+uv run python -m unittest discover -s tests -v
 ```
 
 ## 推荐练习项目
