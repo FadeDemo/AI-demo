@@ -4,7 +4,7 @@ type: concept
 area: python
 status: learning
 created: 2026-07-21
-updated: 2026-07-22
+updated: 2026-07-23
 tags:
   - python
   - files
@@ -166,11 +166,35 @@ print(rows[0]["title"])  # 路径基础
 print(len(rows))  # 3
 ```
 
+这里的 `newline=""` 并不是让 CSV 文件“不换行”。空字符串是 `open()` 的一个特殊配置值，表示文件对象不要自行转换换行符，而是把换行处理交给 `csv` 模块。CSV 的字段本身可能包含被引号包围的换行，CSV 记录也有自己的行结束规则；如果文本文件层和 `csv` 模块同时处理换行，在 Windows 等使用 `\r\n` 的系统上写文件时可能出现多余的空行，读取带换行字段时也可能得到错误结果。因此，使用 `csv.reader`、`csv.DictReader` 或相应的写入器时，读写文件通常都应显式设置 `newline=""`。
+
 当任务涉及缺失值、类型转换、筛选、聚合或大型表格分析时，再考虑在项目运行时依赖中加入 pandas。当前配套示例程序只使用标准库，避免读者在学习文件 API 前先处理第三方运行时依赖。
 
 CSV 可能使用逗号之外的分隔符，也可能采用 UTF-8 之外的编码。不能正确读取时，应先确认数据来源的格式约定，不要盲目忽略解码错误。
 
 ## 5. 遍历目录与筛选文件
+
+### 5.1 前置知识：生成器表达式
+
+生成器表达式用于按照规则逐个产生值，基本形式如下：
+
+```python
+(表达式 for 变量 in 可迭代对象 if 条件)
+```
+
+例如，下面的生成器会从 `numbers` 中筛选偶数，再逐个产生它们的平方：
+
+```python
+numbers = [1, 2, 3, 4]
+even_squares = (number**2 for number in numbers if number % 2 == 0)
+
+print(next(even_squares))  # 4
+print(next(even_squares))  # 16
+```
+
+生成器表达式和列表推导式的结构很像，但外层使用圆括号而不是方括号。列表推导式会立即计算全部元素并创建列表；生成器表达式则采用惰性求值，只在遍历或调用 `next()` 时计算下一个值，因此适合处理大量数据。生成器通常只能从头到尾消费一次，需要再次使用时应重新创建。
+
+### 5.2 遍历、筛选与排序
 
 `Path.rglob()` 可以查找当前目录及其所有子目录中的文件，这种查找方式也叫递归查找：
 
@@ -187,11 +211,32 @@ paths = sorted(
 )
 ```
 
+`sorted()` 接收一个可迭代对象并返回排好序的新列表。这里传入的不是“折叠表达式”，而是生成器表达式：`path` 是要逐个产生的值，`for` 负责遍历 `rglob()` 找到的路径，`if` 负责只保留符合条件的文件。因为它是函数调用中唯一的位置参数，生成器表达式不需要再套一层括号。上面的写法可以理解为：
+
+```python
+candidate_paths = (
+    path
+    for path in knowledge_dir.rglob("*")
+    if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES
+)
+paths = sorted(candidate_paths)
+```
+
+生成器会按需把路径交给 `sorted()`，不必先创建一个中间列表；但排序需要看到全部元素，所以 `sorted()` 最终仍会把结果收集到新的列表中。这里没有提供 `key` 参数，因此路径按照默认的路径顺序排列；如果希望忽略文件名大小写，可以写成 `sorted(candidate_paths, key=lambda path: path.name.lower())`。
+
 排序不是读取文件所必需的，但能让运行顺序稳定，便于测试和排查问题。实际项目还应决定是否跳过隐藏文件、缓存目录、符号链接和超大文件。
 
 ## 6. 转换为统一文档对象
 
 不同文件最终应转换成统一结构，方便后面的文本切块、将文本转换为向量（Embedding）和检索代码处理。可以先使用标准库的 `dataclass` 来定义这种文档对象：
+
+`@dataclass` 是一个类装饰器，适合定义主要用于保存数据的类。它会根据类中声明的字段自动生成 `__init__()`、`__repr__()` 和用于比较对象的 `__eq__()` 等方法，因此不需要手动编写重复的初始化代码。下面的 `Document` 可以直接通过 `Document(content=..., source=...)` 创建对象。
+
+`field()` 用于进一步配置某个数据字段。代码中的 `field(default_factory=dict)` 表示：调用 `Document()` 时如果没有传入 `metadata`，就为这个对象新建一个空字典。
+
+不能把它直接写成 `metadata: dict[str, Any] = {}`。类定义中的 `{}` 只在 Python 执行类定义时创建一次；如果把这个已经创建的可变对象作为默认值，多个实例就可能引用同一个字典，修改其中一个实例的内容也会影响其他实例。现代 Python 的 `dataclass` 会检查并拒绝这种可变默认值，定义类时就会抛出 `ValueError`，提示改用 `default_factory`。
+
+`default_factory=dict` 传入的是尚未调用的 `dict` 函数，而不是一个已经存在的字典。`dataclass` 每次创建 `Document` 实例时都会调用一次 `dict()`，因此每个实例都会得到各自独立的空字典。`list`、`dict` 和 `set` 等可变类型作为字段默认值时，通常都应使用相应的 `default_factory`。
 
 ```python
 from dataclasses import dataclass, field
@@ -264,6 +309,10 @@ def load_json_document(path: Path) -> object | None:
 
     return None
 ```
+
+`__name__` 是 Python 自动提供的模块名称变量。如果文件被其他代码导入，它的值通常是模块的导入名称，例如 `document_loader`；如果直接运行这个文件，它的值则是 `"__main__"`。因此，`logging.getLogger(__name__)` 会取得一个以当前模块命名的日志器。相同名称多次传给 `getLogger()` 时会得到同一个日志器，而不是每次创建互不相关的新对象。
+
+也可以直接调用 `logging.error(...)`，但这些模块级便捷函数使用的是根日志器，难以区分日志来自哪个模块。使用 `logger.error(...)` 可以保留模块名称，并允许应用分别配置不同模块的日志级别和处理方式。例如，格式中加入 `%(name)s` 后，日志可以显示为 `ERROR document_loader: 文件不存在`。通常由程序入口统一配置日志格式和输出位置，各模块只通过自己的 `logger` 记录消息；命名日志器默认会把消息继续传递给根日志器统一输出。
 
 在批量导入任务中，通常需要记录单个失败并继续处理其他文件，最后汇总成功数和失败数；如果关键配置文件读取失败，则更适合立即终止。
 
