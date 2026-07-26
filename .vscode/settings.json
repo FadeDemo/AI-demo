@@ -17,5 +17,7 @@
   "python.testing.cwd": "${workspaceFolder}/projects/python",
   "python.testing.unittestEnabled": true,
   "python.testing.pytestEnabled": false,
-  "python.testing.unittestArgs": ["-v", "-s", "tests", "-p", "test_*.py"]
+  "python.testing.unittestArgs": ["-v", "-s", "tests", "-p", "test_*.py"],
+  "pylint.cwd": "${workspaceFolder}/projects/python",
+  "python.useEnvironmentsExtension": true
 }

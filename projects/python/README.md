@@ -63,8 +63,13 @@ python/
 │   ├── config.json
 │   ├── documents.jsonl
 │   └── large-corpus.txt
+├── exercises/
+│   └── file_handling/
+│       └── load_documents.py   # 文件处理练习代码
 ├── tests/
-│   └── test_document_loader.py
+│   ├── __init__.py
+│   ├── test_document_loader.py
+│   └── test_file_handling_exercise.py
 ├── file_handling_demo.py       # 串联主要文件读取流程
 ├── document_loader.py          # 可复用的文件读取函数
 └── pyproject.toml              # Python 版本与项目配置

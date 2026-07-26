@@ -10,6 +10,21 @@
       "cwd": "${workspaceFolder}/projects/python",
       "python": "${workspaceFolder}/projects/python/.venv/bin/python",
       "justMyCode": true
+    },
+    {
+      "name": "Python: 调试测试（课程环境）",
+      "type": "debugpy",
+      "request": "launch",
+      "purpose": ["debug-test"],
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}/projects/python",
+      "python": "${workspaceFolder}/projects/python/.venv/bin/python",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/projects/python",
+        "PROJECT_ROOT_PATH": "${workspaceFolder}/projects/python"
+      },
+      "justMyCode": true
     }
   ]
 }
