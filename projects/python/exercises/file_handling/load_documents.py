@@ -10,31 +10,38 @@ SUPPORTED_SUFFIXES = {".txt", ".md", ".json"}
 
 
 def load_documents(root: Path) -> list[Document]:
-    documents = []
+    documents: list[Document] = []
     for path in root.rglob("*"):
-        if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES:
-            try:
-                if path.suffix.lower() == ".txt" or path.suffix.lower() == ".md":
-                    content = read_text(path)
-                else:
-                    content = json.dumps(read_json(path))
-            except FileNotFoundError:
-                logger.error("文件不存在: %s", path)
-            except UnicodeDecodeError:
-                logger.error("文件不是有效的 UTF-8 文本: %s", path)
-            except json.JSONDecodeError as error:
-                logger.error("JSON 格式错误: path=%s line=%s", path, error.lineno)
-            if content is not None and content.strip() != "":
-                documents.append(
-                    Document(
-                        content=content,
-                        source=path.relative_to(root).as_posix(),
-                        metadata={
-                            "file_name": path.name,
-                            "file_type": path.suffix.lower(),
-                            "size_bytes": path.stat().st_size,
-                        },
-                    )
+        try:
+            suffix = path.suffix.lower()
+            if not path.is_file() or suffix not in SUPPORTED_SUFFIXES:
+                continue
+
+            if suffix in {".txt", ".md"}:
+                content = read_text(path)
+            else:
+                content = json.dumps(read_json(path), ensure_ascii=False)
+
+            if not content.strip():
+                continue
+
+            documents.append(
+                Document(
+                    content=content,
+                    source=path.relative_to(root).as_posix(),
+                    metadata={
+                        "file_name": path.name,
+                        "file_type": suffix,
+                        "size_bytes": path.stat().st_size,
+                    },
                 )
-    sorted_documents = sorted(documents, key=lambda doc: doc.source)
-    return sorted_documents
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            logger.error(
+                "加载文件失败: path=%s error_type=%s",
+                path,
+                type(error).__name__,
+                exc_info=True,
+            )
+
+    return sorted(documents, key=lambda document: document.source)
