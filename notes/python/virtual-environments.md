@@ -2,9 +2,9 @@
 title: Python 虚拟环境
 type: concept
 area: python
-status: learning
+status: completed
 created: 2026-07-21
-updated: 2026-07-22
+updated: 2026-07-28
 tags:
   - python
   - virtual-environment
@@ -65,14 +65,21 @@ source .venv/bin/activate
 .venv\Scripts\Activate.ps1
 ```
 
-激活后检查当前解释器：
+激活后检查当前解释器并运行示例：
 
 ```shell
 python -c "import sys; print(sys.executable)"
-python -m pip --version
 python file_handling_demo.py
 python -m unittest discover -s tests -v
 ```
+
+如果 `.venv` 确实由前面的 `python3 -m venv .venv` 创建，通常还可以检查环境内的 pip：
+
+```shell
+python -m pip --version
+```
+
+uv 创建的虚拟环境默认不一定安装 pip；在 uv 项目中应优先使用 `uv sync`、`uv add` 和 `uv pip`，不能以 `python -m pip` 是否成功判断环境是否可用。
 
 结束工作时退出环境：
 
@@ -84,7 +91,7 @@ deactivate
 
 ## 4. 使用 uv 管理项目环境
 
-本仓库约定未来的 Python 项目使用 `uv` 记录、安装和运行第三方包。已有 `pyproject.toml` 的项目通常执行：
+本仓库约定未来的 Python 项目使用 `uv` 记录、安装和运行第三方包。以本仓库的 Python 课程示例项目为例，可以执行：
 
 ```shell
 cd projects/python
@@ -135,14 +142,26 @@ uv venv
 
 ### 安装成功但无法导入
 
-先检查安装包和运行代码是否使用同一个解释器：
+先检查运行代码使用的解释器：
 
 ```shell
 python -c "import sys; print(sys.executable)"
-python -m pip --version
 ```
 
-与直接运行 `pip` 相比，`python -m pip` 更明确地把 pip 绑定到当前 Python。
+如果依赖由 pip 管理，再检查与当前 Python 绑定的 pip：
+
+```shell
+python -m pip --version
+python -m pip list
+```
+
+如果项目由 uv 管理，则改用：
+
+```shell
+uv pip list
+```
+
+与直接运行 `pip` 相比，`python -m pip` 更明确地把 pip 绑定到当前 Python；但 uv 创建的环境可能没有安装 pip，此时出现 `No module named pip` 并不表示虚拟环境损坏。`uv pip list` 会检查当前激活的虚拟环境，或者项目目录及其父目录中的 `.venv`。
 
 ### 编辑器仍然标红
 

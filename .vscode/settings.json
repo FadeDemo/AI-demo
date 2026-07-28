@@ -1,5 +1,4 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/projects/python/.venv/bin/python",
   "python-envs.workspaceSearchPaths": ["./projects/python/.venv"],
   "python-envs.pythonProjects": [
     {
@@ -19,5 +18,6 @@
   "python.testing.pytestEnabled": false,
   "python.testing.unittestArgs": ["-v", "-s", "tests", "-p", "test_*.py"],
   "pylint.cwd": "${workspaceFolder}/projects/python",
-  "python.useEnvironmentsExtension": true
+  "python.useEnvironmentsExtension": true,
+  "python.terminal.activateEnvironment": true
 }

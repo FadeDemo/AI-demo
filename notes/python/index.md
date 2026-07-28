@@ -4,7 +4,7 @@ type: index
 area: python
 status: learning
 created: 2026-07-21
-updated: 2026-07-22
+updated: 2026-07-28
 tags:
   - python
   - engineering
@@ -26,6 +26,10 @@ tags:
 ```text
 创建独立环境 → 安装第三方包并记录版本 → 读取和处理知识库文件
 ```
+
+## 练习回答
+
+课程中的书面回答统一保存在[练习回答目录](answers/index.md)中，与概念讲解和可运行代码分开组织。
 
 ## 可运行示例
 

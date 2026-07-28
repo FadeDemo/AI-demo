@@ -2,9 +2,9 @@
 title: Python 文件处理
 type: concept
 area: python
-status: learning
+status: completed
 created: 2026-07-21
-updated: 2026-07-23
+updated: 2026-07-28
 tags:
   - python
   - files
