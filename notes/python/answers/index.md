@@ -2,9 +2,9 @@
 title: Python 练习回答
 type: index
 area: python
-status: learning
+status: completed
 created: 2026-07-28
-updated: 2026-07-28
+updated: 2026-08-01
 tags:
   - python
   - answers

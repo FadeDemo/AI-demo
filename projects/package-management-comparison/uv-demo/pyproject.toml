@@ -1,0 +1,22 @@
+[project]
+name = "uv-demo"
+version = "0.1.0"
+description = "Packaged application for comparing uv with pip workflows"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28,<1",
+]
+
+[project.scripts]
+uv-demo = "uv_demo:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.12,<1",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.22,<0.10.0"]
+build-backend = "uv_build"

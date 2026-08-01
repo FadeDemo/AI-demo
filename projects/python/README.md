@@ -1,8 +1,8 @@
 # Python 课程示例
 
-这个目录统一保存 [Python 工程基础课程](../../notes/python/index.md) 的可运行代码、测试和样本数据。目前已实现[文件处理](../../notes/python/file-handling.md)主题；示例程序仅使用 Python 标准库，项目使用 Ruff 开发依赖统一格式化和 lint。
+这个目录统一保存 [Python 工程基础课程](../../notes/python/index.md) 的可运行代码、测试和样本数据。目前已完成[文件处理](../../notes/python/file-handling.md)练习与自动化验收；[虚拟环境](../../notes/python/virtual-environments.md)使用本项目验证隔离和重建，[包管理](../../notes/python/package-management.md)另有 [pip 与 uv 对照项目](../package-management-comparison/README.md)。示例程序仅使用 Python 标准库，项目使用 Ruff 开发依赖统一格式化和 Lint。
 
-后续虚拟环境、包管理及其他 Python 主题的代码也放在此项目中；当示例增多时，再按主题增加子目录，避免在 `projects/` 下为每一课创建独立项目。
+文件处理以及可共用同一环境的后续 Python 示例继续放在本项目中；需要比较不同环境或依赖管理方式的课程则使用独立项目，避免互相修改配置和锁文件。
 
 ## 环境要求
 

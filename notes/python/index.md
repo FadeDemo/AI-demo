@@ -2,9 +2,9 @@
 title: Python 工程基础
 type: index
 area: python
-status: learning
+status: completed
 created: 2026-07-21
-updated: 2026-07-28
+updated: 2026-08-01
 tags:
   - python
   - engineering
@@ -33,7 +33,7 @@ tags:
 
 ## 可运行示例
 
-[Python 课程示例项目](../../projects/python/README.md) 提供与本专题配套的代码、测试和示例数据。下面以文件处理示例说明项目的运行和测试方式：
+[Python 课程示例项目](../../projects/python/README.md) 提供与本专题配套的代码、测试和示例数据。本仓库约定使用 `uv`，所以下面以它说明项目的运行和测试方式；课程中的包管理概念并不依赖某一个工具：
 
 ```shell
 cd projects/python
@@ -49,7 +49,7 @@ uv run python -m unittest discover -s tests -v
 - 从指定目录及其子目录读取 `.txt`、`.md` 和 `.json` 文件。
 - 将每个文件转换为包含正文 `content`、来源 `source` 和附加信息 `metadata` 的对象。
 - 跳过不支持的文件，并为读取失败输出可定位的错误信息。
-- 使用 `uv` 管理 Python 版本和第三方依赖。
+- 选择一种依赖管理工作流并在 README 中说明；若沿用本仓库示例，则使用 `uv`。
 - 在 README 中写清楚从克隆仓库到运行程序的命令。
 
 ## 完成标准

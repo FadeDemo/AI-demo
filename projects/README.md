@@ -29,6 +29,7 @@ projects/
 依赖管理随项目语言确定：
 
 - Python 项目使用 `pyproject.toml` 和 `uv.lock`，通过 `uv sync` 安装、`uv run` 执行。
+- `package-management-comparison/pip-demo` 是教学例外，故意不提交锁文件，用于与 uv 锁定工作流对照。
 - Node.js 项目使用 `package.json` 和所选包管理器对应的锁文件。
 - Go 项目使用 `go.mod` 和 `go.sum`。
 - Rust 项目使用 `Cargo.toml` 和 `Cargo.lock`。
@@ -37,9 +38,10 @@ projects/
 
 ## 已有项目
 
-| 项目                       | 目标                                             | 状态   |
-| -------------------------- | ------------------------------------------------ | ------ |
-| [python](python/README.md) | 统一保存 Python 课程的可运行示例、测试和样本数据 | 可运行 |
+| 项目                                                                     | 目标                                             | 状态   |
+| ------------------------------------------------------------------------ | ------------------------------------------------ | ------ |
+| [python](python/README.md)                                               | 统一保存 Python 课程的可运行示例、测试和样本数据 | 可运行 |
+| [package-management-comparison](package-management-comparison/README.md) | 对照 pip 与 uv 的依赖管理和环境恢复工作流        | 可运行 |
 
 ## 计划中的项目
 
