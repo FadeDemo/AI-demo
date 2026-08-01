@@ -13,7 +13,7 @@ uv-demo = "uv_demo:main"
 
 [dependency-groups]
 dev = [
-    "pytest>=8,<9",
+    "pytest>=9.0.3,<10",
     "ruff>=0.12,<1",
 ]
 
