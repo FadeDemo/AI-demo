@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>日志级别交互实验</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: #f4f6fb;
+        color: #20263f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 15% 10%, #dfe5ff 0, transparent 30rem),
+          #f4f6fb;
+      }
+
+      main {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 48px 0 64px;
+      }
+
+      header {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 28px;
+        align-items: end;
+        margin-bottom: 24px;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(30px, 5vw, 48px);
+        letter-spacing: -0.04em;
+      }
+
+      p {
+        margin: 0;
+        color: #5d6682;
+        line-height: 1.65;
+      }
+
+      .scenario-buttons,
+      .toolbar,
+      .stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      button,
+      select,
+      input {
+        min-height: 42px;
+        border: 1px solid #c8cee2;
+        border-radius: 11px;
+        background: #fff;
+        color: inherit;
+        font: inherit;
+      }
+
+      button {
+        padding: 0 15px;
+        cursor: pointer;
+        font-weight: 650;
+      }
+
+      button:hover,
+      button:focus-visible {
+        border-color: #6578dc;
+        box-shadow: 0 0 0 3px #6578dc22;
+      }
+
+      button.primary {
+        border-color: #5267d3;
+        background: #5267d3;
+        color: #fff;
+      }
+
+      .panel {
+        overflow: hidden;
+        border: 1px solid #dce0ed;
+        border-radius: 18px;
+        background: rgb(255 255 255 / 90%);
+        box-shadow: 0 18px 50px rgb(40 52 100 / 10%);
+      }
+
+      .toolbar {
+        align-items: end;
+        padding: 18px;
+        border-bottom: 1px solid #e4e7f0;
+      }
+
+      label {
+        display: grid;
+        gap: 7px;
+        color: #525c78;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      select,
+      input {
+        min-width: 180px;
+        padding: 0 12px;
+        outline: none;
+      }
+
+      input:focus,
+      select:focus {
+        border-color: #6578dc;
+        box-shadow: 0 0 0 3px #6578dc22;
+      }
+
+      .stats {
+        margin-left: auto;
+        align-items: center;
+      }
+
+      .stat {
+        min-width: 94px;
+        padding: 9px 12px;
+        border-radius: 11px;
+        background: #f1f3fa;
+        text-align: center;
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 19px;
+      }
+
+      .stat span {
+        color: #707992;
+        font-size: 12px;
+      }
+
+      .log-list {
+        min-height: 360px;
+        max-height: 560px;
+        overflow: auto;
+        padding: 10px;
+        background: #191e2e;
+      }
+
+      .log-row {
+        display: grid;
+        grid-template-columns: 84px 170px minmax(180px, 1fr) 130px;
+        gap: 12px;
+        align-items: start;
+        margin: 6px 0;
+        padding: 12px;
+        border: 1px solid #32394f;
+        border-radius: 10px;
+        background: #22283a;
+        color: #e7eaf5;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+      }
+
+      .badge {
+        display: inline-block;
+        width: fit-content;
+        padding: 3px 7px;
+        border-radius: 6px;
+        font-weight: 800;
+      }
+
+      .DEBUG {
+        background: #39425d;
+        color: #d3d9ef;
+      }
+
+      .INFO {
+        background: #243f73;
+        color: #a9caff;
+      }
+
+      .WARNING {
+        background: #674c1d;
+        color: #ffdc91;
+      }
+
+      .ERROR,
+      .CRITICAL {
+        background: #682f3d;
+        color: #ffb1bd;
+      }
+
+      .event {
+        color: #aeb8ff;
+      }
+
+      .context {
+        color: #9ba5be;
+        word-break: break-word;
+      }
+
+      .empty {
+        display: grid;
+        min-height: 340px;
+        place-items: center;
+        color: #959eb8;
+        text-align: center;
+      }
+
+      .explanation {
+        padding: 16px 18px;
+        border-top: 1px solid #e4e7f0;
+        color: #5a637e;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      code {
+        border-radius: 5px;
+        background: #edf0fa;
+        padding: 2px 5px;
+      }
+
+      @media (max-width: 820px) {
+        header {
+          grid-template-columns: 1fr;
+        }
+
+        .stats {
+          width: 100%;
+          margin-left: 0;
+        }
+
+        .log-row {
+          grid-template-columns: 78px 1fr;
+        }
+
+        .message,
+        .context {
+          grid-column: 1 / -1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>日志级别交互实验</h1>
+          <p>
+            模拟不同运行场景，切换最低保留级别，再按稳定事件名或 request_id
+            检索。页面不会访问网络，也不会保存数据。
+          </p>
+        </div>
+        <div class="scenario-buttons" aria-label="模拟场景">
+          <button class="primary" data-scenario="success">正常搜索</button>
+          <button data-scenario="empty">空查询</button>
+          <button data-scenario="failure">索引故障</button>
+          <button data-scenario="clear">清空</button>
+        </div>
+      </header>
+
+      <section class="panel" aria-label="日志实验台">
+        <div class="toolbar">
+          <label>
+            最低保留级别
+            <select id="level">
+              <option value="DEBUG">DEBUG</option>
+              <option value="INFO" selected>INFO</option>
+              <option value="WARNING">WARNING</option>
+              <option value="ERROR">ERROR</option>
+              <option value="CRITICAL">CRITICAL</option>
+            </select>
+          </label>
+          <label>
+            字段筛选
+            <input
+              id="filter"
+              type="search"
+              placeholder="search_completed 或 req-001"
+            />
+          </label>
+          <div class="stats" aria-live="polite">
+            <div class="stat">
+              <strong id="kept">0</strong>
+              <span>保留</span>
+            </div>
+            <div class="stat">
+              <strong id="filtered">0</strong>
+              <span>被级别过滤</span>
+            </div>
+          </div>
+        </div>
+        <div id="logs" class="log-list"></div>
+        <div class="explanation" id="explanation">
+          阈值为 <code>INFO</code>：保留 INFO 以及更严重的事件，过滤 DEBUG。
+          字段筛选只影响当前显示，不改变级别统计。
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const levelWeight = {
+        DEBUG: 10,
+        INFO: 20,
+        WARNING: 30,
+        ERROR: 40,
+        CRITICAL: 50,
+      };
+
+      const scenarios = {
+        success: [
+          {
+            level: "INFO",
+            event: "search_started",
+            requestId: "req-001",
+            message: "search started",
+            context: "document_count=3 query_length=3",
+          },
+          {
+            level: "DEBUG",
+            event: "candidate_scored",
+            requestId: "req-001",
+            message: "candidate scored",
+            context: "source=rag.md score=2",
+          },
+          {
+            level: "INFO",
+            event: "search_completed",
+            requestId: "req-001",
+            message: "search completed",
+            context: "result_count=1 duration_ms=0.14",
+          },
+        ],
+        empty: [
+          {
+            level: "WARNING",
+            event: "search_rejected",
+            requestId: "req-002",
+            message: "empty search query rejected",
+            context: "reason=empty_query",
+          },
+        ],
+        failure: [
+          {
+            level: "INFO",
+            event: "search_started",
+            requestId: "req-003",
+            message: "search started",
+            context: "document_count=3 query_length=3",
+          },
+          {
+            level: "ERROR",
+            event: "index_query_failed",
+            requestId: "req-003",
+            message: "index query timed out",
+            context: "exception=TimeoutError timeout_ms=1000",
+          },
+        ],
+      };
+
+      const state = { records: [] };
+      const levelSelect = document.querySelector("#level");
+      const filterInput = document.querySelector("#filter");
+      const logs = document.querySelector("#logs");
+      const kept = document.querySelector("#kept");
+      const filtered = document.querySelector("#filtered");
+      const explanation = document.querySelector("#explanation");
+
+      function escapeHtml(value) {
+        return value.replace(
+          /[&<>'"]/g,
+          (character) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              "'": "&#39;",
+              '"': "&quot;",
+            })[character],
+        );
+      }
+
+      function render() {
+        const threshold = levelWeight[levelSelect.value];
+        const levelMatches = state.records.filter(
+          (record) => levelWeight[record.level] >= threshold,
+        );
+        const query = filterInput.value.trim().toLowerCase();
+        const visible = levelMatches.filter((record) =>
+          [record.event, record.requestId, record.message, record.context]
+            .join(" ")
+            .toLowerCase()
+            .includes(query),
+        );
+
+        kept.textContent = levelMatches.length;
+        filtered.textContent = state.records.length - levelMatches.length;
+        explanation.innerHTML = `阈值为 <code>${levelSelect.value}</code>：保留 ${levelSelect.value} 以及更严重的事件。字段筛选只影响当前显示，不改变级别统计。`;
+
+        if (visible.length === 0) {
+          logs.innerHTML = `<div class="empty">当前条件下没有日志。<br />尝试模拟一个场景或降低日志阈值。</div>`;
+          return;
+        }
+
+        logs.innerHTML = visible
+          .map(
+            (record) => `
+              <div class="log-row">
+                <span class="badge ${record.level}">${record.level}</span>
+                <span class="event">${escapeHtml(record.event)}</span>
+                <span class="message">${escapeHtml(record.message)}</span>
+                <span class="context">${escapeHtml(record.requestId)}<br />${escapeHtml(record.context)}</span>
+              </div>`,
+          )
+          .join("");
+      }
+
+      document.querySelectorAll("[data-scenario]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const name = button.dataset.scenario;
+          if (name === "clear") {
+            state.records = [];
+          } else {
+            state.records.push(...scenarios[name]);
+          }
+          render();
+        });
+      });
+
+      levelSelect.addEventListener("change", render);
+      filterInput.addEventListener("input", render);
+      state.records.push(...scenarios.success);
+      render();
+    </script>
+  </body>
+</html>

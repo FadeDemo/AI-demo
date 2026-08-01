@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520" role="img" aria-labelledby="title desc">
+  <title id="title">测试层次与取舍</title>
+  <desc id="desc">单元测试数量多、速度快、隔离性强，集成测试居中，端到端测试数量少、真实度高但速度较慢。</desc>
+  <rect width="900" height="520" rx="26" fill="#f7f8fc" />
+  <text x="450" y="44" text-anchor="middle" font-family="system-ui, sans-serif" font-size="24" font-weight="700" fill="#202746">用不同层次覆盖不同风险</text>
+  <g font-family="system-ui, sans-serif" text-anchor="middle">
+    <path d="M350 91 H550 L625 194 H275 Z" fill="#fff0dc" stroke="#dc9840" stroke-width="2" />
+    <text x="450" y="139" font-size="21" font-weight="700" fill="#704411">端到端测试</text>
+    <text x="450" y="169" font-size="14" fill="#795f40">少量 · 完整用户链路</text>
+
+    <path d="M275 210 H625 L702 318 H198 Z" fill="#eef1ff" stroke="#7184e4" stroke-width="2" />
+    <text x="450" y="258" font-size="21" font-weight="700" fill="#29366f">集成测试</text>
+    <text x="450" y="288" font-size="14" fill="#596689">适量 · 真实边界组合</text>
+
+    <path d="M198 334 H702 L782 450 H118 Z" fill="#e9f8f0" stroke="#4aa877" stroke-width="2" />
+    <text x="450" y="384" font-size="21" font-weight="700" fill="#1f6946">单元测试</text>
+    <text x="450" y="416" font-size="14" fill="#527060">大量 · 快速且失败位置清晰</text>
+  </g>
+  <g font-family="system-ui, sans-serif" font-size="14" fill="#555e7c">
+    <text x="80" y="145">真实度提高</text>
+    <text x="728" y="145">速度降低</text>
+    <path d="M110 430 V113" fill="none" stroke="#596689" stroke-width="2" />
+    <path d="M110 113 l-7 13 h14 z" fill="#596689" />
+    <path d="M790 113 V430" fill="none" stroke="#596689" stroke-width="2" />
+    <path d="M790 430 l-7 -13 h14 z" fill="#596689" />
+  </g>
+</svg>

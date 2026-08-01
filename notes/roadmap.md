@@ -4,7 +4,7 @@ type: roadmap
 area: ai
 status: active
 created: 2026-07-20
-updated: 2026-07-21
+updated: 2026-08-01
 tags:
   - ai
   - rag
@@ -32,7 +32,7 @@ tags:
 ### 开始 RAG 前必须具备
 
 - Python 基础：函数、类、异常、[文件处理](python/file-handling.md)、[虚拟环境](python/virtual-environments.md)、[包管理](python/package-management.md)。
-- 工程基础：Git、命令行、日志、环境变量、基础测试。
+- 工程基础：Git、命令行、[日志](engineering/logging.md)、环境变量、[基础测试](engineering/basic-testing.md)。
 - Web 基础：HTTP、REST API、JSON、同步与异步的基本区别。
 - LLM 使用基础：消息角色、Prompt、Token、上下文窗口、温度、结构化输出。
 - 数据基础：能处理 TXT、Markdown、PDF 解析结果和简单表格数据。
@@ -98,7 +98,7 @@ Agent 开发                  AI Infra / 推理服务
 ### 学习内容
 
 - Python：数据结构、类型标注、生成器、上下文管理器、异步基础。
-- 工程：Git、Linux 常用命令、日志、单元测试、依赖管理。
+- 工程：Git、Linux 常用命令、[日志](engineering/logging.md)、[基础测试](engineering/basic-testing.md)、依赖管理。
 - 后端：HTTP、JSON、REST、FastAPI、SQLite/PostgreSQL 基础。
 
 ### 阶段产物

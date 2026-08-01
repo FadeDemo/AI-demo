@@ -6,14 +6,22 @@
   "scripts": {
     "format": "npm run format:markdown && npm run format:python",
     "format:markdown": "prettier --write \"**/*.md\"",
-    "format:python": "cd projects/python && uv run ruff format .",
+    "format:python": "npm run format:python-course && npm run format:engineering-foundations",
+    "format:python-course": "cd projects/python && uv run ruff format .",
+    "format:engineering-foundations": "cd projects/engineering-foundations && uv run ruff format .",
     "format:check": "npm run format:markdown:check && npm run format:python:check",
     "format:markdown:check": "prettier --check \"**/*.md\"",
-    "format:python:check": "cd projects/python && uv run ruff format --check .",
+    "format:python:check": "npm run format:python-course:check && npm run format:engineering-foundations:check",
+    "format:python-course:check": "cd projects/python && uv run ruff format --check .",
+    "format:engineering-foundations:check": "cd projects/engineering-foundations && uv run ruff format --check .",
     "lint": "npm run lint:markdown && npm run lint:python",
     "lint:markdown": "markdownlint-cli2",
-    "lint:python": "cd projects/python && uv run ruff check .",
-    "lint:python:fix": "cd projects/python && uv run ruff check --fix ."
+    "lint:python": "npm run lint:python-course && npm run lint:engineering-foundations",
+    "lint:python-course": "cd projects/python && uv run ruff check .",
+    "lint:engineering-foundations": "cd projects/engineering-foundations && uv run ruff check .",
+    "lint:python:fix": "npm run lint:python-course:fix && npm run lint:engineering-foundations:fix",
+    "lint:python-course:fix": "cd projects/python && uv run ruff check --fix .",
+    "lint:engineering-foundations:fix": "cd projects/engineering-foundations && uv run ruff check --fix ."
   },
   "devDependencies": {
     "markdownlint-cli2": "0.23.2",

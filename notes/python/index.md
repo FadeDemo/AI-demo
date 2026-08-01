@@ -46,6 +46,14 @@ uv run python -m unittest discover -s tests -v
 
 完成一个最小的“文档导入器”：
 
+这不是文件处理课程之外的第四项独立练习，而是本专题的综合产物。三门课程分别为它补充不同能力：
+
+```text
+文件处理：实现并测试 load_documents()
+虚拟环境：隔离项目环境并验证环境可以重建
+包管理：通过 pyproject.toml 与 uv.lock 声明和锁定依赖
+```
+
 - 从指定目录及其子目录读取 `.txt`、`.md` 和 `.json` 文件。
 - 将每个文件转换为包含正文 `content`、来源 `source` 和附加信息 `metadata` 的对象。
 - 跳过不支持的文件，并为读取失败输出可定位的错误信息。
@@ -59,5 +67,9 @@ uv run python -m unittest discover -s tests -v
 - 能说明虚拟环境解决了什么问题。
 - 能区分“在代码中导入包”“把包装进环境”和“把需要的包写入项目配置”。
 - 删除本地虚拟环境后，仍能根据项目文件恢复相同环境。
+
+## 完成后核对
+
+独立完成上述功能和验收后，可以查看 [Python 课程示例项目](../../projects/python/README.md)进行核对。其中 `exercises/file_handling/load_documents.py` 保存核心导入函数，`document_importer.py` 提供接收目录参数的命令行入口。建议先比较行为和测试覆盖，再比较具体代码写法；实现不同不代表错误，只要满足相同验收标准即可。
 
 完成本专题后，可以回到[人工智能学习路线](../roadmap.md)，继续第 1 阶段的 LLM 应用基础。

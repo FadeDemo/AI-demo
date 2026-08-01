@@ -7,7 +7,38 @@
 ## 环境要求
 
 - Python 3.11 或更高版本
-- 可选：当前受支持版本的 `uv`
+- 当前受支持版本的 `uv`（仓库默认的环境与依赖管理工具）
+
+## 运行推荐练习项目
+
+从尚未克隆仓库的环境开始，可以使用下面的完整流程。`<repository-url>` 是仓库的实际 Git 地址；显式指定目标目录为 `AI-demo`，可以确保后续路径与命令一致：
+
+```shell
+git clone <repository-url> AI-demo
+cd AI-demo/projects/python
+uv sync
+uv run python document_importer.py data/knowledge
+```
+
+`data/knowledge` 是传递给文档导入器的位置参数，相对于执行命令时的当前工作目录解析。上面的命令会递归读取该目录中的 `.txt`、`.md` 和 `.json` 文件，将它们转换成统一的 `Document` 对象，并输出导入数量和结果。
+
+仓库已经克隆并且当前位于仓库根目录时，只需执行：
+
+```shell
+cd projects/python
+uv sync
+uv run python document_importer.py data/knowledge
+```
+
+运行测试并检查代码质量：
+
+```shell
+uv run python -m unittest discover -s tests -v
+uv run ruff format --check .
+uv run ruff check .
+```
+
+`uv sync` 根据 `pyproject.toml` 和 `uv.lock` 创建或同步项目环境；`uv run` 使用该环境执行程序，不要求事先手动激活 `.venv`。
 
 ## 运行示例
 
@@ -70,9 +101,11 @@ python/
 │   ├── __init__.py
 │   ├── test_document_loader.py
 │   └── test_file_handling_exercise.py
+├── document_importer.py        # 推荐练习项目的命令行入口
 ├── file_handling_demo.py       # 串联主要文件读取流程
 ├── document_loader.py          # 可复用的文件读取函数
-└── pyproject.toml              # Python 版本与项目配置
+├── pyproject.toml              # Python 版本与项目配置
+└── uv.lock                     # uv 解析生成的精确依赖版本
 ```
 
 测试数据只用于教学，内容不包含密钥或个人信息。运行示例不会修改这些输入文件。

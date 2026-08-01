@@ -4,7 +4,7 @@ type: index
 area: ai
 status: active
 created: 2026-07-20
-updated: 2026-07-21
+updated: 2026-08-01
 tags:
   - ai
   - index
@@ -18,6 +18,7 @@ tags:
 
 - [人工智能学习路线](roadmap.md)：以 RAG 为短期目标，逐步进入 LLM、Agent 开发和 AI Infra。
 - [Python 工程基础](python/index.md)：学习文件处理、虚拟环境和包管理，补齐 RAG 的编程前置。
+- [通用工程基础](engineering/index.md)：学习日志与基础测试，让程序的问题可定位、修改可验证。
 - [代码项目目录](../projects/README.md)：查看与学习路线配套的实践项目。
 
 ## 当前学习重点
@@ -31,6 +32,7 @@ tags:
 ```text
 notes/
 ├── python/                 # 文件处理、虚拟环境与包管理
+├── engineering/            # 日志、测试与通用工程实践
 ├── rag/                    # 检索、切块、评测、生产化
 ├── llm/                    # 模型原理、PyTorch、微调与推理
 ├── agents/                 # Tool Calling、工作流、MCP 与安全
