@@ -4,7 +4,7 @@ type: concept
 area: engineering
 status: learning
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-02
 tags:
   - engineering
   - logging
@@ -27,7 +27,9 @@ print("找到 3 篇文档")
 logger.info("search completed", extra={"result_count": 3})
 ```
 
-这里的 `extra` 是 Python `logging` 提供的关键字参数，用来给本次日志记录附加结构化上下文。字典中的 `result_count` 会成为 `LogRecord` 的一个字段，formatter 可以通过 `%(result_count)s` 输出它，JSON formatter 也可以把它保存为独立字段，方便后续筛选和统计；它不会自动拼接到 `"search completed"` 这段消息中。自定义字段名还应避开 `message`、`levelname` 等 `LogRecord` 已有属性，否则记录日志时会发生字段冲突。
+调用 `logger.info()` 时，Python `logging` 会先检查该级别是否需要处理；如果需要，才会创建一个 `LogRecord`。它是 `logging` 在内部用来表示本次日志事件的数据对象，其中保存了消息、日志级别、logger 名称、发生时间等信息。创建完成后，`logging` 的 handler 会接收这个对象，再使用 `logging` 的 formatter 将它转换为最终输出。
+
+这里的 `extra` 是 `logging` 提供的关键字参数，用来给这个 `LogRecord` 附加结构化上下文。因此，字典中的 `result_count` 会成为本次记录的一个字段，但不会自动拼接到 `"search completed"` 这段消息中。formatter 负责把记录转换成最终输出：文本 formatter 可以用 `%(result_count)s` 读取该字段，JSON formatter 则可以把它保存为独立的 JSON 字段，方便后续筛选和统计。自定义字段名还应避开 `message`、`levelname` 等 `LogRecord` 已有属性，否则记录日志时会发生字段冲突。第 4 节会继续介绍 `LogRecord`、handler 和 formatter 之间的数据流。
 
 两行内容看似相近，但用途不同：用户输出可以翻译、排版或通过管道交给其他命令；日志还需要级别、时间、模块名和请求标识，并可能被集中采集。不要用日志代替正常返回值，也不要只用 `print()` 报告后台故障。
 
@@ -81,9 +83,27 @@ logger.error(
 
 ## 4. Python 日志的数据流
 
-应用模块先通过 logger 创建 `LogRecord`。logger 和 handler 都可以按级别或 filter 筛选；handler 决定记录去往控制台、文件或集中采集器；formatter 决定最终文本或 JSON 结构。
+### logger、handler 与 formatter
+
+这三个组件不是彼此独立的。logger 可以关联零个或多个 handler，每个 handler 可以设置一个 formatter；formatter 不直接关联到 logger。没有显式设置 formatter 时，handler 会使用 `logging` 提供的默认格式。一个常见配置的对象关系如下：
+
+```text
+logger
+├── 控制台 handler
+│   └── 文本 formatter
+└── 文件 handler
+    └── JSON formatter
+```
+
+代码中的 `logger.addHandler(handler)` 把 handler 添加到 logger；`handler.setFormatter(formatter)` 再把 formatter 设置到 handler。这样，同一个 logger 可以把同一条记录交给多个 handler，并让不同输出目的地使用不同格式。
+
+应用调用 `logger.info()` 等方法时，logger 先根据日志级别判断是否需要处理；需要处理时才创建 `LogRecord`，并继续应用 logger 上的 filter。通过筛选的记录会被交给相关 handler：handler 决定是否接收记录以及把它发送到哪里，formatter 则负责把记录转换成最终的文本或 JSON。formatter 完成格式化后，handler 才把结果写入控制台、文件或其他目的地。
+
+logger 和 handler 都可以设置最低日志级别，也都可以通过 `addFilter()` 添加 filter，但两者的筛选作用于不同层次。logger 控制某个日志来源产生的记录是否继续处理；每个 handler 则根据自己的输出目的地决定是否接收记录。例如，控制台 handler 可以接收 `INFO` 及以上级别的记录，而错误文件 handler 只接收 `ERROR` 及以上级别的记录。handler 默认使用 `NOTSET` 级别且没有 filter，此时不会在 logger 的筛选结果上再排除记录。
 
 ![Python 日志从事件到输出的处理流程](assets/logging-pipeline.svg)
+
+### root logger 与名称层级
 
 各模块只取得以模块名命名的 logger：
 
@@ -93,14 +113,30 @@ import logging
 logger = logging.getLogger(__name__)
 ```
 
-程序入口统一配置 handler 和 formatter。不要让每个业务模块都调用 `basicConfig()` 或各自添加控制台 handler，否则容易出现重复日志和互相冲突的级别。Python logger 使用点分层级，`engineering.search` 的记录默认会向父 logger 传播，最终由上层 handler 处理。
+`logging` 自带一个位于名称层级顶端的 root logger；它不是应用在入口创建的。调用不带名称的 `logging.getLogger()` 可以取得它。程序入口通常只负责配置 root logger，例如设置级别、添加 handler，以及为 handler 设置 formatter。这里的“程序入口”是负责启动应用和组装全局配置的代码，例如命令行程序的 `main()` 或 Web 服务的启动模块。
+
+`logging.basicConfig()` 是完成这类简单配置的便捷函数，适合在小型程序的入口调用一次。以第 5 节的配置为例，它会设置 root logger 的级别，创建默认写入标准错误流的 `StreamHandler`，根据 `format` 参数创建 formatter，将 formatter 设置到 handler，最后把 handler 添加到 root logger。root logger 已有 handler 时，后续调用默认不会重复配置，因此如果多个业务模块都调用 `basicConfig()`，最终采用哪套配置可能取决于哪个模块先执行。
+
+logger 的层级只由 logger 名称中的点号决定，`logging` 不会读取文件夹结构来建立层级。例如，名为 `engineering.search` 的 logger 具有下面的名称层级：
+
+```text
+engineering.search → engineering → root logger
+```
+
+文件夹结构之所以经常看起来和 logger 层级相同，是因为模块通常使用 `logging.getLogger(__name__)`，而 `__name__` 来自 Python 的导入名称。如果 `engineering/search.py` 作为 `engineering.search` 导入，`__name__` 就是 `"engineering.search"`；但仅仅存在一个名为 `engineering` 的目录，并不会自动创建同名 logger。如果这个文件以其他名称导入，logger 名称也会随之改变；如果直接作为脚本运行，`__name__` 通常是 `"__main__"`。
+
+logger 默认启用传播，也就是 `propagate=True`。名为 `engineering.search` 的 logger 创建记录后，会先交给自身关联的 handler（如果有），然后继续交给名为 `engineering` 的上级 logger 所关联的 handler（如果有），最终到达 root logger 的 handler。`engineering` 不需要对应一个真实目录；它只是这个 logger 名称中的上一级。如果代码没有配置名为 `engineering` 的 logger，记录会直接继续传到 root logger。
+
+因此，业务模块通常不添加自己的 handler，而是让入口配置的 root handler 统一接收记录。如果子 logger 和 root logger 都有控制台 handler，并且传播仍然开启，同一条记录会在两处各输出一次。
 
 ## 5. 配置可读文本日志
 
-小型命令行程序可以在入口处使用 `basicConfig()`：
+小型命令行程序可以在入口处使用 `basicConfig()`。下面的代码可以直接保存为 Python 文件并运行：
 
 ```python
 import logging
+
+logger = logging.getLogger(__name__)
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -112,15 +148,27 @@ def configure_logging(level: str = "INFO") -> None:
         level=numeric_level,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+
+def main() -> None:
+    configure_logging()
+    document_count = 3
+    logger.info("loaded %d documents", document_count)
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-可变数据使用日志参数传入：
+直接运行该文件时，模块 logger 的名称是 `__main__`。在没有额外配置的情况下，命名 logger（包括这里的 `__main__` logger）默认没有自己的 handler，所以不会直接把记录写入终端。`basicConfig()` 配置 root logger，并为它添加控制台 handler。由于命名 logger 默认设置了 `propagate=True`，`__main__` logger 会把记录向上传给 root logger，最终由 root logger 的 handler 输出。
 
-```python
-logger.info("loaded %d documents", document_count)
+因此，输出中的 logger 名称仍然是创建记录的 `__main__`，但实际执行输出的是 root logger 上的 handler。如果把 `logger.propagate` 设为 `False`，同时又不给模块 logger 添加 handler，这条 `INFO` 记录就不会输出。正常运行时的输出类似：
+
+```text
+2026-08-02 14:30:00,000 INFO __main__ loaded 3 documents
 ```
 
-不建议写成 `logger.info(f"loaded {document_count} documents")`。参数形式把消息模板与数据分开，而且日志级别被过滤时可以避免提前格式化。性能差异通常不是首要问题，稳定的事件模板和统一风格更重要。
+示例把可变数据作为日志参数传入。不建议写成 `logger.info(f"loaded {document_count} documents")`。参数形式把消息模板与数据分开，而且日志级别被过滤时可以避免提前格式化。性能差异通常不是首要问题，稳定的事件模板和统一风格更重要。
 
 ## 6. 结构化日志与请求上下文
 
@@ -134,26 +182,34 @@ logger.info("loaded %d documents", document_count)
   "event": "search_completed",
   "request_id": "req-7f31",
   "result_count": 3,
+  "duration_ms": 23,
   "message": "search completed"
 }
 ```
 
-结构化日志不是把整段文本塞进 `message` 后就结束。需要检索的值应有稳定字段名，字段类型也应保持一致，例如 `duration_ms` 始终是数字而不是有时写成 `"23ms"`。
+结构化日志不是把整段文本塞进 `message` 后就结束。需要检索的值应有稳定字段名，字段类型也应保持一致。例如，上例用字段名 `duration_ms` 标明单位，并把值保存为数字 `23`；不要又在其他记录中把它写成字符串 `"23ms"`。
 
-一次 HTTP 请求、后台任务或命令执行应在入口生成 `request_id`，随后传递给关键日志。入门阶段可以通过函数参数和 `extra` 显式传入：
+一次 HTTP 请求、后台任务或命令执行应在入口生成 `request_id`，随后传递给关键日志。这里包含两个步骤：先把 `request_id` 作为普通业务函数的参数传给需要它的函数；记录日志时，再通过 `extra` 把它添加到 `LogRecord`。例如：
 
 ```python
-logger.info(
-    "search completed",
-    extra={
-        "event": "search_completed",
-        "request_id": request_id,
-        "result_count": len(results),
-    },
-)
+def search_documents(documents: list[str], request_id: str) -> list[str]:
+    results = documents[:3]
+    logger.info(
+        "search completed",
+        extra={
+            "event": "search_completed",
+            "request_id": request_id,
+            "result_count": len(results),
+        },
+    )
+    return results
 ```
 
-大型异步服务可以进一步使用 `LoggerAdapter`、filter 或 `contextvars` 自动补充上下文，但自动化之前必须先明确 ID 在何处生成、跨哪些边界传播、何时清除。否则上下文可能串到另一请求。
+在这个例子中，函数定义里的 `request_id: str` 展示了通过普通函数参数传递上下文，`extra` 中的 `"request_id": request_id` 则把这份上下文附加到当前日志记录。这种写法需要在函数定义和每次调用中都写出 `request_id`，但它能清楚展示数据从哪里来、经过哪些函数。
+
+大型异步服务可以进一步自动补充上下文，但 `LoggerAdapter`、`logging.Filter` 和 `contextvars` 的作用不同。`LoggerAdapter` 在调用 logger 时附加预先绑定的字段；`contextvars` 保存当前异步任务的上下文，并让这些值随任务的执行流程传递；自定义 `logging.Filter` 则可以在 handler 输出前读取当前上下文，并把 `request_id` 等字段写入收到的 `LogRecord`。
+
+因此，`logging.Filter` 本身不负责让 `request_id` 跨函数或异步任务传递，它只是把已经可以读取的上下文补充到日志记录中。采用这些机制之前，必须先明确 ID 在何处生成、跨哪些边界传播、何时清除，否则上下文可能串到另一个请求。
 
 ## 7. 正确记录异常
 
@@ -186,7 +242,21 @@ except TimeoutError:
 - 多进程或多实例如何集中采集。
 - 敏感字段如何拦截、脱敏和审计。
 
-日志、指标和 trace 是互补信号。日志解释离散事件，指标回答错误率和延迟趋势，trace 展示一次请求跨组件的调用链。不要把每个数值都做成日志，也不要期待仅凭指标还原具体失败上下文。
+### 日志、指标与 trace
+
+Python 标准库提供了用于日志的 `logging`，但没有与之对应的通用指标或 trace 模块。实际项目通常使用 Prometheus Python client 或 OpenTelemetry 等第三方库：
+
+| 信号  | Python 中的常见接口                                                                          | 代码产生的数据                                                       | 采集与展示方式                                        |
+| ----- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| 日志  | `logging.Logger`、`logging.LogRecord`                                                        | 一条条带时间、级别、消息和上下文的事件记录                           | handler 写到控制台或文件，也可以转发到日志平台        |
+| 指标  | `prometheus_client.Counter`、`prometheus_client.Histogram`，或 `opentelemetry.metrics.Meter` | `Counter` 累计次数，`Histogram` 记录延迟等数值的分布                 | Prometheus 抓取指标，或由 OpenTelemetry exporter 发送 |
+| trace | `opentelemetry.trace.Tracer` 和 `opentelemetry.trace.Span`                                   | 带 `trace_id`、父子关系、耗时和属性的 span；多个 span 组成一条 trace | exporter 发送到追踪后端，展示为时间线或跨组件的调用树 |
+
+指标通常不是一行描述某次请求的文本。例如，请求 `Counter` 可以按结果类别分别累计成功和失败次数，监控系统据此计算一段时间内的错误率；`Histogram` 持续记录请求耗时，监控系统据此展示延迟分布和趋势。
+
+trace 则关注某一次具体请求。入口组件创建根 span，后续的 HTTP 调用、数据库查询等操作创建子 span；这些 span 共享同一个 `trace_id`，并通过父子关系还原调用顺序和各阶段耗时。OpenTelemetry API 负责在代码中创建指标或 span，还需要配置 SDK 和 exporter，数据才会被发送到外部监控或追踪系统。
+
+日志、指标和 trace 是互补信号：日志解释离散事件，指标回答错误率和延迟趋势，trace 展示一次请求跨组件的调用链。不要把每个数值都做成日志，也不要期待仅凭指标还原具体失败上下文。
 
 ## 9. 常见反模式
 
@@ -197,7 +267,7 @@ except TimeoutError:
 - 只写 `something went wrong`：没有事件阶段、ID 或异常调用栈。
 - 记录完整对象：对象可能包含密钥、正文或不稳定表示。
 - 通过日志判断业务成功：调用者仍应依赖返回值或异常。
-- 测试精确时间戳或完整格式字符串：测试会与展示格式强耦合。
+- 在测试中写死精确时间戳或整行日志文本：时间戳每次运行都会变化，调整 formatter 的字段顺序也会导致测试失败。应改为断言日志级别、消息、事件名和 `request_id` 等稳定字段。
 
 ## 10. 练习与验收
 
@@ -218,3 +288,5 @@ except TimeoutError:
 - [Python Logging HOWTO](https://docs.python.org/3/howto/logging.html)
 - [Python Logging Cookbook](https://docs.python.org/3/howto/logging-cookbook.html)
 - [Python LogRecord 属性](https://docs.python.org/3/library/logging.html#logrecord-attributes)
+- [Prometheus Python client 指标类型](https://prometheus.github.io/client_python/instrumenting/)
+- [OpenTelemetry Python 手动埋点](https://opentelemetry.io/docs/languages/python/instrumentation/)

@@ -1,53 +1,58 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="480" viewBox="0 0 1040 480" role="img" aria-labelledby="title desc">
-  <title id="title">Python 日志处理流程</title>
-  <desc id="desc">业务模块创建事件，logger 生成日志记录并筛选，记录传播给 handler，再经 formatter 输出为文本或 JSON。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="500" viewBox="0 0 1040 500" role="img" aria-labelledby="title desc">
+  <title id="title">Logger、Handler 与 Formatter 的关系</title>
+  <desc id="desc">业务模块调用 logger。logger 创建日志记录并把它分发给多个 handler；每个 handler 使用自己的 formatter，再写入对应的输出目的地。</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#4c63cf" />
     </marker>
   </defs>
-  <rect width="1040" height="480" rx="26" fill="#f7f8fc" />
-  <text x="520" y="42" text-anchor="middle" font-family="system-ui, sans-serif" font-size="24" font-weight="700" fill="#202746">从业务事件到可检索输出</text>
+  <rect width="1040" height="500" rx="26" fill="#f7f8fc" />
+  <text x="520" y="44" text-anchor="middle" font-family="system-ui, sans-serif" font-size="24" font-weight="700" fill="#202746">一条记录可以交给多个 Handler</text>
+
   <g font-family="system-ui, sans-serif">
-    <rect x="44" y="105" width="190" height="110" rx="16" fill="#ffffff" stroke="#9aa8ef" stroke-width="2" />
-    <text x="139" y="145" text-anchor="middle" font-size="20" font-weight="700" fill="#29366f">业务模块</text>
-    <text x="139" y="177" text-anchor="middle" font-size="14" fill="#626b88">logger.info(...)</text>
+    <rect x="40" y="195" width="180" height="100" rx="16" fill="#ffffff" stroke="#9aa8ef" stroke-width="2" />
+    <text x="130" y="235" text-anchor="middle" font-size="20" font-weight="700" fill="#29366f">业务模块</text>
+    <text x="130" y="268" text-anchor="middle" font-size="14" fill="#626b88">logger.info(...)</text>
 
-    <rect x="286" y="105" width="190" height="110" rx="16" fill="#eef1ff" stroke="#7184e4" stroke-width="2" />
-    <text x="381" y="145" text-anchor="middle" font-size="20" font-weight="700" fill="#29366f">Logger</text>
-    <text x="381" y="177" text-anchor="middle" font-size="14" fill="#626b88">创建 LogRecord</text>
-    <text x="381" y="197" text-anchor="middle" font-size="14" fill="#626b88">级别与 filter</text>
+    <rect x="260" y="185" width="190" height="120" rx="16" fill="#eef1ff" stroke="#7184e4" stroke-width="2" />
+    <text x="355" y="225" text-anchor="middle" font-size="20" font-weight="700" fill="#29366f">Logger</text>
+    <text x="355" y="256" text-anchor="middle" font-size="14" fill="#626b88">创建 LogRecord</text>
+    <text x="355" y="278" text-anchor="middle" font-size="14" fill="#626b88">级别与 filter</text>
 
-    <rect x="528" y="105" width="190" height="110" rx="16" fill="#fff5e8" stroke="#e1a34b" stroke-width="2" />
-    <text x="623" y="145" text-anchor="middle" font-size="20" font-weight="700" fill="#714514">Handler</text>
-    <text x="623" y="177" text-anchor="middle" font-size="14" fill="#78644d">选择目的地</text>
-    <text x="623" y="197" text-anchor="middle" font-size="14" fill="#78644d">再次按级别筛选</text>
+    <rect x="520" y="80" width="290" height="150" rx="18" fill="#fff5e8" stroke="#e1a34b" stroke-width="2" />
+    <text x="590" y="132" text-anchor="middle" font-size="18" font-weight="700" fill="#714514">控制台 Handler</text>
+    <text x="590" y="162" text-anchor="middle" font-size="14" fill="#78644d">INFO 及以上</text>
+    <text x="590" y="184" text-anchor="middle" font-size="14" fill="#78644d">写入标准错误流</text>
+    <rect x="665" y="105" width="125" height="100" rx="13" fill="#ebf8f1" stroke="#4aa877" stroke-width="2" />
+    <text x="727.5" y="145" text-anchor="middle" font-size="16" font-weight="700" fill="#1f6946">Formatter</text>
+    <text x="727.5" y="176" text-anchor="middle" font-size="14" fill="#527060">可读文本</text>
 
-    <rect x="770" y="105" width="220" height="110" rx="16" fill="#ebf8f1" stroke="#4aa877" stroke-width="2" />
-    <text x="880" y="145" text-anchor="middle" font-size="20" font-weight="700" fill="#1f6946">Formatter</text>
-    <text x="880" y="177" text-anchor="middle" font-size="14" fill="#527060">文本 / JSON</text>
-    <text x="880" y="197" text-anchor="middle" font-size="14" fill="#527060">统一字段与时间格式</text>
+    <rect x="850" y="110" width="145" height="90" rx="15" fill="#ffffff" stroke="#bec5e5" stroke-width="2" />
+    <text x="922.5" y="148" text-anchor="middle" font-size="18" font-weight="700" fill="#303955">控制台</text>
+    <text x="922.5" y="176" text-anchor="middle" font-size="13" fill="#69708a">本地开发</text>
+
+    <rect x="520" y="280" width="290" height="150" rx="18" fill="#fff5e8" stroke="#e1a34b" stroke-width="2" />
+    <text x="590" y="332" text-anchor="middle" font-size="18" font-weight="700" fill="#714514">文件 Handler</text>
+    <text x="590" y="362" text-anchor="middle" font-size="14" fill="#78644d">ERROR 及以上</text>
+    <text x="590" y="384" text-anchor="middle" font-size="14" fill="#78644d">写入日志文件</text>
+    <rect x="665" y="305" width="125" height="100" rx="13" fill="#ebf8f1" stroke="#4aa877" stroke-width="2" />
+    <text x="727.5" y="345" text-anchor="middle" font-size="16" font-weight="700" fill="#1f6946">Formatter</text>
+    <text x="727.5" y="376" text-anchor="middle" font-size="14" fill="#527060">JSON</text>
+
+    <rect x="850" y="310" width="145" height="90" rx="15" fill="#ffffff" stroke="#bec5e5" stroke-width="2" />
+    <text x="922.5" y="348" text-anchor="middle" font-size="18" font-weight="700" fill="#303955">错误日志</text>
+    <text x="922.5" y="376" text-anchor="middle" font-size="13" fill="#69708a">检索与告警</text>
   </g>
-  <g fill="none" stroke="#4c63cf" stroke-width="3" marker-end="url(#arrow)">
-    <path d="M234 160 H279" />
-    <path d="M476 160 H521" />
-    <path d="M718 160 H763" />
+
+  <g fill="none" stroke="#4c63cf" stroke-width="3">
+    <path d="M220 245 H253" marker-end="url(#arrow)" />
+    <path d="M450 245 H480" />
+    <path d="M480 155 V355" />
+    <path d="M480 155 H513" marker-end="url(#arrow)" />
+    <path d="M480 355 H513" marker-end="url(#arrow)" />
+    <path d="M810 155 H843" marker-end="url(#arrow)" />
+    <path d="M810 355 H843" marker-end="url(#arrow)" />
   </g>
-  <g font-family="system-ui, sans-serif">
-    <path d="M880 215 V270" fill="none" stroke="#4c63cf" stroke-width="3" />
-    <path d="M880 270 H347" fill="none" stroke="#4c63cf" stroke-width="3" />
-    <path d="M880 270 H913" fill="none" stroke="#4c63cf" stroke-width="3" />
-    <path d="M347 270 V303" fill="none" stroke="#4c63cf" stroke-width="3" marker-end="url(#arrow)" />
-    <path d="M630 270 V303" fill="none" stroke="#4c63cf" stroke-width="3" marker-end="url(#arrow)" />
-    <path d="M913 270 V303" fill="none" stroke="#4c63cf" stroke-width="3" marker-end="url(#arrow)" />
-    <rect x="240" y="310" width="214" height="92" rx="15" fill="#ffffff" stroke="#bec5e5" stroke-width="2" />
-    <text x="347" y="347" text-anchor="middle" font-size="18" font-weight="700" fill="#303955">控制台</text>
-    <text x="347" y="375" text-anchor="middle" font-size="14" fill="#69708a">本地开发 / 容器采集</text>
-    <rect x="523" y="310" width="214" height="92" rx="15" fill="#ffffff" stroke="#bec5e5" stroke-width="2" />
-    <text x="630" y="347" text-anchor="middle" font-size="18" font-weight="700" fill="#303955">轮转文件</text>
-    <text x="630" y="375" text-anchor="middle" font-size="14" fill="#69708a">小型本地任务</text>
-    <rect x="806" y="310" width="184" height="92" rx="15" fill="#ffffff" stroke="#bec5e5" stroke-width="2" />
-    <text x="898" y="347" text-anchor="middle" font-size="18" font-weight="700" fill="#303955">日志平台</text>
-    <text x="898" y="375" text-anchor="middle" font-size="14" fill="#69708a">检索 / 聚合 / 告警</text>
-  </g>
+
+  <text x="480" y="465" text-anchor="middle" font-family="system-ui, sans-serif" font-size="14" fill="#626b88">Handler 内部使用自己的 Formatter；Formatter 不直接挂在 Logger 上</text>
 </svg>
