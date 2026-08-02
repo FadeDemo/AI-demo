@@ -5,6 +5,9 @@
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#4f67d8" />
     </marker>
+    <marker id="loop-arrow" markerWidth="27" markerHeight="18" viewBox="0 0 9 6" refX="0" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L0,6 L9,3 z" fill="#4f67d8" />
+    </marker>
     <filter id="shadow" x="-10%" y="-20%" width="120%" height="140%">
       <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#25315f" flood-opacity="0.14" />
     </filter>
@@ -37,7 +40,7 @@
     <path d="M250 176 H283" />
     <path d="M470 176 H503" />
     <path d="M690 176 H723" />
-    <path d="M820 238 C820 315 160 315 160 238" />
+    <path d="M820 238 C820 315 160 315 160 257" marker-end="url(#loop-arrow)" />
   </g>
   <text x="480" y="292" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#4d5776">测试为下一次修改提供快速反馈</text>
 </svg>

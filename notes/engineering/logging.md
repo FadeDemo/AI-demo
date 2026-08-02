@@ -27,6 +27,8 @@ print("找到 3 篇文档")
 logger.info("search completed", extra={"result_count": 3})
 ```
 
+这里的 `extra` 是 Python `logging` 提供的关键字参数，用来给本次日志记录附加结构化上下文。字典中的 `result_count` 会成为 `LogRecord` 的一个字段，formatter 可以通过 `%(result_count)s` 输出它，JSON formatter 也可以把它保存为独立字段，方便后续筛选和统计；它不会自动拼接到 `"search completed"` 这段消息中。自定义字段名还应避开 `message`、`levelname` 等 `LogRecord` 已有属性，否则记录日志时会发生字段冲突。
+
 两行内容看似相近，但用途不同：用户输出可以翻译、排版或通过管道交给其他命令；日志还需要级别、时间、模块名和请求标识，并可能被集中采集。不要用日志代替正常返回值，也不要只用 `print()` 报告后台故障。
 
 异常与日志也不能互相替代。函数遇到无法完成的操作时，应通过返回值或异常把失败告诉调用者；日志只是记录这件事。只记一条 `ERROR` 后继续返回看似正常的空结果，会让调用者误判操作成功。
