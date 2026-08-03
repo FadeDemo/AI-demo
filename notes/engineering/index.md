@@ -4,7 +4,7 @@ type: index
 area: engineering
 status: learning
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-03
 tags:
   - engineering
   - logging
@@ -26,6 +26,10 @@ tags:
 ![日志与测试形成反馈闭环](assets/engineering-feedback-loop.svg)
 
 日志不能代替测试：看到一次正确输出，不能证明以后每次修改都正确。测试也不能代替日志：测试环境中通过的程序，仍可能因为生产数据、外部服务或配置而失败。
+
+## 练习回答
+
+课程中需要留档的观察结论和书面回答统一保存在[练习回答目录](answers/index.md)中。可运行代码、测试和演示文件仍保存在配套项目中，不在回答文档中重复。
 
 ## 配套项目
 

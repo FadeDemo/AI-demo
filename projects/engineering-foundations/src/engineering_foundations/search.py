@@ -78,4 +78,13 @@ def search_documents(
             "duration_ms": round((perf_counter() - started_at) * 1000, 3),
         },
     )
+    if not selected_results:
+        logger.info(
+            "no search results found",
+            extra={
+                "event": "search_no_results",
+                "request_id": request_id,
+                "query_length": len(normalized_query),
+            },
+        )
     return selected_results

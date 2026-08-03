@@ -2,9 +2,9 @@
 title: 日志基础
 type: concept
 area: engineering
-status: learning
+status: completed
 created: 2026-08-01
-updated: 2026-08-02
+updated: 2026-08-03
 tags:
   - engineering
   - logging
@@ -26,6 +26,19 @@ tags:
 print("找到 3 篇文档")
 logger.info("search completed", extra={"result_count": 3})
 ```
+
+命令行程序默认有两个独立的输出流：
+
+- **标准输出（stdout）** 用于程序正常产生的结果，便于交给管道或其他程序继续处理。Python 的 `print()` 默认写到这里。
+- **标准错误（stderr）** 用于日志、诊断和错误信息，避免它们混入正常结果。Python 的 `logging.StreamHandler()` 在没有指定 `stream` 时默认写到这里。
+
+两个流默认都显示在同一个终端里，所以肉眼看起来像混在一起，但 shell 可以分别重定向它们：`>` 只重定向 stdout，`2>` 只重定向 stderr。在配套项目中，`cli.py` 通过 `print()` 把搜索结果写到 stdout，`logging_config.py` 中的 `StreamHandler()` 把日志写到 stderr。例如，在项目目录执行：
+
+```shell
+uv run engineering-demo RAG --json-logs > search-results.json 2> search-events.jsonl
+```
+
+`search-results.json` 只保存面向用户的搜索结果，`search-events.jsonl` 只保存日志事件。
 
 调用 `logger.info()` 时，Python `logging` 会先检查该级别是否需要处理；如果需要，才会创建一个 `LogRecord`。它是 `logging` 在内部用来表示本次日志事件的数据对象，其中保存了消息、日志级别、logger 名称、发生时间等信息。创建完成后，`logging` 的 handler 会接收这个对象，再使用 `logging` 的 formatter 将它转换为最终输出。
 
@@ -273,13 +286,28 @@ trace 则关注某一次具体请求。入口组件创建根 span，后续的 HT
 
 在[配套项目](../../projects/engineering-foundations/README.md)基础上完成：
 
-1. 运行文本格式和 JSON 格式的命令行演示，找出相同事件在两种格式中的对应字段。
-2. 在交互实验中分别选择 `DEBUG`、`INFO` 和 `ERROR`，解释每次被过滤的事件。
-3. 为“没有搜索结果”增加一条合理级别的日志，但不记录原始查询文本。
-4. 模拟一次外部检索超时，只在决定终止本次请求的边界使用 `logger.exception()`。
-5. 使用 pytest `caplog` 断言空查询产生 `WARNING`、事件名和同一个 `request_id`。
+1. **对照文本日志和 JSON 日志。** 在仓库根目录执行：
 
-完成标准：给定一条失败日志，可以通过事件名、模块、级别和请求 ID 定位到代码阶段；调整级别不需要修改业务模块；日志中不包含密钥、完整查询或文档正文。
+   ```shell
+   cd projects/engineering-foundations
+   uv sync
+   uv run engineering-demo RAG --log-level INFO
+   uv run engineering-demo RAG --log-level INFO --json-logs
+   ```
+
+   在两次输出中各找到一条 `search_started` 或 `search_completed`，记录时间、级别、logger 名称、事件名、`request_id` 和消息的对应位置。验收时应能说明：文本日志把字段排成一行，JSON 日志把它们保存为独立键值。
+
+   `engineering-demo` 是 `pyproject.toml` 中 `[project.scripts]` 定义的命令行入口，不是需要自行挑选的 `.py` 脚本。`uv run` 会在项目虚拟环境中执行该入口；如果已手动激活 `.venv`，也可以省略 `uv run`。
+
+2. **观察日志级别过滤。** 在浏览器打开 [`logging-lab/index.html`](../../projects/engineering-foundations/logging-lab/index.html)。每轮先点击“清空”，再点击“正常搜索”，然后分别把“最低保留级别”设为 `DEBUG`、`INFO` 和 `ERROR`。记录页面显示的“保留”和“被级别过滤”数量，并列出被过滤的事件名。正常搜索共有 3 条记录：`DEBUG` 应保留 3 条，`INFO` 应过滤 `candidate_scored`，`ERROR` 应过滤全部 3 条。
+
+3. **为无匹配结果增加专用事件。** 修改 `src/engineering_foundations/search.py`：在得到 `selected_results` 后，如果列表为空，额外记录一条 `INFO` 日志。事件名使用 `search_no_results`，携带本次调用的 `request_id` 和 `query_length`，但不得记录 `query` 原文。保留现有的 `search_completed` 日志和返回空列表的业务行为。执行 `uv run engineering-demo no-such-document --json-logs`：`cli.py` 中的 `print()` 应向 stdout 输出空列表 `[]`，日志 handler 应向 stderr 输出 `search_no_results` 和 `search_completed`，且两条日志的 `request_id` 相同。
+
+4. **练习只在终止边界记录异常。** 在 `examples/logging/` 下新建 `06_exception_boundary.py`，复用 `engineering_foundations.logging_config.configure_logging()` 配置日志。在文件中定义一个立即抛出 `TimeoutError` 的 `query_external_index()`，再由 `main()` 调用它。`query_external_index()` 中不记日志；`main()` 捕获 `TimeoutError`，在决定终止程序时调用一次 `logger.exception()`，记录事件名 `index_query_failed` 和一个 `request_id`，然后返回退出码 `1`。文件入口使用 `raise SystemExit(main())` 把该返回值变成进程退出状态。执行 `uv run python examples/logging/06_exception_boundary.py`：程序应以非 0 状态结束，输出只有一条 `ERROR` 事件，并包含 `TimeoutError` 调用栈。
+
+5. **使用 `caplog` 验证新增的无结果事件。** 在 `tests/test_search.py` 中新增 `test_no_results_logs_safe_context`：使用固定的 `request_id` 和无法匹配任何示例文档的查询调用 `search_documents()`，先断言返回空列表。再从 `caplog.records` 中找到 `search_no_results` 记录，断言其级别为 `INFO`、`request_id` 与调用时传入的值一致、`query_length` 正确，且记录中没有 `query` 字段。同时断言 `search_completed` 仍然存在，其 `result_count` 为 `0` 且 `request_id` 相同。执行 `uv run pytest tests/test_search.py::test_no_results_logs_safe_context`，该测试应通过。
+
+完成标准：以上每项的命令或页面操作都得到所述结果；执行 `uv run pytest` 时全部测试通过；新增日志不包含密钥、完整查询或文档正文。
 
 完成后继续学习[基础测试](basic-testing.md)。
 

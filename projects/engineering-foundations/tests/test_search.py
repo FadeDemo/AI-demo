@@ -67,3 +67,29 @@ def test_success_logs_share_request_id(
     ]
     assert {record.request_id for record in records} == {"req-success"}
     assert records[-1].result_count == 1
+
+
+def test_no_results_logs_safe_context(
+    sample_documents: list[Document], caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="engineering_foundations.search"):
+        results = search_documents(
+            sample_documents, "no-such-document", request_id="req-no-results"
+        )
+    assert len(results) == 0
+    found_search_completed = False
+    found_search_no_results = False
+    for record in caplog.records:
+        if record.event == "search_no_results":
+            found_search_no_results = True
+            assert record.levelno == logging.INFO
+            assert record.request_id == "req-no-results"
+            assert record.query_length == len("no-such-document".strip().casefold())
+            assert not hasattr(record, "query")
+        elif record.event == "search_completed":
+            found_search_completed = True
+            assert record.result_count == 0
+            assert record.request_id == "req-no-results"
+
+    assert found_search_no_results, "search_no_results log not found"
+    assert found_search_completed, "search_completed log not found"
