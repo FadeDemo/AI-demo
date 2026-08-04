@@ -177,6 +177,7 @@ install_command() {
   local install_directory="$HOME/.local/bin"
   local command_path="$install_directory/use-venv"
   local installed_marker=""
+  local temporary_command_path=""
 
   mkdir -p "$install_directory"
 
@@ -184,10 +185,7 @@ install_command() {
     if [[ "${command_path:A}" != "$script_path" ]]; then
       fail "$command_path already links to another file: ${command_path:A}"
     fi
-    rm "$command_path"
-  fi
-
-  if [[ -e "$command_path" ]]; then
+  elif [[ -e "$command_path" ]]; then
     installed_marker="$(sed -n '2p' "$command_path" 2>/dev/null || true)"
     if [[ "$installed_marker" != "# use-venv-managed-command" ]]; then
       fail "$command_path already exists and is not managed by this script"
@@ -198,7 +196,17 @@ install_command() {
     fi
   fi
 
-  install -m 0755 "$script_path" "$command_path"
+  temporary_command_path="$(
+    mktemp "$install_directory/.use-venv.XXXXXXXX"
+  )" || fail "cannot create a temporary installation file"
+  if ! install -m 0755 "$script_path" "$temporary_command_path"; then
+    rm -f "$temporary_command_path"
+    fail "cannot prepare $command_path"
+  fi
+  if ! mv -f "$temporary_command_path" "$command_path"; then
+    rm -f "$temporary_command_path"
+    fail "cannot replace $command_path"
+  fi
   print "Installed standalone command: $command_path"
 
   case ":$PATH:" in
@@ -304,8 +312,10 @@ update_vscode_settings() {
     "$launch_path" <<'PYTHON'
 import json
 import os
+import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 def remove_jsonc_comments(source: str) -> str:
@@ -618,6 +628,63 @@ def workspace_value(workspace: Path, target: Path) -> str:
     return "${workspaceFolder}/" + Path(relative).as_posix()
 
 
+def file_matches(path: Path, pattern: str) -> bool:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    return re.search(pattern, source, flags=re.MULTILINE) is not None
+
+
+def detect_test_framework(project: Path) -> Optional[str]:
+    if (project / "pytest.ini").is_file() or (project / "conftest.py").is_file():
+        return "pytest"
+
+    pytest_config_patterns = {
+        "pyproject.toml": r"^\s*\[tool\.pytest(?:\.|\])",
+        "setup.cfg": r"^\s*\[tool:pytest\]",
+        "tox.ini": r"^\s*\[pytest\]",
+    }
+    for filename, pattern in pytest_config_patterns.items():
+        if file_matches(project / filename, pattern):
+            return "pytest"
+
+    tests_directory = project / "tests"
+    if not tests_directory.is_dir():
+        return "none"
+
+    uses_pytest = False
+    uses_unittest = False
+    uses_plain_test_functions = False
+    test_files_found = False
+    try:
+        test_paths = list(tests_directory.rglob("test*.py"))
+    except OSError:
+        return None
+
+    for test_path in test_paths:
+        test_files_found = True
+        uses_pytest = uses_pytest or file_matches(
+            test_path, r"^\s*(?:import\s+pytest\b|from\s+pytest\b)"
+        )
+        uses_unittest = uses_unittest or file_matches(
+            test_path, r"^\s*(?:import\s+unittest\b|from\s+unittest\b)"
+        )
+        uses_plain_test_functions = uses_plain_test_functions or file_matches(
+            test_path, r"^(?:async\s+)?def\s+test_"
+        )
+
+    if not test_files_found:
+        return "none"
+    if uses_pytest or (uses_unittest and uses_plain_test_functions):
+        return "pytest"
+    if uses_unittest:
+        return "unittest"
+    if uses_plain_test_functions:
+        return "pytest"
+    return None
+
+
 settings_path = Path(sys.argv[1])
 workspace = Path(sys.argv[2]).resolve()
 project = Path(sys.argv[3]).resolve()
@@ -648,6 +715,7 @@ python_projects = [
         "packageManager": "ms-python.python:pip",
     }
 ]
+test_framework = detect_test_framework(project)
 
 updates = {
     "python-envs.workspaceSearchPaths": [relative_venv_setting],
@@ -662,6 +730,36 @@ updates = {
     "python.testing.cwd": project_setting,
     "pylint.cwd": project_setting,
 }
+
+if test_framework == "pytest":
+    updates.update(
+        {
+            "python.testing.pytestEnabled": True,
+            "python.testing.unittestEnabled": False,
+            "python.testing.pytestArgs": [],
+        }
+    )
+elif test_framework == "unittest":
+    updates.update(
+        {
+            "python.testing.pytestEnabled": False,
+            "python.testing.unittestEnabled": True,
+            "python.testing.unittestArgs": [
+                "-v",
+                "-s",
+                "tests",
+                "-p",
+                "test_*.py",
+            ],
+        }
+    )
+elif test_framework == "none":
+    updates.update(
+        {
+            "python.testing.pytestEnabled": False,
+            "python.testing.unittestEnabled": False,
+        }
+    )
 
 try:
     updated_source = update_jsonc(
