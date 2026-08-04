@@ -30,12 +30,20 @@ def test_search_respects_limit(sample_documents: list[Document]) -> None:
 
 @pytest.mark.parametrize("limit", [0, -1])
 def test_invalid_limit_is_rejected(
-    sample_documents: list[Document], limit: int
+    sample_documents: list[Document], caplog: pytest.LogCaptureFixture, limit: int
 ) -> None:
-    with pytest.raises(ValueError, match="limit must be at least 1"):
+    with (
+        pytest.raises(ValueError, match="limit must be at least 1"),
+        caplog.at_level(logging.WARNING, logger="engineering_foundations.search"),
+    ):
         search_documents(
             sample_documents, "rag", request_id="req-invalid-limit", limit=limit
         )
+    record = caplog.records[-1]
+    assert record.levelno == logging.WARNING
+    assert record.event == "search_rejected"
+    assert record.request_id == "req-invalid-limit"
+    assert record.reason == "invalid_limit"
 
 
 def test_empty_query_is_rejected_with_context(
@@ -93,3 +101,56 @@ def test_no_results_logs_safe_context(
 
     assert found_search_no_results, "search_no_results log not found"
     assert found_search_completed, "search_completed log not found"
+
+
+def test_search_is_case_insensitive():
+    # Arrange
+    documents = [Document(title="RAG Guide", content="...", source="guide.md")]
+
+    # Act
+    results = search_documents(documents, "rag", request_id="test-request")
+
+    # Assert
+    assert [result.document.title for result in results] == ["RAG Guide"]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_count"),
+    [
+        ("RAG", 2),
+        ("logging", 1),
+        ("missing", 0),
+    ],
+)
+def test_search_result_count(sample_documents, query, expected_count):
+    results = search_documents(sample_documents, query, request_id="test-request")
+
+    assert len(results) == expected_count
+
+
+@pytest.mark.parametrize("query", ["RAG", "rag"])
+@pytest.mark.parametrize("limit", [1, 2, 3])
+def test_search_with_limits(sample_documents, query, limit):
+    results = search_documents(
+        sample_documents, query, request_id="test-request", limit=limit
+    )
+
+    assert len(results) <= limit
+
+
+def test_searches_content_read_from_tmp_path(tmp_path):
+    path = tmp_path / "guide.md"
+    path.write_text("# RAG Guide", encoding="utf-8")
+
+    document = Document(
+        title=path.stem,
+        content=path.read_text(encoding="utf-8"),
+        source=path.name,
+    )
+    results = search_documents(
+        [document],
+        "rag",
+        request_id="req-tmp-path",
+    )
+
+    assert [result.document.source for result in results] == ["guide.md"]

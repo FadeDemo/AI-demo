@@ -38,6 +38,26 @@ For every Markdown change:
 3. Lint the changed Markdown files with the repository-local `markdownlint-cli2`.
 4. Inspect newly added or edited emphasis manually when rendered output is part of the reported issue. Formatter and linter success alone is not sufficient verification for delimiter-boundary defects.
 
+### Course tasks and answer records
+
+Course documents must remain complete and usable before a learner creates any personal answer document. State each written prompt and its acceptance criteria directly in the course document; do not link task instructions to `answers/` files or assume those files already exist.
+
+Files under an `answers/` directory are personal records created while completing exercises, not prerequisites or worksheets distributed by the course. An answer file may link back to its course, and an answer index may list the file after it exists, but the course must not depend on the answer file.
+
+Do not write:
+
+```markdown
+在[练习回答](answers/example.md)的对应小节中说明三种替身的区别。
+```
+
+Write:
+
+```markdown
+以书面形式说明 Stub、Fake 和 Mock 分别控制或验证了什么。
+```
+
+Before finishing a course-document change, manually verify that every newly added or edited task can be understood and completed without opening a personal answer file. Formatter and linter success do not replace this semantic check.
+
 ## Extending these instructions
 
 - Add future repository-wide rules under a section named for the affected artifact or workflow, such as `Documentation changes`, `Python changes`, `Testing`, or `Version control`.
