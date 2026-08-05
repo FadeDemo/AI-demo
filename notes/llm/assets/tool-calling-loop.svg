@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="520" viewBox="0 0 1080 520" role="img" aria-labelledby="title desc">
+  <title id="title">&#x5DE5;&#x5177;&#x8C03;&#x7528;&#x7684;&#x5E94;&#x7528;&#x63A7;&#x5236;&#x5FAA;&#x73AF;</title>
+  <desc id="desc">&#x6A21;&#x578B;&#x53EA;&#x80FD;&#x63D0;&#x51FA;&#x5DE5;&#x5177;&#x8C03;&#x7528;&#x3002;&#x5E94;&#x7528;&#x9A8C;&#x8BC1;&#x5DE5;&#x5177;&#x540D;&#x3001;&#x53C2;&#x6570;&#x3001;&#x6743;&#x9650;&#x548C;&#x98CE;&#x9669;&#xFF0C;&#x6267;&#x884C;&#x5141;&#x8BB8;&#x7684;&#x5DE5;&#x5177;&#xFF0C;&#x5E76;&#x5C06;&#x5E26;&#x8C03;&#x7528; ID &#x7684;&#x7ED3;&#x679C;&#x8FD4;&#x56DE;&#x6A21;&#x578B;&#x3002;&#x6700;&#x7EC8;&#x7B54;&#x6848;&#x4ECD;&#x9700;&#x5E94;&#x7528;&#x9A8C;&#x8BC1;&#x3002;</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#5368d4"/>
+    </marker>
+  </defs>
+  <rect width="1080" height="520" rx="28" fill="#f7f8fc"/>
+  <text x="540" y="46" text-anchor="middle" font-family="system-ui, sans-serif" font-size="25" font-weight="700" fill="#202746">&#x6A21;&#x578B;&#x63D0;&#x51FA;&#x5EFA;&#x8BAE;&#xFF0C;&#x5E94;&#x7528;&#x638C;&#x63E1;&#x6267;&#x884C;&#x6743;</text>
+  <g font-family="system-ui, sans-serif">
+    <rect x="60" y="180" width="180" height="120" rx="18" fill="#fff4e5" stroke="#e1a34b" stroke-width="2"/>
+    <text x="150" y="222" text-anchor="middle" font-size="20" font-weight="700" fill="#754817">&#x6A21;&#x578B;</text>
+    <text x="150" y="256" text-anchor="middle" font-size="14" fill="#79654c">&#x63D0;&#x51FA;&#x5DE5;&#x5177;&#x540D;&#x3001;&#x53C2;&#x6570;</text>
+    <text x="150" y="280" text-anchor="middle" font-size="14" fill="#79654c">&#x548C;&#x8C03;&#x7528; ID</text>
+    <rect x="320" y="105" width="280" height="270" rx="22" fill="#eef1ff" stroke="#7184e4" stroke-width="2"/>
+    <text x="460" y="148" text-anchor="middle" font-size="21" font-weight="700" fill="#29366f">&#x5E94;&#x7528;&#x6267;&#x884C;&#x5668;</text>
+    <g font-size="14" fill="#596686">
+      <text x="365" y="190">1. &#x5DE5;&#x5177;&#x662F;&#x5426;&#x5DF2;&#x6CE8;&#x518C;</text>
+      <text x="365" y="224">2. &#x53C2;&#x6570;&#x662F;&#x5426;&#x901A;&#x8FC7; Schema</text>
+      <text x="365" y="258">3. &#x7528;&#x6237;&#x662F;&#x5426;&#x6709;&#x8D44;&#x6E90;&#x6743;&#x9650;</text>
+      <text x="365" y="292">4. &#x662F;&#x5426;&#x9700;&#x8981;&#x4EBA;&#x5DE5;&#x786E;&#x8BA4;</text>
+      <text x="365" y="326">5. &#x662F;&#x5426;&#x8D85;&#x8FC7;&#x8F6E;&#x6570;&#x4E0E;&#x671F;&#x9650;</text>
+    </g>
+    <rect x="690" y="115" width="210" height="120" rx="18" fill="#ebf8f1" stroke="#4aa877" stroke-width="2"/>
+    <text x="795" y="157" text-anchor="middle" font-size="20" font-weight="700" fill="#1f6946">&#x5141;&#x8BB8;&#x7684;&#x5DE5;&#x5177;</text>
+    <text x="795" y="191" text-anchor="middle" font-size="14" fill="#527060">&#x5728;&#x53D7;&#x63A7;&#x8303;&#x56F4;&#x5185;&#x6267;&#x884C;</text>
+    <text x="795" y="215" text-anchor="middle" font-size="14" fill="#527060">&#x8FD4;&#x56DE;&#x5206;&#x7C7B;&#x7ED3;&#x679C;</text>
+    <rect x="690" y="300" width="210" height="120" rx="18" fill="#fff" stroke="#d17a86" stroke-width="2"/>
+    <text x="795" y="342" text-anchor="middle" font-size="20" font-weight="700" fill="#7b3440">&#x62D2;&#x7EDD;&#x6216;&#x786E;&#x8BA4;</text>
+    <text x="795" y="376" text-anchor="middle" font-size="14" fill="#7a5b61">&#x672A;&#x77E5;&#x3001;&#x8D8A;&#x6743;&#x3001;&#x9AD8;&#x98CE;&#x9669;</text>
+    <text x="795" y="400" text-anchor="middle" font-size="14" fill="#7a5b61">&#x4E0D;&#x4F1A;&#x7531;&#x6A21;&#x578B;&#x81EA;&#x884C;&#x653E;&#x884C;</text>
+    <rect x="320" y="425" width="580" height="60" rx="14" fill="#f0ecff" stroke="#9a85db" stroke-width="2"/>
+    <text x="610" y="462" text-anchor="middle" font-size="16" font-weight="700" fill="#4f3e86">&#x5DE5;&#x5177;&#x7ED3;&#x679C;&#x5E26;&#x8C03;&#x7528; ID &#x8FD4;&#x56DE;&#x6A21;&#x578B;&#xFF1B;&#x6700;&#x7EC8;&#x56DE;&#x7B54;&#x518D;&#x6B21;&#x7ECF;&#x8FC7;&#x5E94;&#x7528;&#x9A8C;&#x8BC1;</text>
+  </g>
+  <g fill="none" stroke="#5368d4" stroke-width="3">
+    <path d="M240 240 H312" marker-end="url(#arrow)"/>
+    <path d="M600 185 H682" marker-end="url(#arrow)"/>
+    <path d="M600 300 C640 300 650 360 682 360" marker-end="url(#arrow)"/>
+    <path d="M795 235 V417" marker-end="url(#arrow)"/>
+    <path d="M690 455 H250 C205 455 180 385 180 308" marker-end="url(#arrow)"/>
+  </g>
+</svg>

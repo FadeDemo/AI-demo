@@ -38,6 +38,34 @@ For every Markdown change:
 3. Lint the changed Markdown files with the repository-local `markdownlint-cli2`.
 4. Inspect newly added or edited emphasis manually when rendered output is part of the reported issue. Formatter and linter success alone is not sufficient verification for delimiter-boundary defects.
 
+### Learning status metadata
+
+The YAML front matter `status` field describes the learner's progress, not whether an agent has finished authoring the document.
+
+- Use `planned` for a newly created course, concept note, or experiment unless the user explicitly states that learning has already started or finished.
+- Use `learning` only when the user explicitly states that the learner has started the material.
+- Use `completed` only when the user explicitly confirms that the learner has completed the material. Do not infer completion from a polished document, complete lesson content, passing repository checks, existing exercises, or generated answer templates.
+- A course index must not be marked `completed` merely because all child course documents have been written.
+- Use the `updated` field, not `status`, to record that document content was created or revised.
+
+Do not write this for a newly generated course whose learner progress is unknown:
+
+```yaml
+status: completed
+```
+
+Write:
+
+```yaml
+status: planned
+```
+
+Before finishing any change that creates or edits learning-note front matter, run the following command and verify every listed value against explicit user-provided progress information:
+
+```shell
+rg -n '^status:' <changed-learning-note-files>
+```
+
 ### Course tasks and answer records
 
 Course documents must remain complete and usable before a learner creates any personal answer document. State each written prompt and its acceptance criteria directly in the course document; do not link task instructions to `answers/` files or assume those files already exist.

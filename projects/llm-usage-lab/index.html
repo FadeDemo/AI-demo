@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLM 使用基础交互实验</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        background: #f5f7fb;
+        color: #20263f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        background:
+          radial-gradient(circle at 12% 8%, #dfe5ff 0, transparent 30rem),
+          radial-gradient(circle at 88% 82%, #dff5e9 0, transparent 26rem), #f5f7fb;
+      }
+
+      main {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 46px 0 64px;
+      }
+
+      header {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 28px;
+        align-items: end;
+        margin-bottom: 26px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 10px;
+        font-size: clamp(30px, 5vw, 48px);
+        letter-spacing: -0.04em;
+      }
+
+      h2 {
+        margin-bottom: 8px;
+        font-size: 24px;
+      }
+
+      h3 {
+        margin-bottom: 14px;
+        font-size: 16px;
+      }
+
+      p {
+        color: #5d6682;
+        line-height: 1.65;
+      }
+
+      button,
+      select,
+      input {
+        font: inherit;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 8px;
+        padding: 5px;
+        border: 1px solid #d5daea;
+        border-radius: 13px;
+        background: rgb(255 255 255 / 72%);
+      }
+
+      .tab,
+      .action {
+        min-height: 42px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        cursor: pointer;
+        font-weight: 700;
+      }
+
+      .tab {
+        padding: 0 16px;
+        background: transparent;
+        color: #505b78;
+      }
+
+      .tab[aria-selected="true"] {
+        border-color: #cbd2f4;
+        background: #fff;
+        color: #35469b;
+        box-shadow: 0 4px 14px rgb(55 70 140 / 10%);
+      }
+
+      .tab:focus-visible,
+      .action:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 3px solid #6578dc44;
+        outline-offset: 2px;
+      }
+
+      .panel {
+        overflow: hidden;
+        border: 1px solid #dce0ed;
+        border-radius: 20px;
+        background: rgb(255 255 255 / 92%);
+        box-shadow: 0 18px 50px rgb(40 52 100 / 10%);
+      }
+
+      .panel-header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px 24px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 22px 24px 18px;
+        border-bottom: 1px solid #e5e8f1;
+      }
+
+      .panel-header p {
+        max-width: 720px;
+        margin-bottom: 0;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(290px, 0.9fr) minmax(0, 1.6fr);
+        min-height: 520px;
+      }
+
+      .controls {
+        padding: 22px;
+        border-right: 1px solid #e5e8f1;
+        background: #fafbfe;
+      }
+
+      .visual {
+        min-width: 0;
+        padding: 26px;
+      }
+
+      .control {
+        margin-bottom: 21px;
+      }
+
+      .control-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+        color: #4e5874;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .control output {
+        color: #33449a;
+        font-variant-numeric: tabular-nums;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        accent-color: #5368d4;
+      }
+
+      select {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid #c8cee2;
+        border-radius: 10px;
+        background: #fff;
+        padding: 0 11px;
+        color: inherit;
+      }
+
+      .budget-bar {
+        display: flex;
+        width: 100%;
+        min-height: 104px;
+        overflow: hidden;
+        border: 2px solid #c5cce2;
+        border-radius: 15px;
+        background: #edf0f6;
+      }
+
+      .segment {
+        display: grid;
+        min-width: 2px;
+        place-items: center;
+        overflow: hidden;
+        color: #fff;
+        text-align: center;
+        transition: width 180ms ease;
+      }
+
+      .segment span {
+        padding: 5px;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.25;
+      }
+
+      .system {
+        background: #4056bd;
+      }
+
+      .history {
+        background: #7184df;
+      }
+
+      .user {
+        background: #9aa8eb;
+      }
+
+      .sources {
+        background: #dc9841;
+      }
+
+      .output {
+        background: #3c9b6d;
+      }
+
+      .remaining {
+        background: #d8dde9;
+        color: #58627c;
+      }
+
+      .status {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .metric {
+        padding: 14px;
+        border: 1px solid #e0e4ef;
+        border-radius: 12px;
+        background: #fff;
+      }
+
+      .metric strong,
+      .metric span {
+        display: block;
+      }
+
+      .metric strong {
+        margin-bottom: 4px;
+        font-size: 21px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .metric span {
+        color: #6c758e;
+        font-size: 12px;
+      }
+
+      .verdict {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-radius: 12px;
+        background: #e9f7f0;
+        color: #246246;
+        font-weight: 750;
+        line-height: 1.5;
+      }
+
+      .verdict.over {
+        background: #fff0f1;
+        color: #8b3542;
+      }
+
+      .candidate-list {
+        display: grid;
+        gap: 11px;
+      }
+
+      .candidate {
+        display: grid;
+        grid-template-columns: 80px minmax(80px, 1fr) 64px;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .token {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 750;
+      }
+
+      .track {
+        height: 23px;
+        overflow: hidden;
+        border-radius: 7px;
+        background: #edf0f6;
+      }
+
+      .fill {
+        height: 100%;
+        border-radius: inherit;
+        background: #5368d4;
+        transition:
+          width 180ms ease,
+          opacity 180ms ease;
+      }
+
+      .candidate.excluded {
+        color: #9299aa;
+      }
+
+      .candidate.excluded .fill {
+        opacity: 0.18;
+      }
+
+      .probability {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .sampling-footer {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 24px;
+        padding-top: 18px;
+        border-top: 1px solid #e5e8f1;
+      }
+
+      .action {
+        padding: 0 16px;
+        border-color: #5368d4;
+        background: #5368d4;
+        color: #fff;
+      }
+
+      .sample-result {
+        color: #4f5974;
+      }
+
+      .sample-result strong {
+        color: #304198;
+      }
+
+      .note {
+        margin: 22px 0 0;
+        padding: 13px 15px;
+        border-left: 4px solid #e2a14a;
+        background: #fff8ed;
+        color: #72572d;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      @media (max-width: 820px) {
+        header,
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        header {
+          align-items: start;
+        }
+
+        .tabs {
+          width: fit-content;
+        }
+
+        .controls {
+          border-right: 0;
+          border-bottom: 1px solid #e5e8f1;
+        }
+
+        .status {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 520px) {
+        main {
+          width: min(100% - 20px, 1120px);
+          padding-top: 26px;
+        }
+
+        .tabs {
+          width: 100%;
+        }
+
+        .tab {
+          flex: 1;
+          padding: 0 8px;
+        }
+
+        .panel-header,
+        .controls,
+        .visual {
+          padding: 18px;
+        }
+
+        .candidate {
+          grid-template-columns: 68px minmax(60px, 1fr) 54px;
+          gap: 8px;
+          font-size: 13px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>LLM 使用基础交互实验</h1>
+          <p>
+            观察上下文如何共享预算，以及 temperature 与 top-p
+            如何改变示意采样。所有计算只在本地浏览器完成。
+          </p>
+        </div>
+        <div class="tabs" role="tablist" aria-label="实验选择">
+          <button
+            type="button"
+            class="tab"
+            id="budget-tab"
+            role="tab"
+            aria-selected="true"
+            aria-controls="budget-panel"
+            data-panel="budget-panel"
+          >
+            上下文预算
+          </button>
+          <button
+            type="button"
+            class="tab"
+            id="sampling-tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="sampling-panel"
+            data-panel="sampling-panel"
+          >
+            采样分布
+          </button>
+        </div>
+      </header>
+
+      <section class="panel" id="budget-panel" role="tabpanel" aria-labelledby="budget-tab">
+        <div class="panel-header">
+          <div>
+            <h2>上下文是共享总预算</h2>
+            <p>输入、工具协议和输出预留共同占用窗口。滑块使用教学 Token 数，不会分析真实文本。</p>
+          </div>
+        </div>
+        <div class="workspace">
+          <div class="controls" id="budget-controls">
+            <div class="control">
+              <div class="control-head">
+                <label for="window-size">窗口上限</label>
+                <output for="window-size" data-for="window-size"></output>
+              </div>
+              <select id="window-size">
+                <option value="4000">4,000 Token</option>
+                <option value="8000" selected>8,000 Token</option>
+                <option value="16000">16,000 Token</option>
+                <option value="32000">32,000 Token</option>
+              </select>
+            </div>
+            <div class="control">
+              <div class="control-head">
+                <label for="system-tokens">system 规则</label>
+                <output for="system-tokens" data-for="system-tokens"></output>
+              </div>
+              <input id="system-tokens" type="range" min="0" max="4000" step="100" value="800" />
+            </div>
+            <div class="control">
+              <div class="control-head">
+                <label for="history-tokens">对话历史</label>
+                <output for="history-tokens" data-for="history-tokens"></output>
+              </div>
+              <input id="history-tokens" type="range" min="0" max="12000" step="100" value="1800" />
+            </div>
+            <div class="control">
+              <div class="control-head">
+                <label for="user-tokens">本轮用户输入</label>
+                <output for="user-tokens" data-for="user-tokens"></output>
+              </div>
+              <input id="user-tokens" type="range" min="0" max="8000" step="100" value="700" />
+            </div>
+            <div class="control">
+              <div class="control-head">
+                <label for="source-tokens">外部材料与工具定义</label>
+                <output for="source-tokens" data-for="source-tokens"></output>
+              </div>
+              <input id="source-tokens" type="range" min="0" max="20000" step="100" value="2600" />
+            </div>
+            <div class="control">
+              <div class="control-head">
+                <label for="output-tokens">输出预留</label>
+                <output for="output-tokens" data-for="output-tokens"></output>
+              </div>
+              <input id="output-tokens" type="range" min="100" max="8000" step="100" value="1200" />
+            </div>
+          </div>
+          <div class="visual">
+            <h3>窗口占用</h3>
+            <div class="budget-bar" id="budget-bar" role="img" aria-label="上下文预算组成"></div>
+            <div class="status">
+              <div class="metric"><strong id="used-value">0</strong><span>已计划 Token</span></div>
+              <div class="metric">
+                <strong id="remaining-value">0</strong><span>剩余 Token</span>
+              </div>
+              <div class="metric"><strong id="usage-value">0%</strong><span>窗口占用率</span></div>
+            </div>
+            <div class="verdict" id="budget-verdict" role="status"></div>
+            <p class="note">
+              教学提醒：真实请求还可能包含消息包装、工具 Schema
+              和服务协议开销。硬上限附近应保留安全余量。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="panel"
+        id="sampling-panel"
+        role="tabpanel"
+        aria-labelledby="sampling-tab"
+        hidden
+      >
+        <div class="panel-header">
+          <div>
+            <h2>概率形状与候选集合</h2>
+            <p>temperature 重新塑造示意概率，top-p 再保留累计概率达到阈值的最小候选集合。</p>
+          </div>
+        </div>
+        <div class="workspace">
+          <div class="controls">
+            <div class="control">
+              <div class="control-head">
+                <label for="temperature">temperature</label>
+                <output for="temperature" data-for="temperature"></output>
+              </div>
+              <input id="temperature" type="range" min="0.2" max="2" step="0.1" value="1" />
+            </div>
+            <div class="control">
+              <div class="control-head">
+                <label for="top-p">top-p</label>
+                <output for="top-p" data-for="top-p"></output>
+              </div>
+              <input id="top-p" type="range" min="0.1" max="1" step="0.05" value="0.9" />
+            </div>
+            <p class="note">候选和分数是固定教学数据。真实模型会在每个位置重新计算大量候选。</p>
+          </div>
+          <div class="visual">
+            <h3>“这门课程很……”的下一个示意 Token</h3>
+            <div class="candidate-list" id="candidate-list" aria-live="polite"></div>
+            <div class="sampling-footer">
+              <button class="action" id="sample-button" type="button">示意采样</button>
+              <div class="sample-result" id="sample-result" role="status">
+                当前保留 <strong id="kept-count">0</strong> 个候选
+              </div>
+            </div>
+            <p class="note">
+              temperature 或 top-p
+              只改变生成选择。无论选择“清晰”还是“有趣”，页面都没有新增任何课程事实。
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const numberFormat = new Intl.NumberFormat("zh-CN");
+      const tabs = [...document.querySelectorAll(".tab")];
+      const panels = [...document.querySelectorAll('[role="tabpanel"]')];
+
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          tabs.forEach((item) => item.setAttribute("aria-selected", String(item === tab)));
+          panels.forEach((panel) => {
+            panel.hidden = panel.id !== tab.dataset.panel;
+          });
+        });
+      });
+
+      const budgetInputs = {
+        system: document.getElementById("system-tokens"),
+        history: document.getElementById("history-tokens"),
+        user: document.getElementById("user-tokens"),
+        sources: document.getElementById("source-tokens"),
+        output: document.getElementById("output-tokens"),
+      };
+      const windowSize = document.getElementById("window-size");
+      const budgetBar = document.getElementById("budget-bar");
+      const budgetVerdict = document.getElementById("budget-verdict");
+      const segmentLabels = {
+        system: "system",
+        history: "历史",
+        user: "输入",
+        sources: "外部材料",
+        output: "输出预留",
+      };
+
+      function setOutput(input, value, suffix = " Token") {
+        const output = document.querySelector(`output[data-for="${input.id}"]`);
+        if (output) output.textContent = `${numberFormat.format(value)}${suffix}`;
+      }
+
+      function renderBudget() {
+        const limit = Number(windowSize.value);
+        const values = Object.fromEntries(
+          Object.entries(budgetInputs).map(([key, input]) => [key, Number(input.value)]),
+        );
+        const used = Object.values(values).reduce((sum, value) => sum + value, 0);
+        const remaining = limit - used;
+
+        setOutput(windowSize, limit);
+        Object.values(budgetInputs).forEach((input) => setOutput(input, Number(input.value)));
+
+        budgetBar.replaceChildren();
+        Object.entries(values).forEach(([key, value]) => {
+          const segment = document.createElement("div");
+          segment.className = `segment ${key}`;
+          segment.style.width = `${Math.max(0, (value / Math.max(used, limit)) * 100)}%`;
+          segment.title = `${segmentLabels[key]}：${numberFormat.format(value)} Token`;
+          if (value / Math.max(used, limit) > 0.075) {
+            const label = document.createElement("span");
+            label.textContent = `${segmentLabels[key]}\n${numberFormat.format(value)}`;
+            segment.append(label);
+          }
+          budgetBar.append(segment);
+        });
+
+        if (remaining > 0) {
+          const empty = document.createElement("div");
+          empty.className = "segment remaining";
+          empty.style.width = `${(remaining / limit) * 100}%`;
+          empty.title = `剩余：${numberFormat.format(remaining)} Token`;
+          if (remaining / limit > 0.075) {
+            const label = document.createElement("span");
+            label.textContent = `剩余\n${numberFormat.format(remaining)}`;
+            empty.append(label);
+          }
+          budgetBar.append(empty);
+        }
+
+        document.getElementById("used-value").textContent = numberFormat.format(used);
+        document.getElementById("remaining-value").textContent = numberFormat.format(remaining);
+        document.getElementById("usage-value").textContent = `${Math.round((used / limit) * 100)}%`;
+
+        const over = remaining < 0;
+        budgetVerdict.classList.toggle("over", over);
+        budgetVerdict.textContent = over
+          ? `超出 ${numberFormat.format(Math.abs(remaining))} Token：发送前必须裁剪、降低输出预留或拒绝请求。`
+          : `预算内剩余 ${numberFormat.format(remaining)} Token。真实项目还应为协议与估算误差保留余量。`;
+      }
+
+      windowSize.addEventListener("change", renderBudget);
+      Object.values(budgetInputs).forEach((input) => input.addEventListener("input", renderBudget));
+
+      const candidates = [
+        { token: "清晰", logit: 3.1 },
+        { token: "实用", logit: 2.45 },
+        { token: "系统", logit: 1.9 },
+        { token: "有趣", logit: 1.35 },
+        { token: "漫长", logit: 0.3 },
+        { token: "神秘", logit: -0.2 },
+      ];
+      const temperatureInput = document.getElementById("temperature");
+      const topPInput = document.getElementById("top-p");
+      const candidateList = document.getElementById("candidate-list");
+      const sampleResult = document.getElementById("sample-result");
+      let currentDistribution = [];
+
+      function softmax(items, temperature) {
+        const scaled = items.map((item) => item.logit / temperature);
+        const max = Math.max(...scaled);
+        const exponentials = scaled.map((value) => Math.exp(value - max));
+        const total = exponentials.reduce((sum, value) => sum + value, 0);
+        return items.map((item, index) => ({ ...item, probability: exponentials[index] / total }));
+      }
+
+      function applyTopP(distribution, threshold) {
+        let cumulative = 0;
+        let closed = false;
+        return distribution.map((item) => {
+          const kept = !closed;
+          if (kept) {
+            cumulative += item.probability;
+            if (cumulative >= threshold) closed = true;
+          }
+          return { ...item, kept };
+        });
+      }
+
+      function renderSampling() {
+        const temperature = Number(temperatureInput.value);
+        const topP = Number(topPInput.value);
+        setOutput(temperatureInput, temperature, "");
+        setOutput(topPInput, topP, "");
+        currentDistribution = applyTopP(softmax(candidates, temperature), topP);
+        const largest = Math.max(...currentDistribution.map((item) => item.probability));
+
+        candidateList.replaceChildren();
+        currentDistribution.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = `candidate${item.kept ? "" : " excluded"}`;
+          row.title = item.kept ? "保留在 top-p 候选集合中" : "被 top-p 排除";
+
+          const token = document.createElement("div");
+          token.className = "token";
+          token.textContent = item.token;
+
+          const track = document.createElement("div");
+          track.className = "track";
+          const fill = document.createElement("div");
+          fill.className = "fill";
+          fill.style.width = `${(item.probability / largest) * 100}%`;
+          track.append(fill);
+
+          const probability = document.createElement("div");
+          probability.className = "probability";
+          probability.textContent = `${(item.probability * 100).toFixed(1)}%`;
+          row.append(token, track, probability);
+          candidateList.append(row);
+        });
+
+        const kept = currentDistribution.filter((item) => item.kept);
+        sampleResult.innerHTML = `当前保留 <strong>${kept.length}</strong> 个候选`;
+      }
+
+      function sampleCandidate() {
+        const kept = currentDistribution.filter((item) => item.kept);
+        const total = kept.reduce((sum, item) => sum + item.probability, 0);
+        let cursor = Math.random() * total;
+        const chosen =
+          kept.find((item) => {
+            cursor -= item.probability;
+            return cursor <= 0;
+          }) ?? kept[kept.length - 1];
+        sampleResult.innerHTML = `本次示意选择：<strong>${chosen.token}</strong>（只从保留集合采样）`;
+      }
+
+      temperatureInput.addEventListener("input", renderSampling);
+      topPInput.addEventListener("input", renderSampling);
+      document.getElementById("sample-button").addEventListener("click", sampleCandidate);
+
+      renderBudget();
+      renderSampling();
+    </script>
+  </body>
+</html>

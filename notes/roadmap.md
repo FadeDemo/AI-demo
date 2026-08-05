@@ -4,7 +4,7 @@ type: roadmap
 area: ai
 status: active
 created: 2026-07-20
-updated: 2026-08-01
+updated: 2026-08-05
 tags:
   - ai
   - rag
@@ -27,14 +27,14 @@ tags:
 
 需要，但没有想象中那么多。
 
-你**不需要**先完成高等数学、机器学习、深度学习、PyTorch 和 Transformer 全套课程，才有资格开始 RAG。RAG 首先是一类 AI 应用工程：系统先从外部知识库检索相关内容，再把内容和问题一起交给 LLM 生成答案。它涉及 LLM，但大量工作其实属于后端开发、数据处理、搜索和系统评测。
+你 **不需要** 先完成高等数学、机器学习、深度学习、PyTorch 和 Transformer 全套课程，才有资格开始 RAG。RAG 首先是一类 AI 应用工程：系统先从外部知识库检索相关内容，再把内容和问题一起交给 LLM 生成答案。它涉及 LLM，但大量工作其实属于后端开发、数据处理、搜索和系统评测。
 
 ### 开始 RAG 前必须具备
 
 - Python 基础：函数、类、异常、[文件处理](python/file-handling.md)、[虚拟环境](python/virtual-environments.md)、[包管理](python/package-management.md)。
 - 工程基础：Git、命令行、[日志](engineering/logging.md)、环境变量、[基础测试](engineering/basic-testing.md)。
 - Web 基础：HTTP、REST API、JSON、同步与异步的基本区别。
-- LLM 使用基础：消息角色、Prompt、Token、上下文窗口、温度、结构化输出。
+- [LLM 使用基础](llm/index.md)：消息角色、Prompt、Token、上下文窗口、温度、结构化输出、工具调用、可靠性与安全。
 - 数据基础：能处理 TXT、Markdown、PDF 解析结果和简单表格数据。
 
 ### 可以在做 RAG 的过程中学习
@@ -113,18 +113,18 @@ Agent 开发                  AI Infra / 推理服务
 
 ---
 
-## 4. 第 1 阶段：LLM 应用基础（第 1 周）
+## 4. 第 1 阶段：[LLM 应用基础](llm/index.md)（第 1 周）
 
 ### 必学概念
 
-- Token 与 tokenizer：文字如何变成模型处理的序列。
-- 上下文窗口：Prompt、历史消息、检索材料和输出都占用上下文。
-- 消息角色：system、user、assistant、tool。
-- 生成参数：temperature、top-p、max tokens；知道它们不能修复知识缺失。
-- Structured Output：让模型按 JSON Schema 返回结果。
-- Tool/Function Calling：模型选择工具，应用程序负责真实执行。
-- Streaming、超时、重试、速率限制、并发与幂等性。
-- Prompt Injection 与数据泄露的基本风险。
+- 模型调用与消息：理解应用、SDK 和模型服务的边界，以及 system、user、assistant、tool 消息各自的来源与作用。
+- Token 与上下文窗口：理解 tokenizer，以及 Prompt、历史消息、检索材料和输出如何共享上下文预算。
+- 生成参数与采样：理解 temperature、top-p 和 max tokens 能控制什么，并知道它们不能修复知识缺失。
+- Prompt 设计：明确任务、输入边界、约束、输出要求和证据不足时的行为，并通过固定样本验证改动。
+- 结构化输出：让模型按照 JSON Schema 返回结果，再由应用验证结构与业务规则。
+- 工具调用：模型提出工具和参数，应用程序负责验证权限、执行工具并返回结果。
+- 流式输出与可靠性：处理 Streaming、超时、重试、速率限制、并发、取消与幂等性。
+- 安全、评测与可观测性：处理 Prompt Injection 和数据泄露风险，并记录质量、延迟、Token 与成本等工程指标。
 
 ### 动手任务
 
@@ -135,6 +135,8 @@ Agent 开发                  AI Infra / 推理服务
 3. 加入结构化 JSON 输出。
 4. 记录每次请求的延迟、输入/输出 Token 和估算成本。
 5. 为 API 超时和限流实现有限次数的指数退避重试。
+
+完整课时、配套图表、交互实验以及功能、自动化和知识验收统一维护在 [LLM 使用基础](llm/index.md)中。本路线图只保留阶段目标，不替代课程中的任务说明。
 
 ### 你应该能解释
 
