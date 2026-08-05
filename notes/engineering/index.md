@@ -2,9 +2,9 @@
 title: 通用工程基础
 type: index
 area: engineering
-status: learning
+status: completed
 created: 2026-08-01
-updated: 2026-08-03
+updated: 2026-08-05
 tags:
   - engineering
   - logging

@@ -28,6 +28,23 @@ def test_search_respects_limit(sample_documents: list[Document]) -> None:
     assert results[0].document.source == "more.md"
 
 
+def test_search_orders_by_score_then_source() -> None:
+    documents = [
+        Document(title="RAG", content="", source="z-last.md"),
+        Document(title="RAG RAG", content="", source="highest-score.md"),
+        Document(title="RAG", content="", source="a-first.md"),
+    ]
+
+    results = search_documents(documents, "rag", request_id="req-ordering")
+
+    assert [result.document.source for result in results] == [
+        "highest-score.md",
+        "a-first.md",
+        "z-last.md",
+    ]
+    assert [result.score for result in results] == [4, 2, 2]
+
+
 @pytest.mark.parametrize("limit", [0, -1])
 def test_invalid_limit_is_rejected(
     sample_documents: list[Document], caplog: pytest.LogCaptureFixture, limit: int
@@ -66,7 +83,9 @@ def test_success_logs_share_request_id(
     sample_documents: list[Document], caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.INFO, logger="engineering_foundations.search"):
-        search_documents(sample_documents, "logging", request_id="req-success")
+        results = search_documents(
+            sample_documents, "logging", request_id="req-success"
+        )
 
     records = [record for record in caplog.records if record.levelno == logging.INFO]
     assert [record.event for record in records] == [
@@ -74,7 +93,13 @@ def test_success_logs_share_request_id(
         "search_completed",
     ]
     assert {record.request_id for record in records} == {"req-success"}
-    assert records[-1].result_count == 1
+    assert [result.document.source for result in results] == ["logging.md"]
+
+    started_record, completed_record = records
+    assert started_record.document_count == len(sample_documents)
+    assert started_record.query_length == len("logging")
+    assert completed_record.result_count == len(results)
+    assert completed_record.duration_ms >= 0
 
 
 def test_no_results_logs_safe_context(

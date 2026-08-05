@@ -22,7 +22,10 @@ def test_json_formatter_keeps_structured_context() -> None:
 
     payload = json.loads(JsonFormatter().format(record))
 
+    assert isinstance(payload["timestamp"], str)
     assert payload["level"] == "INFO"
+    assert payload["logger"] == "engineering_foundations.search"
+    assert payload["message"] == "search completed"
     assert payload["event"] == "search_completed"
     assert payload["request_id"] == "req-json"
     assert payload["result_count"] == 2
