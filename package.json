@@ -4,18 +4,21 @@
   "private": true,
   "description": "AI learning notes and runnable demo projects",
   "scripts": {
-    "format": "npm run format:markdown && npm run format:python",
+    "format": "npm run format:markdown && npm run format:html && npm run format:python",
     "format:markdown": "prettier --write \"**/*.md\"",
+    "format:html": "prettier --write \"projects/**/*.html\"",
     "format:python": "npm run format:python-course && npm run format:engineering-foundations",
     "format:python-course": "cd projects/python && uv run ruff format .",
     "format:engineering-foundations": "cd projects/engineering-foundations && uv run ruff format .",
-    "format:check": "npm run format:markdown:check && npm run format:python:check",
+    "format:check": "npm run format:markdown:check && npm run format:html:check && npm run format:python:check",
     "format:markdown:check": "prettier --check \"**/*.md\"",
+    "format:html:check": "prettier --check \"projects/**/*.html\"",
     "format:python:check": "npm run format:python-course:check && npm run format:engineering-foundations:check",
     "format:python-course:check": "cd projects/python && uv run ruff format --check .",
     "format:engineering-foundations:check": "cd projects/engineering-foundations && uv run ruff format --check .",
-    "lint": "npm run lint:markdown && npm run lint:python",
+    "lint": "npm run lint:markdown && npm run lint:html && npm run lint:python",
     "lint:markdown": "markdownlint-cli2",
+    "lint:html": "html-validate \"projects/**/*.html\"",
     "lint:python": "npm run lint:python-course && npm run lint:engineering-foundations",
     "lint:python-course": "cd projects/python && uv run ruff check .",
     "lint:engineering-foundations": "cd projects/engineering-foundations && uv run ruff check .",
@@ -24,10 +27,11 @@
     "lint:engineering-foundations:fix": "cd projects/engineering-foundations && uv run ruff check --fix ."
   },
   "devDependencies": {
+    "html-validate": "11.6.2",
     "markdownlint-cli2": "0.23.2",
     "prettier": "3.9.5"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^22.22.0 || >=24.8.0"
   }
 }
