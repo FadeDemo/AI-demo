@@ -11,7 +11,8 @@ Usage: use-venv [PROJECT_OR_VENV_PATH] [--workspace WORKSPACE_PATH] [--reload]
        use-venv --uninstall
 
 Switch a VS Code workspace to an existing Python .venv, update workspace and
-debug settings, and let Python Environments discover it.
+debug settings, let Python Environments discover it, and realign the
+extension's selected environment when it points elsewhere (macOS only).
 
 Arguments:
   PROJECT_OR_VENV_PATH  Project directory, .venv directory, or a directory
@@ -873,6 +874,412 @@ PYTHON
   "$VSCODE_VENV_DIRECTORY/bin/python" --version
 }
 
+# Reads the environment the Python Environments extension currently selects for
+# this workspace from its private workspace storage. Read-only: this step never
+# writes extension state; if the extension later changes its storage format,
+# the lookup simply returns nothing and the realignment step is skipped.
+vscode_workspace_selected_venv() {
+  python3 - "$VSCODE_VENV_WORKSPACE_DIRECTORY" <<'PYTHON'
+import json
+import os
+import sqlite3
+import sys
+import urllib.parse
+
+workspace = sys.argv[1]
+folder_uri = "file://" + urllib.parse.quote(workspace)
+storage_base = os.path.join(
+    os.path.expanduser("~"),
+    "Library",
+    "Application Support",
+    "Code",
+    "User",
+    "workspaceStorage",
+)
+if not os.path.isdir(storage_base):
+    sys.exit(0)
+
+for entry_name in os.listdir(storage_base):
+    entry_directory = os.path.join(storage_base, entry_name)
+    workspace_file = os.path.join(entry_directory, "workspace.json")
+    if not os.path.isfile(workspace_file):
+        continue
+    try:
+        with open(workspace_file, encoding="utf-8") as workspace_handle:
+            workspace_metadata = json.load(workspace_handle)
+    except (OSError, ValueError):
+        continue
+    if workspace_metadata.get("folder") != folder_uri:
+        continue
+
+    database_path = os.path.join(entry_directory, "state.vscdb")
+    if not os.path.isfile(database_path):
+        sys.exit(0)
+    try:
+        connection = sqlite3.connect(
+            "file:" + database_path + "?mode=ro", uri=True
+        )
+        try:
+            row = connection.execute(
+                "SELECT value FROM ItemTable WHERE key = ?",
+                ("ms-python.vscode-python-envs",),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            sys.exit(0)
+        payload = json.loads(row[0])
+        selected = payload.get(
+            "ms-python.vscode-python-envs:venv:WORKSPACE_SELECTED", {}
+        )
+        if not isinstance(selected, dict):
+            sys.exit(0)
+        stored = selected.get(workspace)
+        if isinstance(stored, str) and stored:
+            print(stored)
+    except (sqlite3.Error, ValueError):
+        sys.exit(0)
+    sys.exit(0)
+PYTHON
+}
+
+# Re-reads the selection a few times so the read-back verification tolerates
+# the extension's own state-write latency after a UI selection.
+workspace_environment_is_target() {
+  local target_interpreter="$1"
+  local attempt
+  local stored_interpreter=""
+  for attempt in 1 2 3; do
+    stored_interpreter="$(vscode_workspace_selected_venv)" || return 1
+    if [[ "$stored_interpreter" == "$target_interpreter" ]]; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+# Drives the extension's official "Python: Select Interpreter" command through
+# the same guarded UI automation used for --reload, so the realignment does not
+# depend on the extension's private storage format. Selection is verified by
+# read-back afterwards; a mismatch fails the whole run and rolls back.
+ensure_workspace_environment() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  command -v osascript >/dev/null || return 0
+
+  local target_interpreter="$VSCODE_VENV_DIRECTORY/bin/python"
+  local stored_interpreter=""
+  stored_interpreter="$(vscode_workspace_selected_venv)" || return 0
+  [[ -n "$stored_interpreter" ]] || return 0
+  # Compare the stored venv path exactly: different venvs created by the same
+  # uv Python version resolve through symlinks to the same interpreter binary,
+  # so canonicalizing (:A) would falsely treat any two such venvs as equal.
+  if [[ "$stored_interpreter" == "$target_interpreter" ]]; then
+    return 0
+  fi
+
+  if ! pgrep -x "Code" >/dev/null 2>&1 && \
+     ! pgrep -x "Code - Insiders" >/dev/null 2>&1; then
+    print -u2 "use-venv: VS Code is not running, so the Python Environments selection was not realigned; start VS Code and either run use-venv again or run the Python: Select Interpreter command."
+    return 0
+  fi
+
+  print "Selecting:   $target_interpreter in VS Code..."
+  select_vscode_environment
+  if workspace_environment_is_target "$target_interpreter"; then
+    print "Selected:    $target_interpreter"
+    return
+  fi
+
+  # In a multi-project workspace the picker may ask for the project first;
+  # select again inside the now-open environment picker.
+  finish_environment_selection
+  if ! workspace_environment_is_target "$target_interpreter"; then
+    fail "Python Environments still selects ${stored_interpreter}; select $target_interpreter manually and run use-venv again"
+  fi
+  print "Selected:    $target_interpreter"
+}
+
+select_vscode_environment() {
+  local filter_text="${VSCODE_VENV_PROJECT_DIRECTORY:t}"
+
+  local -a select_commands=(
+    "Python: Select Interpreter"
+    "Python: 选择解释器"
+  )
+
+  run_environment_selection_automation() {
+    osascript - "$filter_text" "${select_commands[@]}" <<'APPLESCRIPT'
+on run argv
+    set filterText to item 1 of argv as text
+    set previousClipboard to the clipboard
+    try
+        tell application "Visual Studio Code" to activate
+        delay 0.3
+
+        tell application "System Events"
+            tell process "Code"
+                -- Locate the menu item by its Cmd-Shift-P shortcut attributes
+                -- so this does not depend on the localized menu label.
+                set commandPaletteItem to missing value
+                repeat with candidateItem in menu items of menu "View" of menu bar 1
+                    try
+                        if (value of attribute "AXMenuItemCmdChar" of candidateItem is "P") and (value of attribute "AXMenuItemCmdModifiers" of candidateItem is 1) then
+                            set commandPaletteItem to candidateItem
+                            exit repeat
+                        end if
+                    end try
+                end repeat
+                if commandPaletteItem is missing value then error "Cannot find the VS Code Command Palette menu item"
+
+                click commandPaletteItem
+                delay 0.5
+
+                -- Confirm the command palette result list received focus.
+                set currentElement to value of attribute "AXFocusedUIElement"
+                set commandListFound to false
+                repeat 8 times
+                    try
+                        if value of attribute "AXRole" of currentElement is "AXList" then
+                            set commandListFound to true
+                            exit repeat
+                        end if
+                        set currentElement to value of attribute "AXParent" of currentElement
+                    on error
+                        exit repeat
+                    end try
+                end repeat
+                if not commandListFound then error "VS Code Command Palette result list did not receive focus"
+            end tell
+
+            -- Run the interpreter selection command, trying each locale with a
+            -- fresh palette. Clearing the query text does not work reliably in
+            -- current VS Code versions, so close and reopen the palette
+            -- instead.
+            set selectCommandFound to false
+            repeat with commandIndex from 2 to (count of argv)
+                set commandText to item commandIndex of argv as text
+                tell process "Code"
+                    set commandPaletteItem to missing value
+                    repeat with candidateItem in menu items of menu "View" of menu bar 1
+                        try
+                            if (value of attribute "AXMenuItemCmdChar" of candidateItem is "P") and (value of attribute "AXMenuItemCmdModifiers" of candidateItem is 1) then
+                                set commandPaletteItem to candidateItem
+                                exit repeat
+                            end if
+                        end try
+                    end repeat
+                    if commandPaletteItem is missing value then error "Cannot find the VS Code Command Palette menu item"
+                    click commandPaletteItem
+                    delay 0.5
+                    set currentElement to value of attribute "AXFocusedUIElement"
+                    set commandListFound to false
+                    repeat 8 times
+                        try
+                            if value of attribute "AXRole" of currentElement is "AXList" then
+                                set commandListFound to true
+                                exit repeat
+                            end if
+                            set currentElement to value of attribute "AXParent" of currentElement
+                        on error
+                            exit repeat
+                        end try
+                    end repeat
+                    if not commandListFound then error "VS Code Command Palette result list did not receive focus"
+                end tell
+
+                set the clipboard to commandText
+                keystroke "v" using {command down}
+                delay 0.6
+
+                tell process "Code"
+                    set focusedElement to value of attribute "AXFocusedUIElement"
+                    try
+                        set focusedValue to value of attribute "AXValue" of focusedElement as text
+                    on error
+                        set focusedValue to ""
+                    end try
+                end tell
+
+                if focusedValue contains commandText then
+                    set selectCommandFound to true
+                    exit repeat
+                end if
+
+                key code 53
+                delay 0.3
+            end repeat
+
+            if not selectCommandFound then error "VS Code did not select a supported interpreter selection command"
+
+            key code 36
+            delay 0.6
+
+            -- Type the environment filter and confirm the picker matched it.
+            set pickerListFound to false
+            tell process "Code"
+                set currentElement to value of attribute "AXFocusedUIElement"
+                repeat 8 times
+                    try
+                        if value of attribute "AXRole" of currentElement is "AXList" then
+                            set pickerListFound to true
+                            exit repeat
+                        end if
+                        set currentElement to value of attribute "AXParent" of currentElement
+                    on error
+                        exit repeat
+                    end try
+                end repeat
+            end tell
+            if not pickerListFound then error "VS Code environment picker did not receive focus"
+
+            set the clipboard to filterText
+            keystroke "v" using {command down}
+            delay 0.6
+
+            tell process "Code"
+                set focusedElement to value of attribute "AXFocusedUIElement"
+                try
+                    set focusedRole to value of attribute "AXRole" of focusedElement as text
+                    set focusedValue to value of attribute "AXValue" of focusedElement as text
+                on error
+                    set focusedValue to ""
+                end try
+            end tell
+            -- A focused text field means the filter matched no result row; the
+            -- Quick Pick focuses the first result's static text instead.
+            if focusedRole is "AXTextField" or focusedValue does not contain filterText then error "Environment picker did not match " & filterText
+
+            key code 36
+            delay 0.4
+
+            set the clipboard to previousClipboard
+        end tell
+    on error errorMessage number errorNumber
+        try
+            set the clipboard to previousClipboard
+            tell application "System Events" to key code 53
+        end try
+        error errorMessage number errorNumber
+    end try
+end run
+APPLESCRIPT
+  }
+
+  local automation_error=""
+  if automation_error="$(run_environment_selection_automation 2>&1)"; then
+    return
+  fi
+
+  if [[ "$automation_error" != *"not allowed assistive access"* && \
+        "$automation_error" != *"不允许辅助访问"* && \
+        "$automation_error" != *"(-25211)"* ]]; then
+    fail "VS Code environment selection was not performed: $automation_error"
+  fi
+
+  if [[ ! -t 0 ]]; then
+    fail "macOS denied UI control; grant Accessibility access to the terminal application and run use-venv again"
+  fi
+
+  print -u2 "macOS denied UI control. Opening Accessibility settings..."
+  open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+  print -u2 "Enable Accessibility access for Visual Studio Code, then return here."
+  read "?Press Enter to retry the environment selection: "
+
+  run_environment_selection_automation || \
+    fail "VS Code environment selection was still denied; verify Accessibility access and run use-venv again"
+}
+
+# Second selection round for two-step pickers (project first, then
+# environment). Refuses to type unless a picker list is focused, so a closed
+# picker never writes the filter into an editor.
+finish_environment_selection() {
+  local filter_text="${VSCODE_VENV_PROJECT_DIRECTORY:t}"
+
+  run_environment_selection_finish() {
+    osascript - "$filter_text" <<'APPLESCRIPT'
+on run argv
+    set filterText to item 1 of argv as text
+    set previousClipboard to the clipboard
+    try
+        tell application "Visual Studio Code" to activate
+        delay 0.3
+
+        tell application "System Events"
+            set pickerListFound to false
+            tell process "Code"
+                set currentElement to value of attribute "AXFocusedUIElement"
+                repeat 8 times
+                    try
+                        if value of attribute "AXRole" of currentElement is "AXList" then
+                            set pickerListFound to true
+                            exit repeat
+                        end if
+                        set currentElement to value of attribute "AXParent" of currentElement
+                    on error
+                        exit repeat
+                    end try
+                end repeat
+            end tell
+            if not pickerListFound then error "VS Code environment picker is not open"
+
+            set the clipboard to filterText
+            keystroke "v" using {command down}
+            delay 0.6
+
+            tell process "Code"
+                set focusedElement to value of attribute "AXFocusedUIElement"
+                try
+                    set focusedRole to value of attribute "AXRole" of focusedElement as text
+                    set focusedValue to value of attribute "AXValue" of focusedElement as text
+                on error
+                    set focusedValue to ""
+                end try
+            end tell
+            -- A focused text field means the filter matched no result row; the
+            -- Quick Pick focuses the first result's static text instead.
+            if focusedRole is "AXTextField" or focusedValue does not contain filterText then error "Environment picker did not match " & filterText
+
+            key code 36
+            delay 0.4
+
+            set the clipboard to previousClipboard
+        end tell
+    on error errorMessage number errorNumber
+        try
+            set the clipboard to previousClipboard
+            tell application "System Events" to key code 53
+        end try
+        error errorMessage number errorNumber
+    end try
+end run
+APPLESCRIPT
+  }
+
+  local automation_error=""
+  if automation_error="$(run_environment_selection_finish 2>&1)"; then
+    return
+  fi
+
+  if [[ "$automation_error" != *"not allowed assistive access"* && \
+        "$automation_error" != *"不允许辅助访问"* && \
+        "$automation_error" != *"(-25211)"* ]]; then
+    fail "VS Code environment selection was not completed: $automation_error"
+  fi
+
+  if [[ ! -t 0 ]]; then
+    fail "macOS denied UI control; grant Accessibility access to the terminal application and run use-venv again"
+  fi
+
+  print -u2 "macOS denied UI control. Opening Accessibility settings..."
+  open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+  print -u2 "Enable Accessibility access for Visual Studio Code, then return here."
+  read "?Press Enter to retry the environment selection: "
+
+  run_environment_selection_finish || \
+    fail "VS Code environment selection was still denied; verify Accessibility access and run use-venv again"
+}
+
 reload_vscode() {
   [[ "$(uname -s)" == "Darwin" ]] || \
     fail "automatic VS Code reload is currently supported only on macOS"
@@ -1047,6 +1454,7 @@ esac
 begin_file_transaction
 update_vscode_settings
 capture_applied_file_transaction
+ensure_workspace_environment
 
 if [[ "$should_reload" == true ]]; then
   reload_vscode

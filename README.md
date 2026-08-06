@@ -38,7 +38,7 @@ npm run lint
 
 ## 切换 VS Code Python 环境
 
-仓库包含一个一键切换 VS Code Python 项目的脚本。它会查找目标项目的 `.venv`，把 Python Environments 的项目和搜索路径切换为该目标，并无损更新工作区设置及已有 Python 调试配置。Python Environments 扩展会实时读取这些设置，因此正常切换不需要控制 VS Code 界面或重新加载窗口：
+仓库包含一个一键切换 VS Code Python 项目的脚本。它会查找目标项目的 `.venv`，把 Python Environments 的项目和搜索路径切换为该目标，并无损更新工作区设置及已有 Python 调试配置。Python Environments 扩展会实时读取这些设置，因此通常不需要重新加载窗口；当扩展此前已为工作区选中过其他环境时（多 Python 项目工作区中常见），脚本会在 macOS 上自动执行 `Python: Select Interpreter` 命令把选中对齐到目标环境，无法自动化时则会输出手动指引。
 
 首次使用时，通过脚本自身安装全局命令：
 
@@ -80,7 +80,7 @@ cd projects/engineering-foundations
 use-venv
 ```
 
-脚本不会写入 `python.defaultInterpreterPath`：该设置只在工作区尚未选择过解释器时生效。脚本改为保留唯一的目标 Python 项目和环境搜索路径，使 Python Environments 扩展重新发现目标 `.venv`；`python.terminal.activateEnvironment` 会让随后新建的终端自动激活它。已有终端不会被追溯修改。
+脚本不会写入 `python.defaultInterpreterPath`（该设置只在工作区从未选择过解释器时生效）。`python-envs.pythonProjects` 与 `python-envs.workspaceSearchPaths` 中只保留目标项目与目标 `.venv`，使 Python Environments 扩展重新发现目标环境；`python.terminal.activateEnvironment` 会让随后新建的终端自动激活它，已有终端不会被追溯修改。扩展自己存储的“选中环境”独立于配置文件：若此前选中过其他环境，脚本会检测出来，并通过 `Python: Select Interpreter` 命令重新对齐；该步骤只读扩展存储用于验证，不修改任何配置文件。
 
 脚本主体位于 `scripts/use-venv.zsh`，其中内嵌的 Python 代码只对需要变更的 JSONC 配置值进行局部编辑，保留其他配置、注释和原有排版；已有 `launch.json` 中的 Python/debugpy 配置会同步更新 `python`、`cwd` 及已经存在的相关环境变量，其他类型的调试配置保持不变。两个配置文件按事务处理：后续步骤失败时会恢复脚本执行前的原始内容；若文件在脚本写入后又被其他程序修改，则不会强行覆盖，而会保留事务备份并报告路径。
 

@@ -1,24 +1,34 @@
 {
-  "python-envs.workspaceSearchPaths": ["./projects/engineering-foundations/.venv"],
+  "python-envs.workspaceSearchPaths": [
+    "./projects/llm-terminal-assistant/.venv"
+  ],
   "python-envs.pythonProjects": [
     {
-      "path": "projects/engineering-foundations",
+      "path": "projects/llm-terminal-assistant",
       "envManager": "ms-python.python:venv",
       "packageManager": "ms-python.python:pip"
     }
   ],
   "python.terminal.executeInFileDir": false,
-  "terminal.integrated.cwd": "${workspaceFolder}/projects/engineering-foundations",
-  "python.analysis.extraPaths": ["${workspaceFolder}/projects/engineering-foundations/src"],
-  "pylint.interpreter": ["${workspaceFolder}/projects/engineering-foundations/.venv/bin/python"],
-  "autopep8.interpreter": ["${workspaceFolder}/projects/engineering-foundations/.venv/bin/python"],
-  "isort.interpreter": ["${workspaceFolder}/projects/engineering-foundations/.venv/bin/python"],
-  "python.testing.cwd": "${workspaceFolder}/projects/engineering-foundations",
+  "terminal.integrated.cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/projects/llm-terminal-assistant/src"
+  ],
+  "pylint.interpreter": [
+    "${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"
+  ],
+  "autopep8.interpreter": [
+    "${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"
+  ],
+  "isort.interpreter": [
+    "${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"
+  ],
+  "python.testing.cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
   "python.testing.unittestEnabled": false,
-  "python.testing.pytestEnabled": true,
+  "python.testing.pytestEnabled": false,
   "python.testing.unittestArgs": ["-v", "-s", "tests", "-p", "test_*.py"],
   "python.testing.pytestArgs": [],
-  "pylint.cwd": "${workspaceFolder}/projects/engineering-foundations",
+  "pylint.cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
   "python.useEnvironmentsExtension": true,
   "python.terminal.activateEnvironment": true
 }

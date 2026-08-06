@@ -7,8 +7,8 @@
       "request": "launch",
       "program": "${file}",
       "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}/projects/engineering-foundations",
-      "python": "${workspaceFolder}/projects/engineering-foundations/.venv/bin/python",
+      "cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
+      "python": "${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python",
       "justMyCode": true
     },
     {
@@ -18,11 +18,11 @@
       "purpose": ["debug-test"],
       "program": "${file}",
       "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}/projects/engineering-foundations",
-      "python": "${workspaceFolder}/projects/engineering-foundations/.venv/bin/python",
+      "cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
+      "python": "${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python",
       "env": {
-        "PYTHONPATH": "${workspaceFolder}/projects/engineering-foundations/src",
-        "PROJECT_ROOT_PATH": "${workspaceFolder}/projects/engineering-foundations"
+        "PYTHONPATH": "${workspaceFolder}/projects/llm-terminal-assistant/src",
+        "PROJECT_ROOT_PATH": "${workspaceFolder}/projects/llm-terminal-assistant"
       },
       "justMyCode": true
     }
