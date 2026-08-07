@@ -4,7 +4,7 @@ type: concept
 area: llm
 status: planned
 created: 2026-08-05
-updated: 2026-08-06
+updated: 2026-08-07
 tags:
   - llm
   - api
@@ -106,6 +106,8 @@ API Key 通过环境变量或密钥管理服务注入，不写进源码、示例
 ### 任务 2：定义适配层数据结构（必须）
 
 定义项目自己的 `Message`、`ModelRequest`、`ModelResponse` 和 `ModelClient` 接口。响应至少能表达文本、结束原因、usage 和工具请求，不直接向业务层暴露 SDK 原始对象。
+
+字段无唯一正确答案，验收看行为；建议先查阅所选 SDK 官方文档中消息与响应对象的结构作为设计参考，再定义自己的结构。最小基线：`Message` 至少包含角色与内容；`ModelRequest` 至少包含消息列表；`ModelResponse` 的“文本”指模型生成的正文内容，可能为空（例如纯工具请求），响应结构应让正文与结束原因、usage、工具请求相互独立。基线之外的字段按需自由设计。
 
 通过条件：使用 fake 客户端时，业务代码无需导入真实 SDK；更换模型服务时，预期只修改适配层和配置。
 
