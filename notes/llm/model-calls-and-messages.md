@@ -4,7 +4,7 @@ type: concept
 area: llm
 status: planned
 created: 2026-08-05
-updated: 2026-08-07
+updated: 2026-08-08
 tags:
   - llm
   - api
@@ -115,7 +115,12 @@ API Key 通过环境变量或密钥管理服务注入，不写进源码、示例
 
 实现两轮终端对话，记录实际发送的消息角色和顺序，但不记录消息正文。
 
-通过条件：第二轮包含有效的 system 规则、第一轮 user 与 assistant 消息、本轮 user 消息；日志只记录角色、数量、长度或哈希等安全元数据。
+两轮请求的预期消息结构：
+
+- 第一轮：`system` + 本轮 `user`；
+- 第二轮：`system` + 第一轮的 `user` 与 `assistant` + 本轮 `user`，其中 `assistant` 消息是第一轮模型回答，由应用回放进请求数组。
+
+通过条件：第二轮实际发送的消息包含有效的 `system` 规则、第一轮的 `user` 与 `assistant` 消息、本轮 `user` 消息；日志只记录角色、数量、长度或哈希等安全元数据。
 
 ### 知识检查（必须）
 
