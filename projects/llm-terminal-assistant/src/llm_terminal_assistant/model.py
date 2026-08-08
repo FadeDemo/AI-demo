@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from llm_terminal_assistant.message import Message
 
@@ -15,7 +15,7 @@ class ModelResponse:
     text: str
     reason: str
     usage: ModelUsage
-    name: str
+    function_call: list[ToolCallRequest] = field(default_factory=list)
 
 
 @dataclass
@@ -36,3 +36,10 @@ class InputTokensDetails:
 @dataclass
 class OutputTokensDetails:
     reasoning_tokens: int
+
+
+@dataclass
+class ToolCallRequest:
+    call_id: str
+    name: str
+    arguments: str
