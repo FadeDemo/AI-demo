@@ -40,7 +40,7 @@ class OpenAIClient(ModelClient):
                 ),
                 total_tokens=openai_response.usage.total_tokens,
             ),
-            function_call=[
+            tool_calls=[
                 ToolCallRequest(
                     call_id=o.call_id,
                     name=o.name,

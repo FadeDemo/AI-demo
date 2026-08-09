@@ -7,10 +7,12 @@ authors = [
     { name = "paigeman", email = "53284808+paigeman@users.noreply.github.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "python-dotenv>=1.2.2",
+]
 
 [project.scripts]
-llm-terminal-assistant = "llm_terminal_assistant:main"
+llm-terminal-assistant = "llm_terminal_assistant.cli:main"
 
 [project.optional-dependencies]
 openai = [

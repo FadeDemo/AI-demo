@@ -15,7 +15,7 @@ class ModelResponse:
     text: str
     reason: str
     usage: ModelUsage
-    function_call: list[ToolCallRequest] = field(default_factory=list)
+    tool_calls: list[ToolCallRequest] = field(default_factory=list)
 
 
 @dataclass
