@@ -38,6 +38,30 @@ For every Markdown change:
 3. Lint the changed Markdown files with the repository-local `markdownlint-cli2`.
 4. Inspect newly added or edited emphasis manually when rendered output is part of the reported issue. Formatter and linter success alone is not sufficient verification for delimiter-boundary defects.
 
+### Provider-specific terminology
+
+When documentation names a provider-, product-, API-, model-, or version-specific parameter, endpoint, or behavior, identify its owner and applicable interface at first use. State the generic concept separately from the provider-specific example; do not present a specific identifier as though every provider, API, or model uses it.
+
+When the explanation depends on exact provider-specific behavior, verify it against documentation maintained by that provider and link the source near the explanation when appropriate.
+
+Do not write:
+
+```markdown
+`max_output_tokens` controls the output limit.
+```
+
+Write:
+
+```markdown
+Different providers and APIs use different output-limit parameters. For example, the OpenAI Responses API uses `max_output_tokens`.
+```
+
+Before finishing a Markdown change, list code-formatted identifiers in the changed prose and manually verify that the first use of each provider-specific identifier names its owner, interface, and scope:
+
+```shell
+rg -n '`[A-Za-z][A-Za-z0-9_.-]*`' <changed-markdown-files>
+```
+
 ### Learning status metadata
 
 The YAML front matter `status` field describes the learner's progress, not whether an agent has finished authoring the document.
@@ -85,6 +109,41 @@ Write:
 ```
 
 Before finishing a course-document change, manually verify that every newly added or edited task can be understood and completed without opening a personal answer file. Formatter and linter success do not replace this semantic check.
+
+## Execution hygiene
+
+### Spawned process lifecycle
+
+Treat every command that may outlive its immediate caller as a managed process. This includes browsers, GUI applications, preview or conversion tools, development servers, watchers, background jobs, and commands that can leave worker or helper processes behind.
+
+Before launching a managed process:
+
+- Prefer a tool that exits deterministically when it can perform the same task.
+- Give the invocation a task-unique signature, such as a dedicated temporary path, and record every returned PID, process-tree root, session ID, or tool-specific handle.
+- Define a bounded wait condition and a cleanup procedure before starting the process. Do not rely on a successful tool return, timeout, error, or interrupted session to prove that child processes exited.
+
+On every terminal path, including success, failure, cancellation, timeout, and fallback:
+
+- Inspect the recorded process or session and any task-identified descendants.
+- Request graceful termination first, wait for exit, and use forced termination only for the exact agent-owned processes that remain.
+- Verify that the recorded PIDs, sessions, and task-unique signature no longer identify a live process before reporting completion or removing its temporary directory.
+
+Never terminate processes by a broad application or executable name when the user may be running the same application. Resolve exact agent-owned targets from recorded identifiers and command lines; leave unrelated user processes untouched.
+
+Do not launch an unbounded process and assume the calling tool will clean it up:
+
+```shell
+firefox --headless --screenshot preview.png page.html
+```
+
+A compliant workflow must capture the launched process or session identifier, wait only within an explicit bound, clean up the exact recorded target, and then verify both the identifier and task signature. For example:
+
+```shell
+ps -p <recorded-pid> -o pid=,ppid=,etime=,%cpu=,command=
+ps -axo pid=,ppid=,etime=,%cpu=,command= | rg '<task-unique-signature>'
+```
+
+After cleanup, both verification commands must produce no process matches other than the verification command itself. If verification is unavailable or inconclusive, do not claim cleanup succeeded; report the unresolved process identifiers and continue with the safest exact-target check available.
 
 ## Extending these instructions
 
