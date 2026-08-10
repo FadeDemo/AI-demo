@@ -469,8 +469,11 @@
       <section class="panel" id="budget-panel" role="tabpanel" aria-labelledby="budget-tab">
         <div class="panel-header">
           <div>
-            <h2>上下文是共享总预算</h2>
-            <p>输入、工具协议和输出预留共同占用窗口。滑块使用教学 Token 数，不会分析真实文本。</p>
+            <h2>单次调用的上下文窗口预算</h2>
+            <p>
+              本轮活跃输入与本轮输出预算共同占用上下文窗口。滑块使用教学 Token
+              数，不会分析真实文本。
+            </p>
           </div>
         </div>
         <div class="workspace">
@@ -489,7 +492,7 @@
             </div>
             <div class="control">
               <div class="control-head">
-                <label for="system-tokens">system 规则</label>
+                <label for="system-tokens">系统或开发者指令</label>
                 <output for="system-tokens" data-for="system-tokens"></output>
               </div>
               <input id="system-tokens" type="range" min="0" max="4000" step="100" value="800" />
@@ -517,7 +520,7 @@
             </div>
             <div class="control">
               <div class="control-head">
-                <label for="output-tokens">输出预留</label>
+                <label for="output-tokens">本轮输出预算</label>
                 <output for="output-tokens" data-for="output-tokens"></output>
               </div>
               <input id="output-tokens" type="range" min="100" max="8000" step="100" value="1200" />
@@ -616,11 +619,11 @@
       const budgetBar = document.getElementById("budget-bar");
       const budgetVerdict = document.getElementById("budget-verdict");
       const segmentLabels = {
-        system: "system",
+        system: "系统或开发者指令",
         history: "历史",
         user: "输入",
         sources: "外部材料",
-        output: "输出预留",
+        output: "本轮输出预算",
       };
 
       function setOutput(input, value, suffix = " Token") {
@@ -673,8 +676,8 @@
         const over = remaining < 0;
         budgetVerdict.classList.toggle("over", over);
         budgetVerdict.textContent = over
-          ? `超出 ${numberFormat.format(Math.abs(remaining))} Token：发送前必须裁剪、降低输出预留或拒绝请求。`
-          : `预算内剩余 ${numberFormat.format(remaining)} Token。真实项目还应为协议与估算误差保留余量。`;
+          ? `超出 ${numberFormat.format(Math.abs(remaining))} Token：发送前必须缩短或压缩输入、降低输出预算，或者拒绝本轮调用。`
+          : `预算内剩余 ${numberFormat.format(remaining)} Token。真实调用还应为输入估算误差和尚未计入的消息结构等开销预留安全余量。`;
       }
 
       windowSize.addEventListener("change", renderBudget);
