@@ -2,9 +2,9 @@
 title: AI 学习笔记
 type: index
 area: ai
-status: active
+status: learning
 created: 2026-07-20
-updated: 2026-08-05
+updated: 2026-08-10
 tags:
   - ai
   - index
@@ -47,7 +47,7 @@ notes/
 
 ## 笔记元数据
 
-新增笔记时建议使用以下最小格式：
+新增学习笔记使用以下最小格式：
 
 ```yaml
 ---
@@ -62,4 +62,4 @@ tags:
 ---
 ```
 
-建议的 `type`：`index`、`roadmap`、`concept`、`experiment`、`project`、`resource`。建议的 `status`：`planned`、`learning`、`completed`、`evergreen`。
+允许的 `type` 值为 `index`、`roadmap`、`concept`、`experiment`、`project`、`resource`、`answer`。学习进度 `status` 只使用 `planned`、`learning`、`completed`；不要用 `active` 或 `evergreen` 表示内容是否仍在维护，内容修订时间记录在 `updated` 中。

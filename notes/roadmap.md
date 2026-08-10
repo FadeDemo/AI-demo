@@ -2,9 +2,9 @@
 title: 人工智能学习路线
 type: roadmap
 area: ai
-status: active
+status: learning
 created: 2026-07-20
-updated: 2026-08-05
+updated: 2026-08-10
 tags:
   - ai
   - rag

@@ -67,7 +67,8 @@ rg -n '`[A-Za-z][A-Za-z0-9_.-]*`' <changed-markdown-files>
 The YAML front matter `status` field describes the learner's progress, not whether an agent has finished authoring the document.
 
 - Use `planned` for a newly created course, concept note, or experiment unless the user explicitly states that learning has already started or finished.
-- Use `learning` only when the user explicitly states that the learner has started the material.
+- Use `learning` when the user explicitly states that the learner has started or is continuing the material. Active participation also counts as explicit progress evidence: use `learning` when the user works through required material by answering course questions, implementing or debugging exercises, or requesting an acceptance check for a course task.
+- Do not infer `learning` merely because the user asks an agent to create, rewrite, or polish course content for future use without participating in the material or exercises.
 - Use `completed` only when the user explicitly confirms that the learner has completed the material. Do not infer completion from a polished document, complete lesson content, passing repository checks, existing exercises, or generated answer templates.
 - A course index must not be marked `completed` merely because all child course documents have been written.
 - Use the `updated` field, not `status`, to record that document content was created or revised.
@@ -144,6 +145,43 @@ ps -axo pid=,ppid=,etime=,%cpu=,command= | rg '<task-unique-signature>'
 ```
 
 After cleanup, both verification commands must produce no process matches other than the verification command itself. If verification is unavailable or inconclusive, do not claim cleanup succeeded; report the unresolved process identifiers and continue with the safest exact-target check available.
+
+## Version control
+
+### Default scope for commit requests
+
+When the user explicitly asks to commit, submit, or push without naming a narrower scope, treat every current non-temporary repository change as part of the requested scope, including changes that existed before the current turn. Do not silently omit a changed or untracked file merely because it appears unrelated, predates the current task, or was authored by the user.
+
+Before staging, record the complete initial change set with:
+
+```shell
+git status --short --untracked-files=all
+```
+
+An initial change may remain outside the commit only when it is:
+
+- explicitly excluded by the user;
+- an agent-created temporary file that must be cleaned instead of committed;
+- generated or ignored output that repository rules say not to commit; or
+- blocked by a concrete safeguard, such as detected sensitive information, failed required formatting or linting, or an unresolved scope conflict.
+
+If a safeguard blocks any initial change, stop before pushing, list the exact excluded path and reason without exposing sensitive content, and request user direction. Do not choose a narrower commit scope on the user's behalf. Changes may be split into multiple coherent commits, but every initial change must be included, explicitly excluded, cleaned under the temporary-file rules, or reported as blocked.
+
+After the final commit and before pushing, run the status command again and reconcile it with the initial change set. If any non-ignored initial change remains without an allowed exclusion, the commit request is incomplete and must not be reported as complete.
+
+Do not do this:
+
+```text
+User: Commit and push.
+Agent: Commits only files changed during the latest task and silently leaves older modifications unstaged.
+```
+
+Do this:
+
+```text
+User: Commit and push.
+Agent: Commits every current eligible change, or stops before pushing and identifies each blocked path and reason.
+```
 
 ## Extending these instructions
 
