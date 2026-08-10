@@ -2,9 +2,9 @@
 title: 模型调用与消息
 type: concept
 area: llm
-status: planned
+status: completed
 created: 2026-08-05
-updated: 2026-08-08
+updated: 2026-08-10
 tags:
   - llm
   - api
@@ -113,14 +113,27 @@ API Key 通过环境变量或密钥管理服务注入，不写进源码、示例
 
 ### 任务 3：完成两轮对话（必须）
 
-实现两轮终端对话，记录实际发送的消息角色和顺序，但不记录消息正文。
+实现两轮终端对话，记录实际发送的消息角色和顺序，但不记录消息正文。每轮发送前至少记录以下字段：
+
+- `message_count`：本轮 `ModelRequest` 中的消息总数；
+- `roles`：按照实际发送顺序排列的角色列表；
+- `content_lengths`：与 `roles` 逐项对应的消息正文字符数，使用 `len(message.content)` 计算。
+
+例如，长度数字仅作示意：
+
+```text
+message_count=2 roles=["system", "user"] content_lengths=[28, 12]
+message_count=4 roles=["system", "user", "assistant", "user"] content_lengths=[28, 12, 35, 16]
+```
+
+可以额外记录 `content_hashes`，即各条正文的 UTF-8 编码摘要，用于判断两次请求是否回放了相同内容；这不是必填项，也不能把普通哈希视为匿名化或加密。日志不得包含消息正文。
 
 两轮请求的预期消息结构：
 
 - 第一轮：`system` + 本轮 `user`；
 - 第二轮：`system` + 第一轮的 `user` 与 `assistant` + 本轮 `user`，其中 `assistant` 消息是第一轮模型回答，由应用回放进请求数组。
 
-通过条件：第二轮实际发送的消息包含有效的 `system` 规则、第一轮的 `user` 与 `assistant` 消息、本轮 `user` 消息；日志只记录角色、数量、长度或哈希等安全元数据。
+通过条件：第一轮日志的 `message_count` 为 2，`roles` 为 `system`、`user`；第二轮日志的 `message_count` 为 4，`roles` 依次为 `system`、`user`、`assistant`、`user`，并且实际发送的消息包含有效的 `system` 规则、第一轮的 `user` 与 `assistant` 消息、本轮 `user` 消息；每轮 `content_lengths` 的项目数与 `roles` 相同，日志不包含任何消息正文。
 
 ### 知识检查（必须）
 

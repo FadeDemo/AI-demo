@@ -44,6 +44,7 @@ projects/
 | [engineering-foundations](engineering-foundations/README.md)             | 演示可定位日志、基础测试和日志级别交互实验       | 可运行 |
 | [package-management-comparison](package-management-comparison/README.md) | 对照 pip 与 uv 的依赖管理和环境恢复工作流        | 可运行 |
 | [llm-usage-lab](llm-usage-lab/README.md)                                 | 交互演示上下文预算、temperature 和 top-p         | 可运行 |
+| [llm-terminal-assistant](llm-terminal-assistant/README.md)               | 演示模型适配层、两轮消息历史和安全请求日志       | 可运行 |
 
 ## 计划中的项目
 

@@ -4,7 +4,7 @@ type: index
 area: llm
 status: planned
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-10
 tags:
   - ai
   - llm
@@ -41,6 +41,10 @@ tags:
 
 ![LLM 应用从输入到验证与观测的完整链路](assets/llm-application-loop.svg)
 
+## 练习回答
+
+课程中需要留档的调用链、观察结论和书面回答统一保存在[练习回答目录](answers/index.md)中。可运行代码、配置和验证步骤仍保存在配套项目中，不在回答文档中重复。
+
 ## 配套交互实验
 
 [LLM 使用基础交互实验](../../projects/llm-usage-lab/index.html)不访问网络，也不调用真实模型。它用可调参数演示两件容易混淆的事：
@@ -49,6 +53,10 @@ tags:
 - temperature 与 top-p 改变候选 Token 的分布和候选集合，但不会为模型补充事实。
 
 实验中的 Token 数和候选概率是教学数据，不是对任何真实模型或 tokenizer 的复刻。真实项目必须使用所选模型对应的计数接口或 tokenizer，并以服务端返回的 usage 为最终记录。
+
+## 配套终端项目
+
+[LLM Terminal Assistant](../../projects/llm-terminal-assistant/README.md) 实现项目自定义的消息、请求、响应和模型客户端抽象，并提供 fake 与 OpenAI 适配器以及两轮终端对话。当前阶段用于验证“模型调用与消息”课程中的适配边界、历史回放和安全元数据日志；后续课程能力按学习顺序继续加入。
 
 ## 综合项目：可靠的终端助手
 
