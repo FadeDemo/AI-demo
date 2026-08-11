@@ -1,0 +1,9 @@
+{
+  "request_id": "sample-003",
+  "enabled": true,
+  "languages": ["zh-CN", "en-US"],
+  "limits": {
+    "max_items": 12,
+    "timeout_seconds": 4.5
+  }
+}

@@ -43,3 +43,21 @@ class ToolCallRequest:
     call_id: str
     name: str
     arguments: str
+
+
+@dataclass
+class ModelProfile:
+    api_model_id: str
+    repository: str
+    revision: str
+
+
+DEEPSEEK_V4_FLASH = ModelProfile(
+    api_model_id="deepseek-v4-flash",
+    repository="deepseek-ai/DeepSeek-V4-Flash-0731",
+    revision="7872f01b1d1fe23eabc4c98b48bffcef5a386062",
+)
+
+MODEL_PROFILES = {
+    DEEPSEEK_V4_FLASH.api_model_id: DEEPSEEK_V4_FLASH,
+}

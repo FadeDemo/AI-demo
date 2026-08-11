@@ -1,3 +1,5 @@
+import logging
+
 from openai import OpenAI
 from openai.types.responses import Response
 
@@ -12,6 +14,8 @@ from llm_terminal_assistant.model import (
     ToolCallRequest,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class OpenAIClient(ModelClient):
     def __init__(self, config: ModelConfig):
@@ -25,6 +29,7 @@ class OpenAIClient(ModelClient):
                 {"role": msg.role, "content": msg.content} for msg in request.messages
             ],
         )
+        logger.debug("Using model: %s", openai_response.model)
         return ModelResponse(
             text=openai_response.output_text,
             reason=self.derive_end_reason(openai_response),
