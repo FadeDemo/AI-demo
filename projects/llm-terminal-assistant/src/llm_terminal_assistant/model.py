@@ -45,7 +45,7 @@ class ToolCallRequest:
     arguments: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class ModelProfile:
     api_model_id: str
     repository: str

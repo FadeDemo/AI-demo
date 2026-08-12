@@ -1,6 +1,9 @@
+from dataclasses import dataclass
+
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from llm_terminal_assistant.model import MODEL_PROFILES
+from llm_terminal_assistant.token_counter import TokenCounter
 
 
 def load_huggingface_tokenizer(api_model_id: str) -> PreTrainedTokenizerBase:
@@ -16,3 +19,11 @@ def load_huggingface_tokenizer(api_model_id: str) -> PreTrainedTokenizerBase:
     return AutoTokenizer.from_pretrained(
         model_profile.repository, revision=model_profile.revision
     )
+
+
+@dataclass
+class HuggingFaceTokenCounter(TokenCounter):
+    tokenizer: PreTrainedTokenizerBase
+
+    def count_tokens(self, text: str) -> int:
+        return len(self.tokenizer.encode(text, add_special_tokens=False))

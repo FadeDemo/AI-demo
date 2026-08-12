@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 llm-terminal-assistant = "llm_terminal_assistant.cli:main"
+token-count = "llm_terminal_assistant.token_count_cli:main"
 
 [project.optional-dependencies]
 openai = [
