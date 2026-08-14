@@ -61,3 +61,10 @@ DEEPSEEK_V4_FLASH = ModelProfile(
 MODEL_PROFILES = {
     DEEPSEEK_V4_FLASH.api_model_id: DEEPSEEK_V4_FLASH,
 }
+
+
+@dataclass(frozen=True)
+class ModelLimits:
+    context_window_tokens: int
+    max_output_tokens: int | None = None
+    max_input_tokens: int | None = None
