@@ -8,6 +8,37 @@
 
 ## Documentation changes
 
+### 课程内容的范围与受众
+
+- 将课程文档视为面向不同学习者的可复用材料。课程说明、任务和验收标准必须在不了解当前仓库具体实现的情况下仍可理解。
+- 用户询问现有类、函数、字段、文件或配置的实现问题，并不自动表示允许把相关细节写入课程文档。除非用户明确要求修改课程，否则应在对话或项目文档中回答。
+- 课程正文应优先描述概念、职责和行为契约。只有当课程已经明确引入某个仓库标识符，并且完成练习或理解验收标准确实需要它时，才可使用该标识符。
+- 修改课程文档前，应区分“用户要求写入课程的内容”和“仅针对当前实现的答疑”，不得把后者擅自持久化到课程中。
+- 完成修改前，检查新增内容中对当前项目和具体实现的引用；能够用实现无关的概念表达时，应删除类名、字段名和文件名。
+
+以下内容仅为规则示例，示例中的类名不是唯一受限制的标识符。
+
+不要这样写（反例）：
+
+```markdown
+当前项目的 `ModelProfile` 应嵌套 `ModelLimits`。
+```
+
+应当这样写（正例）：
+
+```markdown
+将模型固有限制保存在应用维护的模型能力配置中；具体采用平铺字段还是嵌套值对象，不属于本任务的验收要求。
+```
+
+修改课程文档后，使用以下命令筛选可能依赖当前实现的新增内容，并逐项人工确认：
+
+```shell
+git diff --unified=0 -- <changed-course-files> |
+  rg '^\+.*(`[^`]+`|当前项目|本项目|现有实现)'
+```
+
+命令产生匹配不代表内容一定错误，但每个匹配项都必须确认其是否已由课程引入、是否属于任务所需，以及是否可以改成实现无关的表达。
+
 ### Markdown emphasis boundaries
 
 When bold text is followed by continuing prose, place one ASCII space after the closing `**`. This is required even when Prettier and markdownlint report no problem, because some Markdown renderers do not recognize a closing emphasis delimiter that touches the following letter or CJK character.
