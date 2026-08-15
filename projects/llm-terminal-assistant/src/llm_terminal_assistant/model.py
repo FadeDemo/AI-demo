@@ -50,17 +50,7 @@ class ModelProfile:
     api_model_id: str
     repository: str
     revision: str
-
-
-DEEPSEEK_V4_FLASH = ModelProfile(
-    api_model_id="deepseek-v4-flash",
-    repository="deepseek-ai/DeepSeek-V4-Flash-0731",
-    revision="7872f01b1d1fe23eabc4c98b48bffcef5a386062",
-)
-
-MODEL_PROFILES = {
-    DEEPSEEK_V4_FLASH.api_model_id: DEEPSEEK_V4_FLASH,
-}
+    limit: ModelLimits
 
 
 @dataclass(frozen=True)
@@ -68,3 +58,15 @@ class ModelLimits:
     context_window_tokens: int
     max_output_tokens: int | None = None
     max_input_tokens: int | None = None
+
+
+DEEPSEEK_V4_FLASH = ModelProfile(
+    api_model_id="deepseek-v4-flash",
+    repository="deepseek-ai/DeepSeek-V4-Flash-0731",
+    revision="7872f01b1d1fe23eabc4c98b48bffcef5a386062",
+    limit=ModelLimits(context_window_tokens=1_000_000, max_output_tokens=384_000),
+)
+
+MODEL_PROFILES = {
+    DEEPSEEK_V4_FLASH.api_model_id: DEEPSEEK_V4_FLASH,
+}

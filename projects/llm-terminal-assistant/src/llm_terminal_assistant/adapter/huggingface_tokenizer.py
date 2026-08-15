@@ -25,5 +25,9 @@ def load_huggingface_tokenizer(api_model_id: str) -> PreTrainedTokenizerBase:
 class HuggingFaceTokenCounter(TokenCounter):
     tokenizer: PreTrainedTokenizerBase
 
-    def count_tokens(self, text: str) -> int:
-        return len(self.tokenizer.encode(text, add_special_tokens=False))
+    def count_tokens(
+        self,
+        text: str,
+        add_special_tokens: bool = False,
+    ) -> int:
+        return len(self.tokenizer.encode(text, add_special_tokens=add_special_tokens))
