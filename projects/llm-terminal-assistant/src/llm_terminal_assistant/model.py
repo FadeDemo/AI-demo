@@ -68,7 +68,7 @@ DEEPSEEK_V4_FLASH = ModelProfile(
     repository="deepseek-ai/DeepSeek-V4-Flash-0731",
     revision="7872f01b1d1fe23eabc4c98b48bffcef5a386062",
     limit=ModelLimits(context_window_tokens=1_000_000, max_output_tokens=384_000),
-    allowed_reasoning_efforts=("low", "medium", "high", "xhign", "max"),
+    allowed_reasoning_efforts=("low", "medium", "high", "xhigh", "max"),
     default_reasoning_effort="high",
 )
 

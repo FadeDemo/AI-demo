@@ -26,10 +26,34 @@ def _normalize_reasoning_effort(reasoning_effort: str) -> str:
         raise ValueError(f"Unsupported reasoning effort: {reasoning_effort}") from None
 
 
+def _resolve_reasoning_effort(
+    requested_effort: str | None,
+    default_effort: str,
+) -> _ResolvedReasoning:
+    """Resolve Responses API reasoning settings for DeepSeek encoding."""
+
+    effective_effort = default_effort if requested_effort is None else requested_effort
+
+    if effective_effort == "none":
+        return _ResolvedReasoning(
+            thinking_mode="chat",
+            reasoning_effort=None,
+        )
+
+    return _ResolvedReasoning(
+        thinking_mode="thinking",
+        reasoning_effort=_normalize_reasoning_effort(effective_effort),
+    )
+
+
 def encode_deepseek_request(
     request: ModelRequest,
-    thinking_mode: str,
+    default_reasoning_effort: str,
 ) -> str:
+    reasoning = _resolve_reasoning_effort(
+        requested_effort=request.reasoning_effort,
+        default_effort=default_reasoning_effort,
+    )
     messages = [
         {
             "role": message.role,
@@ -40,6 +64,6 @@ def encode_deepseek_request(
 
     return encode_messages(
         messages=messages,
-        thinking_mode=thinking_mode,
-        reasoning_effort=_normalize_reasoning_effort(request.reasoning_effort),
+        thinking_mode=reasoning.thinking_mode,
+        reasoning_effort=reasoning.reasoning_effort,
     )
