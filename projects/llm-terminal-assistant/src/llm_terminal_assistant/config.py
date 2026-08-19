@@ -16,6 +16,7 @@ class ModelConfig:
     model: str
     provider: Literal["faked", "openai"] = "faked"
     safety_margin_tokens: int = 1_024
+    default_reserved_output_tokens: int = 8192
 
 
 def load_model_config() -> ModelConfig:
@@ -24,11 +25,9 @@ def load_model_config() -> ModelConfig:
     base_url = os.getenv("BASE_URL")
     model = os.getenv("MODEL")
     provider = os.getenv("PROVIDER")
-    safety_margin_tokens = int(os.getenv("SAFETY_MARGIN_TOKENS"))
     return ModelConfig(
         api_key=api_key,
         base_url=base_url,
         model=model,
         provider=provider,
-        safety_margin_tokens=safety_margin_tokens,
     )

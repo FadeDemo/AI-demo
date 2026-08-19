@@ -8,6 +8,7 @@ from llm_terminal_assistant.message import Message
 @dataclass
 class ModelRequest:
     messages: list[Message]
+    reserved_output_tokens: int
     reasoning_effort: str | None = None
 
 

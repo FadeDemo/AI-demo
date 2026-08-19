@@ -2,7 +2,7 @@ import logging
 
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.client_factory import create_model_client
-from llm_terminal_assistant.config import load_model_config
+from llm_terminal_assistant.config import ModelConfig, load_model_config
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import ModelRequest, ModelResponse
 
@@ -25,17 +25,20 @@ def model_response_to_assistant_message(response: ModelResponse) -> Message:
     return Message(role="assistant", content=response.text)
 
 
-def talk(client: ModelClient):
+def talk(client: ModelClient, config: ModelConfig):
     print("Please enter your prompt (type 'exit' to quit):\n")
     user_input = input("> ")
     if user_input.lower() == "exit":
         print("Exiting...")
         return
+    reserved_output_tokens = config.default_reserved_output_tokens
     user_msg_list = []
     system_msg = Message(role="system", content="You are a helpful assistant.")
     user_msg = Message(role="user", content=user_input)
     user_msg_list.append(user_msg)
-    model_request = ModelRequest(messages=[system_msg, user_msg])
+    model_request = ModelRequest(
+        messages=[system_msg, user_msg], reserved_output_tokens=reserved_output_tokens
+    )
     logger.info(
         "message_count=%d roles=%s content_lengths=%s",
         len(model_request.messages),
@@ -52,7 +55,8 @@ def talk(client: ModelClient):
     user_msg_list.append(user_msg)
     assistant_msg = model_response_to_assistant_message(model_response)
     model_request = ModelRequest(
-        messages=[system_msg, user_msg_list[0], assistant_msg, user_msg_list[1]]
+        messages=[system_msg, user_msg_list[0], assistant_msg, user_msg_list[1]],
+        reserved_output_tokens=reserved_output_tokens,
     )
     logger.info(
         "message_count=%d roles=%s content_lengths=%s",
@@ -65,13 +69,14 @@ def talk(client: ModelClient):
 
 
 def main():
+    config = load_model_config()
     try:
-        client = create_model_client(load_model_config())
+        client = create_model_client(config)
     except ValueError:
         logger.exception("Error creating model client.")
         return
 
-    talk(client)
+    talk(client, config)
 
 
 if __name__ == "__main__":
