@@ -3,6 +3,7 @@ from typing import Literal
 
 from llm_terminal_assistant._vendor.deepseek_ai.deepseek_v4 import encode_messages
 from llm_terminal_assistant.model import ModelRequest
+from llm_terminal_assistant.request_encoder import RequestEncoder
 
 _REASONING_EFFORT_MAPPING = {
     "low": "low",
@@ -67,3 +68,14 @@ def encode_deepseek_request(
         thinking_mode=reasoning.thinking_mode,
         reasoning_effort=reasoning.reasoning_effort,
     )
+
+
+class DeepSeekRequestEncoder(RequestEncoder):
+    def __init__(self, default_reasoning_effort: str):
+        self.default_reasoning_effort = default_reasoning_effort
+
+    def encode_request(self, request: ModelRequest) -> str:
+        return encode_deepseek_request(
+            request=request,
+            default_reasoning_effort=self.default_reasoning_effort,
+        )
