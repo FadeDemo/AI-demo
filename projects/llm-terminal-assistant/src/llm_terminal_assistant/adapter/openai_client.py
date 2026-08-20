@@ -1,7 +1,5 @@
 import logging
-
-from openai import OpenAI
-from openai.types.responses import Response
+from typing import TYPE_CHECKING
 
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.config import ModelConfig
@@ -14,11 +12,16 @@ from llm_terminal_assistant.model import (
     ToolCallRequest,
 )
 
+if TYPE_CHECKING:
+    from openai.types.responses import Response
+
 logger = logging.getLogger(__name__)
 
 
 class OpenAIClient(ModelClient):
     def __init__(self, config: ModelConfig):
+        from openai import OpenAI
+
         super().__init__(config)
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
@@ -28,6 +31,7 @@ class OpenAIClient(ModelClient):
             input=[
                 {"role": msg.role, "content": msg.content} for msg in request.messages
             ],
+            max_output_tokens=request.reserved_output_tokens,
         )
         logger.debug("Using model: %s", openai_response.model)
         return ModelResponse(
@@ -56,7 +60,7 @@ class OpenAIClient(ModelClient):
             ],
         )
 
-    def derive_end_reason(self, response: Response) -> str:
+    def derive_end_reason(self, response: "Response") -> str:
         if response.status == "completed":
             return "Completed normally"
         elif response.status == "failed":

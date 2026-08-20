@@ -64,6 +64,14 @@ class ModelLimits:
     max_input_tokens: int | None = None
 
 
+FAKE_MODEL_ID = "fake-model"
+FAKE_MODEL_LIMITS = ModelLimits(
+    context_window_tokens=32_768,
+    max_output_tokens=8_192,
+    max_input_tokens=16_384,
+)
+
+
 DEEPSEEK_V4_FLASH = ModelProfile(
     api_model_id="deepseek-v4-flash",
     repository="deepseek-ai/DeepSeek-V4-Flash-0731",

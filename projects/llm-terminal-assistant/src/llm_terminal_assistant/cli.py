@@ -1,5 +1,7 @@
 import logging
 
+from llm_terminal_assistant.budgeter import Budgeter, BudgetRejectedError
+from llm_terminal_assistant.budgeter_factory import create_budgeter
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import ModelConfig, load_model_config
@@ -25,7 +27,33 @@ def model_response_to_assistant_message(response: ModelResponse) -> Message:
     return Message(role="assistant", content=response.text)
 
 
-def talk(client: ModelClient, config: ModelConfig):
+def check_request_budget(budgeter: Budgeter, request: ModelRequest) -> bool:
+    try:
+        budget_result = budgeter.check(request)
+        logger.info(
+            "Budget check passed: estimated_input_tokens=%d reserved_output_tokens=%d safety_margin_tokens=%d remaining_tokens=%d",
+            budget_result.estimated_input_tokens,
+            budget_result.reserved_output_tokens,
+            budget_result.safety_margin_tokens,
+            budget_result.remaining_tokens,
+        )
+        return True
+    except BudgetRejectedError as e:
+        logger.error(e.reason)
+        return False
+
+
+def send_with_budget_check(
+    client: ModelClient,
+    budgeter: Budgeter,
+    request: ModelRequest,
+) -> ModelResponse | None:
+    if not check_request_budget(budgeter, request):
+        return None
+    return client.send(request)
+
+
+def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
     print("Please enter your prompt (type 'exit' to quit):\n")
     user_input = input("> ")
     if user_input.lower() == "exit":
@@ -45,7 +73,9 @@ def talk(client: ModelClient, config: ModelConfig):
         [msg.role for msg in model_request.messages],
         [len(msg.content) for msg in model_request.messages],
     )
-    model_response = client.send(model_request)
+    model_response = send_with_budget_check(client, budgeter, model_request)
+    if model_response is None:
+        return
     output_model_response(model_response)
     user_input = input("> ")
     if user_input.lower() == "exit":
@@ -64,19 +94,26 @@ def talk(client: ModelClient, config: ModelConfig):
         [msg.role for msg in model_request.messages],
         [len(msg.content) for msg in model_request.messages],
     )
-    model_response = client.send(model_request)
+    model_response = send_with_budget_check(client, budgeter, model_request)
+    if model_response is None:
+        return
     output_model_response(model_response)
 
 
 def main():
     config = load_model_config()
     try:
+        budgeter = create_budgeter(config)
+    except ValueError:
+        logger.exception("Error creating budgeter.")
+        return
+    try:
         client = create_model_client(config)
     except ValueError:
         logger.exception("Error creating model client.")
         return
 
-    talk(client, config)
+    talk(client, config, budgeter)
 
 
 if __name__ == "__main__":
