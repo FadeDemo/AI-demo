@@ -17,6 +17,7 @@ class ModelConfig:
     provider: Literal["faked", "openai"] = "faked"
     safety_margin_tokens: int = 1_024
     default_reserved_output_tokens: int = 8192
+    min_reserved_recent_turns: int = 1
 
 
 def load_model_config() -> ModelConfig:

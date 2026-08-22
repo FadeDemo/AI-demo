@@ -1,19 +1,19 @@
 # LLM Terminal Assistant
 
-该项目配套 [LLM 使用基础](../../notes/llm/index.md)专题，当前实现集中验证[模型调用与消息](../../notes/llm/model-calls-and-messages.md)课程中的适配层边界和两轮对话，并为 [Token 与上下文窗口](../../notes/llm/tokens-and-context.md)课程提供固定样本和 Token 计数入口。相关书面记录保存在 [LLM 使用基础练习回答](../../notes/llm/answers/index.md)中。
+该项目配套 [LLM 使用基础](../../notes/llm/index.md)专题，当前实现验证[模型调用与消息](../../notes/llm/model-calls-and-messages.md)课程中的适配层边界和多轮对话，并为 [Token 与上下文窗口](../../notes/llm/tokens-and-context.md)课程提供固定样本、Token 计数入口、请求预算和历史裁剪实现。相关书面记录保存在 [LLM 使用基础练习回答](../../notes/llm/answers/index.md)中。
 
 ## 当前能力
 
 - 使用项目自己的 `Message`、`ModelRequest`、`ModelResponse` 和 `ModelClient`，业务对话逻辑不依赖 SDK 原始响应对象。
 - 通过 `client_factory` 按配置选择 `FakeClient` 或 `OpenAIClient`；`FakeClient` 不导入 OpenAI SDK、不调用远程生成服务，也不产生模型费用，预算计数所需资源由 `MODEL` 独立决定。
-- 完成两轮终端对话，第二轮依次发送 `system`、第一轮 `user`、第一轮 `assistant` 和第二轮 `user`。
+- 支持持续进行终端对话，并把成功响应后的 `user` 和 `assistant` 消息保存为完整问答轮次。
 - 每轮发送前只记录消息数量、有序角色列表和逐条正文字符数，不把消息正文写入日志。
-- 每次生成调用前执行请求级 Token 预算检查，拒绝超出上下文窗口或模型单项限制的请求。
+- 每次生成调用前执行请求级 Token 预算检查；上下文窗口或最大输入超限时，按完整问答轮次从旧到新裁剪历史，直到请求通过或达到强制保留边界。
 - 将 OpenAI Responses API 的正文、结束状态、usage 和工具请求转换为项目自己的 `ModelResponse`。
 - 使用固定 revision 的 DeepSeek-V4-Flash-0731 tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
 
-当前课程阶段不执行工具请求，也没有实现无限轮会话、历史裁剪、流式响应或重试。连接失败和超时等 SDK 异常的转换边界位于 `OpenAIClient.send()`，捕获逻辑尚待后续可靠性课程实现。
+当前课程阶段不执行工具请求，也没有实现旧历史摘要、流式响应或重试。连接失败和超时等 SDK 异常的转换边界位于 `OpenAIClient.send()`，捕获逻辑尚待后续可靠性课程实现。
 
 ## 项目结构
 
@@ -31,6 +31,7 @@ src/llm_terminal_assistant/
 ├── client.py
 ├── client_factory.py
 ├── config.py
+├── conversation.py
 ├── message.py
 ├── model.py
 ├── token_count_cli.py
@@ -38,14 +39,16 @@ src/llm_terminal_assistant/
 tests/
 ├── test_budgeter.py
 ├── test_budgeter_factory.py
+├── test_conversation.py
 └── test_openai_client.py
 ```
 
 - `budgeter.py`、`budgeter_factory.py`：预算公式、稳定拒绝原因，以及模型对应的请求编码器和计数器装配。
-- `cli.py`：终端输入、两轮消息组装、安全元数据日志和结果展示。
+- `cli.py`：终端输入、多轮发送流程、安全元数据日志和结果展示。
 - `client.py`：`ModelClient` 协议。
 - `client_factory.py`：根据 provider 延迟导入并创建适配器。
 - `config.py`：加载项目根目录 `.env` 和进程环境变量。
+- `conversation.py`：完整问答轮次、候选请求组装和历史裁剪策略。
 - `message.py`、`model.py`：服务商无关的消息、请求、响应、usage 和工具请求结构。
 - `token_counter.py`：Token 计数器协议。
 - `token_count_cli.py`：读取四类固定样本并输出字符数、Token 数和计数环境元数据。
@@ -95,11 +98,13 @@ MODEL=<model-id>
 
 进程环境变量优先于 `.env` 中的同名值。不要把真实凭据写入源码、README、命令历史或日志。
 
+历史裁剪使用应用配置 `min_reserved_recent_turns` 声明至少保留的最近完整轮次数，当前默认值为 1。该值属于应用策略，不发送给模型服务，也不通过环境变量覆盖。
+
 ## 运行
 
 ### 完全离线的 Fake 客户端和模型
 
-使用 `faked` provider 和显式的 `fake-model`，可以离线验证预算拦截、消息顺序和两轮调用，不需要 API Key、真实 tokenizer 或模型缓存：
+使用 `faked` provider 和显式的 `fake-model`，可以离线验证预算拦截、多轮消息顺序和历史裁剪后的发送路径，不需要 API Key、真实 tokenizer 或模型缓存：
 
 ```shell
 PROVIDER=faked MODEL=fake-model uv run llm-terminal-assistant
@@ -107,7 +112,7 @@ PROVIDER=faked MODEL=fake-model uv run llm-terminal-assistant
 
 `fake-model` 是公开规则明确的合成模型，不模拟任何真实模型的 Token 数。它先把消息和 reasoning effort 编码为规范 JSON，再把编码结果的每个 Unicode code point 计作一个合成 Token；其上下文窗口为 32768，最大输入为 16384，最大输出为 8192。该规则只用于完全离线的运行路径。
 
-输入两轮问题后，程序会返回固定响应，并分别记录类似以下的安全元数据：
+输入前两轮问题后，程序会返回固定响应，并分别记录类似以下的安全元数据；之后可以继续输入更多轮次，直到输入 `exit`：
 
 ```text
 message_count=2 roles=['system', 'user'] content_lengths=[28, 14]
@@ -139,6 +144,21 @@ remaining_tokens = context_window_tokens
 所有单项限制满足且 `remaining_tokens` 大于或等于 0 时才调用生成客户端。拒绝请求时不调用客户端，并提供稳定原因：`negative_limit`、`max_input_exceeded`、`max_output_exceeded` 或 `context_window_exceeded`。
 
 不同提供方和接口使用不同的输出限制参数。本项目的 OpenAI 适配器调用 OpenAI Responses API 时，把单次请求的 `reserved_output_tokens` 映射为该接口的 `max_output_tokens`。应用预算策略使用的 `safety_margin_tokens` 不发送给模型服务。
+
+### 历史裁剪
+
+每轮请求先使用完整活跃历史执行预算检查。只有 `context_window_exceeded` 或 `max_input_exceeded` 才触发历史裁剪；负数限制和输出上限超限不能通过减少输入解决，程序会直接拒绝请求。
+
+裁剪策略遵循以下规则：
+
+- 持续生效的 `system` 消息和本轮 `user` 消息始终保留。
+- 已完成历史以一组相邻的 `user` 与 `assistant` 消息作为一个完整裁剪单位，不单独删除其中一条消息。
+- 从最早的完整轮次开始逐轮删除，每次删除后重新执行请求级预算检查。
+- 至少保留最近 1 个完整轮次；如果当前历史不足 1 轮，则保留全部现有历史。
+- 预算内历史保持不变，裁剪函数也不修改调用方传入的原历史列表。
+- 达到最少保留轮数后仍无法通过预算检查时，保留原预算拒绝原因并且不调用模型生成客户端。
+
+当前实现不生成旧历史摘要。后续如果增加摘要，须另行声明摘要的来源追踪和失败行为。
 
 ### OpenAI 客户端
 
@@ -190,12 +210,12 @@ uv run ruff check src tests
 PROVIDER=faked MODEL=fake-model uv run llm-terminal-assistant
 ```
 
-依次输入两轮不同问题，确认：
+依次输入至少两轮不同问题，确认：
 
 1. 第一轮日志的 `message_count` 为 2，角色顺序为 `system`、`user`。
 2. 第二轮日志的 `message_count` 为 4，角色顺序为 `system`、`user`、`assistant`、`user`。
 3. 每轮 `content_lengths` 的项目数与角色数相同。
 4. 日志不包含 system、user 或 assistant 消息正文。
-5. 两轮都显示 fake 响应，运行期间不访问网络。
+5. 每轮都显示 fake 响应，可以继续输入后续问题，运行期间不访问网络。
 
-自动化测试覆盖预算内和零剩余空间的允许路径、上下文窗口与输入或输出单项超限、负数限制、完整消息编码、拒绝时零次生成调用、完全离线的 `fake-model` 路径，以及 OpenAI Responses API 输出上限映射。上述交互流程保留为手动验收方式。
+自动化测试使用六个固定的完整问答轮次验证：预算内历史保持不变；上下文窗口或最大输入超限时删除最早完整轮次；裁剪后保留 `system`、本轮 `user` 和声明的最近轮次；强制内容仍超限、输出上限超限、负数限制或裁剪策略无效时不调用 fake 模型生成客户端。测试还覆盖零剩余空间的允许路径、完整消息编码、完全离线的 `fake-model` 路径，以及 OpenAI Responses API 输出上限映射。上述终端交互流程保留为手动验收方式。

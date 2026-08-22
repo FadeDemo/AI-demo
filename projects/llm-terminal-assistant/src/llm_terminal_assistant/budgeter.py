@@ -1,8 +1,16 @@
 from dataclasses import dataclass
+from enum import StrEnum
 
 from llm_terminal_assistant.model import ModelLimits, ModelRequest
 from llm_terminal_assistant.request_encoder import RequestEncoder
 from llm_terminal_assistant.token_counter import TokenCounter
+
+
+class BudgetRejectionReason(StrEnum):
+    NEGATIVE_LIMIT = "negative_limit"
+    MAX_INPUT_EXCEEDED = "max_input_exceeded"
+    MAX_OUTPUT_EXCEEDED = "max_output_exceeded"
+    CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"
 
 
 @dataclass
@@ -14,7 +22,7 @@ class BudgetResult:
 
 
 class BudgetRejectedError(Exception):
-    def __init__(self, reason: str):
+    def __init__(self, reason: BudgetRejectionReason):
         super().__init__(f"Budget rejected: {reason}")
         self.reason = reason
 
@@ -46,7 +54,7 @@ class Budgeter:
                 and self.model_limits.max_output_tokens < 0
             )
         ):
-            raise BudgetRejectedError("negative_limit")
+            raise BudgetRejectedError(BudgetRejectionReason.NEGATIVE_LIMIT)
 
         encoded_request = self.request_encoder.encode_request(request)
         estimated_input_tokens = self.token_counter.count_tokens(encoded_request)
@@ -55,13 +63,13 @@ class Budgeter:
             self.model_limits.max_input_tokens is not None
             and estimated_input_tokens > self.model_limits.max_input_tokens
         ):
-            raise BudgetRejectedError("max_input_exceeded")
+            raise BudgetRejectedError(BudgetRejectionReason.MAX_INPUT_EXCEEDED)
 
         if (
             self.model_limits.max_output_tokens is not None
             and request.reserved_output_tokens > self.model_limits.max_output_tokens
         ):
-            raise BudgetRejectedError("max_output_exceeded")
+            raise BudgetRejectedError(BudgetRejectionReason.MAX_OUTPUT_EXCEEDED)
 
         remaining_tokens = (
             self.model_limits.context_window_tokens
@@ -70,7 +78,7 @@ class Budgeter:
             - self.safety_margin_tokens
         )
         if remaining_tokens < 0:
-            raise BudgetRejectedError("context_window_exceeded")
+            raise BudgetRejectedError(BudgetRejectionReason.CONTEXT_WINDOW_EXCEEDED)
 
         return BudgetResult(
             estimated_input_tokens=estimated_input_tokens,
