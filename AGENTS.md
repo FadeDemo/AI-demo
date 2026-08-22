@@ -122,6 +122,19 @@ Before finishing any change that creates or edits learning-note front matter, ru
 rg -n '^status:' <changed-learning-note-files>
 ```
 
+Before each commit that creates or modifies a course, concept note, experiment, or answer record, review the YAML front matter even when the staged diff does not directly edit it. For every staged learning-note file:
+
+- Update `updated` to the current date when the document content was materially revised.
+- Verify `status` against explicit learner-progress evidence from the current conversation.
+- Do not change `status` merely because implementation, tests, authoring, formatting, or other repository work is complete.
+- Use `completed` only after the user explicitly confirms completion of the learning material.
+
+Run the following command before committing and verify every listed value:
+
+```shell
+rg -n '^(status|updated):' <staged-learning-note-files>
+```
+
 ### Course tasks and answer records
 
 Course documents must remain complete and usable before a learner creates any personal answer document. State each written prompt and its acceptance criteria directly in the course document; do not link task instructions to `answers/` files or assume those files already exist.

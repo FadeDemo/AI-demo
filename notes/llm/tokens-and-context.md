@@ -2,9 +2,9 @@
 title: Token 与上下文窗口
 type: concept
 area: llm
-status: learning
+status: completed
 created: 2026-08-05
-updated: 2026-08-17
+updated: 2026-08-22
 tags:
   - llm
   - token

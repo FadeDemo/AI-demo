@@ -2,7 +2,7 @@
 title: Token 与上下文窗口练习回答
 type: answer
 area: llm
-status: learning
+status: completed
 created: 2026-08-12
 updated: 2026-08-22
 tags:
