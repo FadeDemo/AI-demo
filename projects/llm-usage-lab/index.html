@@ -308,6 +308,15 @@
         font-weight: 750;
       }
 
+      .raw-score {
+        display: block;
+        margin-top: 2px;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        font-weight: 500;
+        opacity: 0.72;
+      }
+
       .track {
         height: 23px;
         overflow: hidden;
@@ -574,7 +583,10 @@
               </div>
               <input id="top-p" type="range" min="0.1" max="1" step="0.05" value="0.9" />
             </div>
-            <p class="note">候选和分数是固定教学数据。真实模型会在每个位置重新计算大量候选。</p>
+            <p class="note">
+              每行标注的原始分数是固定教学数据，右侧概率会随 temperature
+              改变。真实模型会在每个位置重新计算大量候选。
+            </p>
           </div>
           <div class="visual">
             <h3>“这门课程很……”的下一个示意 Token</h3>
@@ -735,6 +747,10 @@
           const token = document.createElement("div");
           token.className = "token";
           token.textContent = item.token;
+          const rawScore = document.createElement("span");
+          rawScore.className = "raw-score";
+          rawScore.textContent = `原始分数 ${item.logit.toFixed(2)}`;
+          token.append(rawScore);
 
           const track = document.createElement("div");
           track.className = "track";
