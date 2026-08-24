@@ -15,7 +15,7 @@ from llm_terminal_assistant.conversation import (
     trim_history,
 )
 from llm_terminal_assistant.message import Message
-from llm_terminal_assistant.model import ModelResponse
+from llm_terminal_assistant.model import MODEL_PROFILES, ModelResponse
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,7 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
                 current_user_message=user_msg,
                 reserved_output_tokens=reserved_output_tokens,
                 min_reserved_recent_turns=config.min_reserved_recent_turns,
+                reasoning_effort=config.reasoning_effort,
             )
         except BudgetRejectedError as error:
             logger.error(error.reason)
@@ -115,7 +116,11 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
 
 
 def main():
-    config = load_model_config()
+    try:
+        config = load_model_config()
+    except ValueError:
+        logger.exception("Error loading model configuration.")
+        return
     try:
         budgeter = create_budgeter(config)
     except ValueError:
@@ -126,7 +131,14 @@ def main():
     except ValueError:
         logger.exception("Error creating model client.")
         return
-
+    try:
+        client.validate_reasoning_effort(
+            config.reasoning_effort,
+            MODEL_PROFILES[config.model].allowed_reasoning_efforts,
+        )
+    except ValueError:
+        logger.exception("Invalid reasoning effort configuration.")
+        return
     talk(client, config, budgeter)
 
 

@@ -70,6 +70,14 @@ FAKE_MODEL_LIMITS = ModelLimits(
     max_output_tokens=8_192,
     max_input_tokens=16_384,
 )
+FAKE_MODEL_PROFILE = ModelProfile(
+    api_model_id=FAKE_MODEL_ID,
+    repository="fake-repo/fake-model",
+    revision="fake-revision",
+    limit=FAKE_MODEL_LIMITS,
+    default_reasoning_effort="none",
+    allowed_reasoning_efforts=("none",),
+)
 
 
 DEEPSEEK_V4_FLASH = ModelProfile(
@@ -83,4 +91,5 @@ DEEPSEEK_V4_FLASH = ModelProfile(
 
 MODEL_PROFILES = {
     DEEPSEEK_V4_FLASH.api_model_id: DEEPSEEK_V4_FLASH,
+    FAKE_MODEL_PROFILE.api_model_id: FAKE_MODEL_PROFILE,
 }

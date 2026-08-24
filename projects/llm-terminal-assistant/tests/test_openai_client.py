@@ -45,6 +45,39 @@ class OpenAIClientTests(unittest.TestCase):
 
         self.assertEqual(responses.create_kwargs["max_output_tokens"], 321)
 
+    def test_sends_none_reasoning_effort(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        request = ModelRequest(
+            messages=[Message(role="user", content="question")],
+            reserved_output_tokens=321,
+            reasoning_effort="none",
+        )
+
+        client.send(request)
+
+        self.assertEqual(
+            responses.create_kwargs["reasoning"],
+            {"effort": "none"},
+        )
+
+    def test_omits_reasoning_when_effort_is_none(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        request = ModelRequest(
+            messages=[Message(role="user", content="question")],
+            reserved_output_tokens=321,
+            reasoning_effort=None,
+        )
+
+        client.send(request)
+
+        self.assertNotIn("reasoning", responses.create_kwargs)
+
 
 if __name__ == "__main__":
     unittest.main()

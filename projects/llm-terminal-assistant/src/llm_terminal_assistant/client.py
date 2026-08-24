@@ -11,3 +11,7 @@ class ModelClient(Protocol):
         self.model = config.model
 
     def send(self, request: ModelRequest) -> ModelResponse: ...
+
+    def validate_reasoning_effort(
+        self, effort: str | None, allowed_efforts: tuple[str, ...]
+    ) -> None: ...

@@ -23,3 +23,12 @@ class FakeClient(ModelClient):
                 total_tokens=40,
             ),
         )
+
+    def validate_reasoning_effort(
+        self, effort: str | None, allowed_efforts: tuple[str, ...]
+    ) -> None:
+        if effort is not None and effort not in allowed_efforts:
+            raise ValueError(
+                f"Reasoning effort '{effort}' is not supported for this model. "
+                f"Supported efforts: {allowed_efforts}"
+            )

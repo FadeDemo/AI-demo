@@ -26,13 +26,18 @@ class OpenAIClient(ModelClient):
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def send(self, request: ModelRequest) -> ModelResponse:
-        openai_response = self.client.responses.create(
-            model=self.model,
-            input=[
+        request_options = {
+            "model": self.model,
+            "input": [
                 {"role": msg.role, "content": msg.content} for msg in request.messages
             ],
-            max_output_tokens=request.reserved_output_tokens,
-        )
+            "max_output_tokens": request.reserved_output_tokens,
+        }
+        if request.reasoning_effort is not None:
+            request_options["reasoning"] = {
+                "effort": request.reasoning_effort,
+            }
+        openai_response = self.client.responses.create(**request_options)
         logger.debug("Using model: %s", openai_response.model)
         return ModelResponse(
             text=openai_response.output_text,
@@ -74,3 +79,13 @@ class OpenAIClient(ModelClient):
             return "Request was cancelled"
         elif response.status == "incomplete":
             return "Request was incomplete: " + response.incomplete_details.reason
+
+    def validate_reasoning_effort(
+        self, effort: str | None, allowed_efforts: tuple[str, ...]
+    ) -> None:
+        if effort is not None and effort != "none" and effort not in allowed_efforts:
+            supported_efforts = ("none", *allowed_efforts)
+            raise ValueError(
+                f"Reasoning effort '{effort}' is not supported for model '{self.model}'. "
+                f"Supported efforts: {supported_efforts}"
+            )
