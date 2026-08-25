@@ -32,6 +32,8 @@ def trim_history(
     min_reserved_recent_turns: int,
     budgeter: Budgeter,
     reasoning_effort: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
 ) -> HistoryTrimResult:
     if min_reserved_recent_turns < 1:
         raise ValueError("min_reserved_recent_turns must be at least 1")
@@ -51,6 +53,8 @@ def trim_history(
             messages=messages,
             reserved_output_tokens=reserved_output_tokens,
             reasoning_effort=reasoning_effort,
+            temperature=temperature,
+            top_p=top_p,
         )
         try:
             budget_result = budgeter.check(model_request)

@@ -37,6 +37,10 @@ class OpenAIClient(ModelClient):
             request_options["reasoning"] = {
                 "effort": request.reasoning_effort,
             }
+        if request.temperature is not None:
+            request_options["temperature"] = request.temperature
+        if request.top_p is not None:
+            request_options["top_p"] = request.top_p
         openai_response = self.client.responses.create(**request_options)
         logger.debug("Using model: %s", openai_response.model)
         return ModelResponse(

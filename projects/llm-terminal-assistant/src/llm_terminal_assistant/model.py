@@ -10,6 +10,8 @@ class ModelRequest:
     messages: list[Message]
     reserved_output_tokens: int
     reasoning_effort: str | None = None
+    temperature: float | None = None
+    top_p: float | None = None
 
 
 @dataclass
@@ -48,12 +50,28 @@ class ToolCallRequest:
 
 
 @dataclass(frozen=True)
+class TemperatureConfig:
+    default_temperature: float
+    min_temperature: float
+    max_temperature: float
+
+
+@dataclass(frozen=True)
+class TopPConfig:
+    default_top_p: float
+    min_top_p: float
+    max_top_p: float
+
+
+@dataclass(frozen=True)
 class ModelProfile:
     api_model_id: str
     repository: str
     revision: str
     limit: ModelLimits
     default_reasoning_effort: str
+    temperature_config: TemperatureConfig
+    top_p_config: TopPConfig
     allowed_reasoning_efforts: tuple[str, ...] = ()
 
 
@@ -77,6 +95,16 @@ FAKE_MODEL_PROFILE = ModelProfile(
     limit=FAKE_MODEL_LIMITS,
     default_reasoning_effort="none",
     allowed_reasoning_efforts=("none",),
+    temperature_config=TemperatureConfig(
+        default_temperature=1.0,
+        min_temperature=0.0,
+        max_temperature=2.0,
+    ),
+    top_p_config=TopPConfig(
+        default_top_p=1.0,
+        min_top_p=0.0,
+        max_top_p=1.0,
+    ),
 )
 
 
@@ -87,6 +115,16 @@ DEEPSEEK_V4_FLASH = ModelProfile(
     limit=ModelLimits(context_window_tokens=1_000_000, max_output_tokens=384_000),
     allowed_reasoning_efforts=("low", "medium", "high", "xhigh", "max"),
     default_reasoning_effort="high",
+    temperature_config=TemperatureConfig(
+        default_temperature=1.0,
+        min_temperature=0.0,
+        max_temperature=2.0,
+    ),
+    top_p_config=TopPConfig(
+        default_top_p=1.0,
+        min_top_p=0.0,
+        max_top_p=1.0,
+    ),
 )
 
 MODEL_PROFILES = {

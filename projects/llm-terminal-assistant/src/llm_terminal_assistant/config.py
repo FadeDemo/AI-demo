@@ -21,6 +21,8 @@ class ModelConfig:
     safety_margin_tokens: int = 1_024
     default_reserved_output_tokens: int = 8192
     min_reserved_recent_turns: int = 1
+    temperature: float | None = None
+    top_p: float | None = None
 
 
 def load_model_config() -> ModelConfig:
@@ -33,10 +35,32 @@ def load_model_config() -> ModelConfig:
     model_profile = MODEL_PROFILES.get(model)
     if not model_profile:
         raise ValueError(f"Model profile for {model} not found.")
+    temperature = os.getenv("TEMPERATURE")
+    top_p = os.getenv("TOP_P")
+    if temperature is not None:
+        temperature = float(temperature)
+        if not (
+            model_profile.temperature_config.min_temperature
+            <= temperature
+            <= model_profile.temperature_config.max_temperature
+        ):
+            raise ValueError(
+                f"Temperature {temperature} is out of range for model {model}."
+            )
+    if top_p is not None:
+        top_p = float(top_p)
+        if not (
+            model_profile.top_p_config.min_top_p
+            <= top_p
+            <= model_profile.top_p_config.max_top_p
+        ):
+            raise ValueError(f"TopP {top_p} is out of range for model {model}.")
     return ModelConfig(
         api_key=api_key,
         base_url=base_url,
         model=model,
         provider=provider,
         reasoning_effort=reasoning_effort,
+        temperature=temperature,
+        top_p=top_p,
     )

@@ -78,6 +78,53 @@ class OpenAIClientTests(unittest.TestCase):
 
         self.assertNotIn("reasoning", responses.create_kwargs)
 
+    def test_maps_temperature_to_responses_request(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        request = ModelRequest(
+            messages=[Message(role="user", content="question")],
+            reserved_output_tokens=321,
+            temperature=0.4,
+        )
+
+        client.send(request)
+
+        self.assertEqual(responses.create_kwargs["temperature"], 0.4)
+
+    def test_maps_top_p_to_responses_request(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        request = ModelRequest(
+            messages=[Message(role="user", content="question")],
+            reserved_output_tokens=321,
+            top_p=0.8,
+        )
+
+        client.send(request)
+
+        self.assertEqual(responses.create_kwargs["top_p"], 0.8)
+
+    def test_omits_sampling_parameters_when_none(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        request = ModelRequest(
+            messages=[Message(role="user", content="question")],
+            reserved_output_tokens=321,
+            temperature=None,
+            top_p=None,
+        )
+
+        client.send(request)
+
+        self.assertNotIn("temperature", responses.create_kwargs)
+        self.assertNotIn("top_p", responses.create_kwargs)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,6 +45,8 @@ def send_conversation_turn(
     reserved_output_tokens: int,
     min_reserved_recent_turns: int,
     reasoning_effort: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
 ) -> tuple[ModelResponse, HistoryTrimResult]:
     trim_result: HistoryTrimResult = trim_history(
         system_message=system_message,
@@ -54,6 +56,8 @@ def send_conversation_turn(
         reasoning_effort=reasoning_effort,
         min_reserved_recent_turns=min_reserved_recent_turns,
         budgeter=budgeter,
+        temperature=temperature,
+        top_p=top_p,
     )
     budget_result = trim_result.budget_result
     logger.info(
@@ -95,6 +99,8 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
                 reserved_output_tokens=reserved_output_tokens,
                 min_reserved_recent_turns=config.min_reserved_recent_turns,
                 reasoning_effort=config.reasoning_effort,
+                temperature=config.temperature,
+                top_p=config.top_p,
             )
         except BudgetRejectedError as error:
             logger.error(error.reason)
