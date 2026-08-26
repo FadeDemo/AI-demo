@@ -1,6 +1,6 @@
 # LLM Terminal Assistant
 
-该项目配套 [LLM 使用基础](../../notes/llm/index.md)专题，当前实现验证[模型调用与消息](../../notes/llm/model-calls-and-messages.md)课程中的适配层边界和多轮对话，并为 [Token 与上下文窗口](../../notes/llm/tokens-and-context.md)课程提供固定样本、Token 计数入口、请求预算和历史裁剪实现。相关书面记录保存在 [LLM 使用基础练习回答](../../notes/llm/answers/index.md)中。
+该项目配套 [LLM 使用基础](../../notes/llm/index.md)专题，当前实现验证[模型调用与消息](../../notes/llm/model-calls-and-messages.md)课程中的适配层边界和多轮对话，为 [Token 与上下文窗口](../../notes/llm/tokens-and-context.md)课程提供固定样本、Token 计数入口、请求预算和历史裁剪实现，并为[生成参数](../../notes/llm/generation-parameters.md)课程提供采样参数映射和批量实验入口。相关书面记录保存在 [LLM 使用基础练习回答](../../notes/llm/answers/index.md)中。
 
 ## 当前能力
 
@@ -10,6 +10,7 @@
 - 每轮发送前只记录消息数量、有序角色列表和逐条正文字符数，不把消息正文写入日志。
 - 每次生成调用前执行请求级 Token 预算检查；上下文窗口或最大输入超限时，按完整问答轮次从旧到新裁剪历史，直到请求通过或达到强制保留边界。
 - 将 OpenAI Responses API 的正文、结束状态、usage 和工具请求转换为项目自己的 `ModelResponse`。
+- 将应用请求中的 temperature 和 top-p 映射到 OpenAI Responses API 的 `temperature` 和 `top_p` 请求选项，并提供单变量批量实验入口。
 - 使用固定 revision 的 DeepSeek-V4-Flash-0731 tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
 
@@ -34,13 +35,15 @@ src/llm_terminal_assistant/
 ├── conversation.py
 ├── message.py
 ├── model.py
+├── sampling_experiment.py
 ├── token_count_cli.py
 └── token_counter.py
 tests/
 ├── test_budgeter.py
 ├── test_budgeter_factory.py
 ├── test_conversation.py
-└── test_openai_client.py
+├── test_openai_client.py
+└── test_sampling_experiment.py
 ```
 
 - `budgeter.py`、`budgeter_factory.py`：预算公式、稳定拒绝原因，以及模型对应的请求编码器和计数器装配。
@@ -50,6 +53,7 @@ tests/
 - `config.py`：加载项目根目录 `.env` 和进程环境变量。
 - `conversation.py`：完整问答轮次、候选请求组装和历史裁剪策略。
 - `message.py`、`model.py`：服务商无关的消息、请求、响应、usage 和工具请求结构。
+- `sampling_experiment.py`：用固定输入重复执行彼此独立的单变量请求，并逐条保存实验记录。
 - `token_counter.py`：Token 计数器协议。
 - `token_count_cli.py`：读取四类固定样本并输出字符数、Token 数和计数环境元数据。
 - `adapter/`：fake、OpenAI、DeepSeek 请求编码和 Hugging Face tokenizer 的具体适配实现。
@@ -80,12 +84,15 @@ uv sync --extra token-counting
 
 程序从项目根目录的 `.env` 或当前进程环境读取以下变量：
 
-| 变量       | 含义                                      |
-| ---------- | ----------------------------------------- |
-| `PROVIDER` | 客户端类型：`faked` 或 `openai`           |
-| `API_KEY`  | 远程模型服务凭据；fake 模式不会使用       |
-| `BASE_URL` | OpenAI Responses API 或兼容服务的基础 URL |
-| `MODEL`    | 请求使用的模型标识或显式的 `fake-model`   |
+| 变量               | 含义                                                   |
+| ------------------ | ------------------------------------------------------ |
+| `PROVIDER`         | 客户端类型：`faked` 或 `openai`                        |
+| `API_KEY`          | 远程模型服务凭据；fake 模式不会使用                    |
+| `BASE_URL`         | OpenAI Responses API 或兼容服务的基础 URL              |
+| `MODEL`            | 请求使用的模型标识或显式的 `fake-model`                |
+| `REASONING_EFFORT` | OpenAI Responses API 的 reasoning effort；省略时不发送 |
+| `TEMPERATURE`      | OpenAI Responses API 的 `temperature`；省略时不发送    |
+| `TOP_P`            | OpenAI Responses API 的 `top_p`；省略时不发送          |
 
 本地 `.env` 不应提交。示例值必须使用占位符：
 
@@ -169,6 +176,34 @@ uv run --extra openai llm-terminal-assistant
 ```
 
 这条路径会访问远程模型服务，可能产生费用并占用速率限额。只有手动集成验收才应使用真实凭据；默认验证使用 fake。
+
+### 单变量采样实验
+
+批量实验入口读取 10 个固定输入，对选定参数使用三个不同值，并把整组输入至少运行两遍。每个样本都是只包含同一条 system 消息和当前 user 输入的独立请求，不携带其他实验请求的历史。默认输入位于 `samples/sampling-experiment/inputs.json`，也可以通过 `--inputs` 指定结构相同的 JSON 文件。
+
+入口要求显式配置 `PROVIDER=openai`，因为 fake 输出不能作为课程要求的真实模型实验。下面的命令改变 OpenAI Responses API 的 `temperature`，同时让 `top_p` 在全部请求中保持省略：
+
+```shell
+PROVIDER=openai \
+API_KEY=<your-api-key> \
+BASE_URL=https://api.example.com/v1 \
+MODEL=deepseek-v4-flash \
+REASONING_EFFORT=high \
+./scripts/run-sampling-experiment.sh \
+  --parameter temperature \
+  --values 0.2 0.8 1.4 \
+  --runs 2 \
+  --max-output-tokens 16384 \
+  --output sampling-results/temperature-16384.jsonl
+```
+
+这条命令会发出 60 次真实模型请求，可能产生费用并受到速率限制。`--output` 必须指向尚不存在的文件，脚本不会覆盖已有结果；每完成一次请求就立即追加并刷新一条 JSONL 记录，因此中途失败时已完成的结果仍会保留。只要有请求失败，脚本会继续记录剩余请求，并最终返回非零退出码。
+
+示例中的 16384 是本项目针对 `deepseek-v4-flash` 且 OpenAI Responses API 的 `reasoning.effort` 为 `high` 时采用的实验上限，不是所有模型和任务的通用默认值。较早使用 512 和 1024 的实验都观察到 reasoning tokens 在产生正文前耗尽输出预算；16384 的正式实验中 60 条请求均正常完成。`max_output_tokens` 只声明请求允许使用的上限，不要求每条响应消耗完该额度；实际用量仍以服务返回的 usage 为准。
+
+每条记录包含输入编号、输入正文、模型、运行序号、所选变量、完整采样设置、输出预算、输出、结束原因、usage 和错误状态。另一个采样参数从环境配置读取；如果省略对应环境变量，它在所有请求中都保持省略，并在记录中保存为 `null`。
+
+`judgement` 是批量实验脚本为人工评判预留的本地记录，不是 OpenAI Responses API 的响应字段。脚本生成记录时将 `judgement.status` 初始化为 `pending`，并将 `quality` 和 `notes` 留空；这表示该输出尚未经过人工评判，不是评判结果。完成真实调用后，应逐条填写这些字段，再基于完整结果比较三组配置的质量、稳定性和多样性。未完成评判的 JSONL 只是原始实验数据，不满足课程的全部书面验收条件。
 
 ### Token 计数
 
