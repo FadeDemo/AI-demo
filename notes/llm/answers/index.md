@@ -4,7 +4,7 @@ type: index
 area: llm
 status: learning
 created: 2026-08-10
-updated: 2026-08-12
+updated: 2026-08-26
 tags:
   - llm
   - answers
@@ -16,3 +16,4 @@ tags:
 
 - [模型调用与消息练习回答](model-calls-and-messages.md)
 - [Token 与上下文窗口练习回答](tokens-and-context.md)
+- [生成参数与采样练习回答](generation-parameters.md)
