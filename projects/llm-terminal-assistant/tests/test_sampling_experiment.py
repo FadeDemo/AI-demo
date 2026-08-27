@@ -6,6 +6,8 @@ from llm_terminal_assistant.model import (
     InputTokensDetails,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndReason,
+    ModelResponseIncompleteDetails,
     ModelUsage,
     OutputTokensDetails,
 )
@@ -24,7 +26,7 @@ class RecordingClient:
         self.requests.append(request)
         return ModelResponse(
             text=f"response-{len(self.requests)}",
-            reason="Completed normally",
+            reason=ModelResponseEndReason.COMPLETED_NORMALLY,
             usage=ModelUsage(
                 input_tokens=10,
                 input_tokens_details=InputTokensDetails(
@@ -140,7 +142,10 @@ class SamplingExperimentTests(unittest.TestCase):
             def send(self, request: ModelRequest) -> ModelResponse:
                 response = super().send(request)
                 if len(self.requests) == 1:
-                    response.reason = "Request was incomplete: max_output_tokens"
+                    response.reason = ModelResponseEndReason.REQUEST_INCOMPLETE
+                    response.incomplete_details = ModelResponseIncompleteDetails(
+                        reason="max_output_tokens"
+                    )
                     response.text = ""
                 return response
 
@@ -165,7 +170,7 @@ class SamplingExperimentTests(unittest.TestCase):
         self.assertEqual(records[0]["status"], "incomplete")
         self.assertEqual(
             records[0]["finish_reason"],
-            "Request was incomplete: max_output_tokens",
+            ModelResponseEndReason.REQUEST_INCOMPLETE,
         )
         self.assertEqual(records[1]["status"], "succeeded")
 

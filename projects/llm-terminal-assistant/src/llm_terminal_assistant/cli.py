@@ -15,7 +15,11 @@ from llm_terminal_assistant.conversation import (
     trim_history,
 )
 from llm_terminal_assistant.message import Message
-from llm_terminal_assistant.model import MODEL_PROFILES, ModelResponse
+from llm_terminal_assistant.model import (
+    MODEL_PROFILES,
+    ModelResponse,
+    ModelResponseEndReason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +30,14 @@ logging.basicConfig(
 
 def output_model_response(response: ModelResponse):
     print("Model Response: ")
-    if response.reason == "Completed normally":
+    if response.reason == ModelResponseEndReason.COMPLETED_NORMALLY:
         print(response.text)
-    else:
-        print(response.reason)
+    elif response.reason == ModelResponseEndReason.REQUEST_FAILED:
+        print(f"Request was failed: [{response.error.code}] {response.error.message}")
+    elif response.reason == ModelResponseEndReason.REQUEST_CANCELLED:
+        print("Request was cancelled.")
+    elif response.reason == ModelResponseEndReason.REQUEST_INCOMPLETE:
+        print(f"Request was incomplete: {response.incomplete_details.reason}")
 
 
 def model_response_to_assistant_message(response: ModelResponse) -> Message:

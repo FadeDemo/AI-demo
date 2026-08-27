@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Literal
 
 from llm_terminal_assistant.message import Message
 
@@ -14,12 +16,32 @@ class ModelRequest:
     top_p: float | None = None
 
 
+class ModelResponseEndReason(StrEnum):
+    COMPLETED_NORMALLY = "completed_normally"
+    REQUEST_FAILED = "request_failed"
+    REQUEST_CANCELLED = "request_cancelled"
+    REQUEST_INCOMPLETE = "request_incomplete"
+
+
+@dataclass
+class ModelResponseError:
+    code: str
+    message: str
+
+
+@dataclass
+class ModelResponseIncompleteDetails:
+    reason: Literal["max_output_tokens", "content_filter"]
+
+
 @dataclass
 class ModelResponse:
     text: str
-    reason: str
+    reason: ModelResponseEndReason
     usage: ModelUsage
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
+    error: ModelResponseError | None = None
+    incomplete_details: ModelResponseIncompleteDetails | None = None
 
 
 @dataclass

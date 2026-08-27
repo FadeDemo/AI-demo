@@ -14,7 +14,11 @@ from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import PROJECT_ROOT, ModelConfig, load_model_config
 from llm_terminal_assistant.message import Message
-from llm_terminal_assistant.model import MODEL_PROFILES, ModelRequest
+from llm_terminal_assistant.model import (
+    MODEL_PROFILES,
+    ModelRequest,
+    ModelResponseEndReason,
+)
 
 DEFAULT_INPUTS_PATH = PROJECT_ROOT / "samples" / "sampling-experiment" / "inputs.json"
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
@@ -190,7 +194,9 @@ def run_experiment(
                         }
                     )
                 else:
-                    completed_normally = response.reason == "Completed normally"
+                    completed_normally = (
+                        response.reason == ModelResponseEndReason.COMPLETED_NORMALLY
+                    )
                     if completed_normally:
                         succeeded += 1
                     else:

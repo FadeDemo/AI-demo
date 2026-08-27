@@ -13,6 +13,7 @@ from llm_terminal_assistant.model import (
     ModelLimits,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndReason,
     ModelUsage,
     OutputTokensDetails,
 )
@@ -48,7 +49,7 @@ class SpyModelClient:
         self.requests.append(request)
         return ModelResponse(
             text="fake response",
-            reason="Completed normally",
+            reason=ModelResponseEndReason.COMPLETED_NORMALLY,
             usage=ModelUsage(
                 input_tokens=0,
                 input_tokens_details=InputTokensDetails(

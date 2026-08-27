@@ -7,6 +7,9 @@ from llm_terminal_assistant.model import (
     InputTokensDetails,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndReason,
+    ModelResponseError,
+    ModelResponseIncompleteDetails,
     ModelUsage,
     OutputTokensDetails,
     ToolCallRequest,
@@ -43,9 +46,10 @@ class OpenAIClient(ModelClient):
             request_options["top_p"] = request.top_p
         openai_response = self.client.responses.create(**request_options)
         logger.debug("Using model: %s", openai_response.model)
+        reason, error, incomplete_details = self.derive_end_reason(openai_response)
         return ModelResponse(
             text=openai_response.output_text,
-            reason=self.derive_end_reason(openai_response),
+            reason=reason,
             usage=ModelUsage(
                 input_tokens=openai_response.usage.input_tokens,
                 input_tokens_details=InputTokensDetails(
@@ -67,22 +71,38 @@ class OpenAIClient(ModelClient):
                 for o in openai_response.output
                 if o.type == "function_call"
             ],
+            error=error,
+            incomplete_details=incomplete_details,
         )
 
-    def derive_end_reason(self, response: "Response") -> str:
+    def derive_end_reason(
+        self, response: "Response"
+    ) -> tuple[
+        ModelResponseEndReason,
+        ModelResponseError | None,
+        ModelResponseIncompleteDetails | None,
+    ]:
         if response.status == "completed":
-            return "Completed normally"
+            return ModelResponseEndReason.COMPLETED_NORMALLY, None, None
         elif response.status == "failed":
             return (
-                "Request failed: ["
-                + response.error.code
-                + "] "
-                + response.error.message
+                ModelResponseEndReason.REQUEST_FAILED,
+                ModelResponseError(
+                    code=response.error.code,
+                    message=response.error.message,
+                ),
+                None,
             )
         elif response.status == "cancelled":
-            return "Request was cancelled"
+            return ModelResponseEndReason.REQUEST_CANCELLED, None, None
         elif response.status == "incomplete":
-            return "Request was incomplete: " + response.incomplete_details.reason
+            return (
+                ModelResponseEndReason.REQUEST_INCOMPLETE,
+                None,
+                ModelResponseIncompleteDetails(
+                    reason=response.incomplete_details.reason
+                ),
+            )
 
     def validate_reasoning_effort(
         self, effort: str | None, allowed_efforts: tuple[str, ...]
