@@ -2,7 +2,7 @@
 title: 生成参数与采样
 type: concept
 area: llm
-status: learning
+status: completed
 created: 2026-08-05
 updated: 2026-08-27
 tags:
