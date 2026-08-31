@@ -11,6 +11,7 @@ dependencies = ["python-dotenv>=1.2.2"]
 
 [project.scripts]
 llm-terminal-assistant = "llm_terminal_assistant.cli:main"
+prompt-experiment = "llm_terminal_assistant.prompt_experiment:main"
 sampling-experiment = "llm_terminal_assistant.sampling_experiment:main"
 token-count = "llm_terminal_assistant.token_count_cli:main"
 

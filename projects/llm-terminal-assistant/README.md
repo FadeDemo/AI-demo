@@ -35,6 +35,7 @@ src/llm_terminal_assistant/
 ├── conversation.py
 ├── message.py
 ├── model.py
+├── prompt_experiment.py
 ├── sampling_experiment.py
 ├── token_count_cli.py
 └── token_counter.py
@@ -43,6 +44,7 @@ tests/
 ├── test_budgeter_factory.py
 ├── test_conversation.py
 ├── test_openai_client.py
+├── test_prompt_experiment.py
 └── test_sampling_experiment.py
 ```
 
@@ -53,6 +55,7 @@ tests/
 - `config.py`：加载项目根目录 `.env` 和进程环境变量。
 - `conversation.py`：完整问答轮次、候选请求组装和历史裁剪策略。
 - `message.py`、`model.py`：服务商无关的消息、请求、响应、usage 和工具请求结构。
+- `prompt_experiment.py`：组合零样本或少样本 Prompt 与固定评测集，执行独立请求并保存待人工评判的实验记录。
 - `sampling_experiment.py`：用固定输入重复执行彼此独立的单变量请求，并逐条保存实验记录。
 - `token_counter.py`：Token 计数器协议。
 - `token_count_cli.py`：读取四类固定样本并输出字符数、Token 数和计数环境元数据。
@@ -185,7 +188,7 @@ uv run --extra openai llm-terminal-assistant
 
 ```shell
 PROVIDER=openai \
-API_KEY=<your-api-key> \
+API_KEY=your-api-key \
 BASE_URL=https://api.example.com/v1 \
 MODEL=deepseek-v4-flash \
 REASONING_EFFORT=high \
@@ -204,6 +207,30 @@ REASONING_EFFORT=high \
 每条记录包含输入编号、输入正文、模型、运行序号、所选变量、完整采样设置、输出预算、输出、结束原因、usage 和错误状态。另一个采样参数从环境配置读取；如果省略对应环境变量，它在所有请求中都保持省略，并在记录中保存为 `null`。
 
 `judgement` 是批量实验脚本为人工评判预留的本地记录，不是 OpenAI Responses API 的响应字段。脚本生成记录时将 `judgement.status` 初始化为 `pending`，并将 `quality` 和 `notes` 留空；这表示该输出尚未经过人工评判，不是评判结果。完成真实调用后，应逐条填写这些字段，再基于完整结果比较三组配置的质量、稳定性和多样性。未完成评判的 JSONL 只是原始实验数据，不满足课程的全部书面验收条件。
+
+### Prompt 版本对照实验
+
+Prompt 实验入口读取 `samples/prompt-design/evaluation.json` 中的 12 个固定评测用例，以及 `prompts/prompt-design/prompt-versions.json` 中共享的任务契约、消息布局和两个 Prompt 版本。零样本版本不包含示例；少样本版本包含 3 组成对的 user 输入和 assistant 示例输出。程序对两个版本分别运行完整评测集，因此一次正式实验会发出 24 个彼此独立的请求，不携带其他评测用例的历史。
+
+每次请求只把任务契约、当前 Prompt 版本的示例和由 `<source>...</source>` 包装的当前资料发送给模型。样本 ID、类别和 `expected_behaviors` 只写入实验结果，用于关联记录和后续人工评判，不进入模型上下文。
+
+入口要求显式配置 `PROVIDER=openai`。在项目目录执行：
+
+```shell
+PROVIDER=openai \
+API_KEY=your-api-key \
+BASE_URL=https://api.example.com/v1 \
+MODEL=deepseek-v4-flash \
+REASONING_EFFORT=high \
+TEMPERATURE=0.2 \
+./scripts/run-prompt-experiment.sh \
+  --max-output-tokens 16384 \
+  --output prompt-results/zero-vs-few-shot.jsonl
+```
+
+这条命令会访问远程模型服务，可能产生费用并受到速率限制，必须由学习者显式运行。命令行示例没有声明 `TOP_P`；如果要让目标服务采用默认值，还须确认当前进程环境和项目 `.env` 均未设置它。temperature、top-p、推理强度和输出预算在全部 24 个请求中保持一致，并写入每条实验记录。`--output` 必须指向尚不存在的文件，程序不会覆盖已有结果；每个请求结束后都会立即追加并刷新一条 JSONL 记录。
+
+每条成功记录包含 Prompt 版本、样本 ID、类别、实际发送的完整消息、模型与参数、原始输出、结束原因和 usage。`judgement` 为每项预先记录的期望行为创建一个 `pending` 检查项，但程序不会自动判定语义质量；真实调用结束后，应由学习者或其明确指定的评判者逐项填写状态、证据、失败类别和备注，再汇总两个版本的通过数量、输入 Token 和主要失败类别。请求异常会记录为 `failed` 并标记 `not_evaluated`，程序继续处理剩余组合；有失败或不完整响应时最终返回非零退出码。
 
 ### Token 计数
 
