@@ -959,6 +959,80 @@ workspace_environment_is_target() {
   return 1
 }
 
+# Reports whether VS Code is running without conflating a missing process with
+# a process-inspection failure. Return 0 when either edition is running, 1 when
+# both are absent, and 2 when pgrep cannot determine the state reliably.
+vscode_process_state() {
+  local code_status=0
+  local insiders_status=0
+
+  pgrep -x "Code" >/dev/null 2>&1 || code_status=$?
+  if (( code_status == 0 )); then
+    return 0
+  fi
+
+  pgrep -x "Code - Insiders" >/dev/null 2>&1 || insiders_status=$?
+  if (( insiders_status == 0 )); then
+    return 0
+  fi
+
+  if (( code_status == 1 && insiders_status == 1 )); then
+    return 1
+  fi
+  return 2
+}
+
+# Uses the Python project name when available because Python Environments shows
+# it as the environment label. The project directory name can differ (for
+# example, a generic scripts/ directory), so it is not a reliable first filter.
+vscode_environment_filter_text() {
+  local pyproject_path="$VSCODE_VENV_PROJECT_DIRECTORY/pyproject.toml"
+  local project_name=""
+
+  if [[ -f "$pyproject_path" ]]; then
+    project_name="$(
+      "$VSCODE_VENV_DIRECTORY/bin/python" - "$pyproject_path" <<'PYTHON'
+import re
+import sys
+from pathlib import Path
+
+pyproject_path = Path(sys.argv[1])
+source = pyproject_path.read_text(encoding="utf-8")
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+if tomllib is not None:
+    try:
+        project = tomllib.loads(source).get("project", {})
+        name = project.get("name") if isinstance(project, dict) else None
+    except (OSError, ValueError):
+        name = None
+else:
+    name = None
+
+if not isinstance(name, str) or not name:
+    project_section = re.search(
+        r"(?ms)^\[project\]\s*$\n(.*?)(?=^\[|\Z)", source
+    )
+    name_match = (
+        re.search(r"(?m)^\s*name\s*=\s*['\"]([^'\"]+)['\"]", project_section.group(1))
+        if project_section
+        else None
+    )
+    name = name_match.group(1) if name_match else None
+
+if isinstance(name, str) and name:
+    print(name)
+PYTHON
+    )" || project_name=""
+  fi
+
+  print -r -- "${project_name:-${VSCODE_VENV_PROJECT_DIRECTORY:t}}"
+}
+
 # Drives the extension's official "Python: Select Interpreter" command through
 # the same guarded UI automation used for --reload, so the realignment does not
 # depend on the extension's private storage format. Selection is verified by
@@ -978,11 +1052,18 @@ ensure_workspace_environment() {
     return 0
   fi
 
-  if ! pgrep -x "Code" >/dev/null 2>&1 && \
-     ! pgrep -x "Code - Insiders" >/dev/null 2>&1; then
-    print -u2 "use-venv: VS Code is not running, so the Python Environments selection was not realigned; start VS Code and either run use-venv again or run the Python: Select Interpreter command."
-    return 0
-  fi
+  local vscode_process_status=0
+  vscode_process_state || vscode_process_status=$?
+  case "$vscode_process_status" in
+    0) ;;
+    1)
+      print -u2 "use-venv: VS Code is not running, so the Python Environments selection was not realigned; start VS Code and either run use-venv again or run the Python: Select Interpreter command."
+      return 0
+      ;;
+    *)
+      fail "cannot determine whether VS Code is running because process inspection failed; run use-venv from an environment with process-inspection access"
+      ;;
+  esac
 
   print "Selecting:   $target_interpreter in VS Code..."
   select_vscode_environment
@@ -1001,7 +1082,12 @@ ensure_workspace_environment() {
 }
 
 select_vscode_environment() {
-  local filter_text="${VSCODE_VENV_PROJECT_DIRECTORY:t}"
+  local environment_filter_text="$(vscode_environment_filter_text)"
+  local project_filter_text="${VSCODE_VENV_PROJECT_DIRECTORY:t}"
+  local -a filter_texts=("$environment_filter_text")
+  if [[ "$project_filter_text" != "$environment_filter_text" ]]; then
+    filter_texts+=("$project_filter_text")
+  fi
 
   local -a select_commands=(
     "Python: Select Interpreter"
@@ -1009,6 +1095,7 @@ select_vscode_environment() {
   )
 
   run_environment_selection_automation() {
+    local filter_text="$1"
     osascript - "$filter_text" "${select_commands[@]}" <<'APPLESCRIPT'
 on run argv
     set filterText to item 1 of argv as text
@@ -1167,9 +1254,15 @@ APPLESCRIPT
   }
 
   local automation_error=""
-  if automation_error="$(run_environment_selection_automation 2>&1)"; then
-    return
-  fi
+  local filter_text=""
+  for filter_text in "${filter_texts[@]}"; do
+    if automation_error="$(run_environment_selection_automation "$filter_text" 2>&1)"; then
+      return
+    fi
+    if [[ "$automation_error" != *"Environment picker did not match"* ]]; then
+      break
+    fi
+  done
 
   if [[ "$automation_error" != *"not allowed assistive access"* && \
         "$automation_error" != *"不允许辅助访问"* && \
@@ -1186,7 +1279,7 @@ APPLESCRIPT
   print -u2 "Enable Accessibility access for Visual Studio Code, then return here."
   read "?Press Enter to retry the environment selection: "
 
-  run_environment_selection_automation || \
+  run_environment_selection_automation "$filter_text" || \
     fail "VS Code environment selection was still denied; verify Accessibility access and run use-venv again"
 }
 
@@ -1194,7 +1287,7 @@ APPLESCRIPT
 # environment). Refuses to type unless a picker list is focused, so a closed
 # picker never writes the filter into an editor.
 finish_environment_selection() {
-  local filter_text="${VSCODE_VENV_PROJECT_DIRECTORY:t}"
+  local filter_text="$(vscode_environment_filter_text)"
 
   run_environment_selection_finish() {
     osascript - "$filter_text" <<'APPLESCRIPT'
