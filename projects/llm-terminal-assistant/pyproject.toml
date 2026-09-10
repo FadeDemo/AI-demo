@@ -7,7 +7,7 @@ authors = [
   { name = "paigeman", email = "53284808+paigeman@users.noreply.github.com" },
 ]
 requires-python = ">=3.13"
-dependencies = ["python-dotenv>=1.2.2"]
+dependencies = ["jsonschema>=4.25,<5", "python-dotenv>=1.2.2"]
 
 [project.scripts]
 llm-terminal-assistant = "llm_terminal_assistant.cli:main"
@@ -32,6 +32,8 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "B", "UP", "SIM", "C4", "RUF"]
+# CJK 全角标点是正确排版而非歧义笔误，规则对中文项目误报
+ignore = ["RUF002", "RUF003"]
 
 [tool.ruff.format]
 quote-style = "double"

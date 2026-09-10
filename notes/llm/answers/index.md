@@ -4,7 +4,7 @@ type: index
 area: llm
 status: learning
 created: 2026-08-10
-updated: 2026-08-30
+updated: 2026-09-10
 tags:
   - llm
   - answers
@@ -18,3 +18,4 @@ tags:
 - [Token 与上下文窗口练习回答](tokens-and-context.md)
 - [生成参数与采样练习回答](generation-parameters.md)
 - [Prompt 设计练习回答](prompt-design.md)
+- [结构化输出练习回答](structured-output.md)

@@ -1,6 +1,6 @@
 # LLM Terminal Assistant
 
-该项目配套 [LLM 使用基础](../../notes/llm/index.md)专题，当前实现验证[模型调用与消息](../../notes/llm/model-calls-and-messages.md)课程中的适配层边界和多轮对话，为 [Token 与上下文窗口](../../notes/llm/tokens-and-context.md)课程提供固定样本、Token 计数入口、请求预算和历史裁剪实现，并为[生成参数](../../notes/llm/generation-parameters.md)课程提供采样参数映射和批量实验入口。相关书面记录保存在 [LLM 使用基础练习回答](../../notes/llm/answers/index.md)中。
+该项目配套 [LLM 使用基础](../../notes/llm/index.md)专题，当前实现验证[模型调用与消息](../../notes/llm/model-calls-and-messages.md)课程中的适配层边界和多轮对话，为 [Token 与上下文窗口](../../notes/llm/tokens-and-context.md)课程提供固定样本、Token 计数入口、请求预算和历史裁剪实现，为[生成参数](../../notes/llm/generation-parameters.md)课程提供采样参数映射和批量实验入口，并为[结构化输出](../../notes/llm/structured-output.md)课程保存学习卡片 Schema、四步验证流水线及其离线验收测试。相关书面记录保存在 [LLM 使用基础练习回答](../../notes/llm/answers/index.md)中。
 
 ## 当前能力
 
@@ -11,14 +11,18 @@
 - 每次生成调用前执行请求级 Token 预算检查；上下文窗口或最大输入超限时，按完整问答轮次从旧到新裁剪历史，直到请求通过或达到强制保留边界。
 - 将 OpenAI Responses API 的正文、结束状态、usage 和工具请求转换为项目自己的 `ModelResponse`。
 - 将应用请求中的 temperature 和 top-p 映射到 OpenAI Responses API 的 `temperature` 和 `top_p` 请求选项，并提供单变量批量实验入口。
+- 提供基于 JSON Schema Draft 2020-12 的学习卡片数据契约，并用真实 Schema 验证器完成默认离线测试。
+- 提供学习卡片的 JSON 解析、Schema 校验、来源业务规则校验和项目类型转换流水线；失败日志只包含错误类别、字段路径和请求 ID。
 - 使用固定 revision 的 DeepSeek-V4-Flash-0731 tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
 
-当前课程阶段不执行工具请求，也没有实现旧历史摘要、流式响应或重试。连接失败和超时等 SDK 异常的转换边界位于 `OpenAIClient.send()`，捕获逻辑尚待后续可靠性课程实现。
+当前课程阶段尚未将学习卡片生成和验证接入终端对话或远程模型请求，不执行工具请求，也没有实现旧历史摘要、流式响应或重试。连接失败和超时等 SDK 异常目前会从 `OpenAIClient.send()` 原样抛出；将其转换为项目自有错误的逻辑留待后续可靠性课程实现。
 
 ## 项目结构
 
 ```text
+schemas/
+└── study-card.schema.json
 src/llm_terminal_assistant/
 ├── adapter/
 │   ├── deepseek_prompt_encoder.py
@@ -37,6 +41,13 @@ src/llm_terminal_assistant/
 ├── model.py
 ├── prompt_experiment.py
 ├── sampling_experiment.py
+├── structured_output/
+│   ├── business_rules.py
+│   ├── errors.py
+│   ├── parser.py
+│   ├── pipeline.py
+│   ├── schema_validator.py
+│   └── study_card.py
 ├── token_count_cli.py
 └── token_counter.py
 tests/
@@ -45,9 +56,12 @@ tests/
 ├── test_conversation.py
 ├── test_openai_client.py
 ├── test_prompt_experiment.py
-└── test_sampling_experiment.py
+├── test_sampling_experiment.py
+├── test_structured_output_pipeline.py
+└── test_study_card_schema.py
 ```
 
+- `schemas/study-card.schema.json`：学习卡片的 JSON Schema Draft 2020-12 数据契约。
 - `budgeter.py`、`budgeter_factory.py`：预算公式、稳定拒绝原因，以及模型对应的请求编码器和计数器装配。
 - `cli.py`：终端输入、多轮发送流程、安全元数据日志和结果展示。
 - `client.py`：`ModelClient` 协议。
@@ -57,10 +71,11 @@ tests/
 - `message.py`、`model.py`：服务商无关的消息、请求、响应、usage 和工具请求结构。
 - `prompt_experiment.py`：组合零样本或少样本 Prompt 与固定评测集，执行独立请求并保存待人工评判的实验记录。
 - `sampling_experiment.py`：用固定输入重复执行彼此独立的单变量请求，并逐条保存实验记录。
+- `structured_output/`：学习卡片的四步验证流水线、稳定错误类别、安全日志和项目类型。
 - `token_counter.py`：Token 计数器协议。
 - `token_count_cli.py`：读取四类固定样本并输出字符数、Token 数和计数环境元数据。
 - `adapter/`：fake、OpenAI、DeepSeek 请求编码和 Hugging Face tokenizer 的具体适配实现。
-- `tests/`：完全离线的预算边界、生成调用拦截、fake-model 和 OpenAI 请求映射测试。
+- `tests/`：完全离线的预算边界、生成调用拦截、fake-model、OpenAI 请求映射、学习卡片 Schema 和验证流水线测试。
 
 ## 安装
 
@@ -257,6 +272,13 @@ HF_HUB_OFFLINE=1 MODEL=deepseek-v4-flash \
 
 ```shell
 uv run python -m unittest discover -s tests -v
+```
+
+学习卡片 Schema 位于 `schemas/study-card.schema.json`。Schema 测试使用 Python `jsonschema` 库的 Draft 2020-12 验证器验收结构约束；流水线测试覆盖合法对象、坏 JSON、截断 JSON、缺失字段、错误类型、无效来源、字段路径和安全错误日志。可以分别执行：
+
+```shell
+uv run python -m unittest discover -s tests -p 'test_study_card_schema.py' -v
+uv run python -m unittest discover -s tests -p 'test_structured_output_pipeline.py' -v
 ```
 
 格式化和 Lint：
