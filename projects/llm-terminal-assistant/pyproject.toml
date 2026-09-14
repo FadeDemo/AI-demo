@@ -17,7 +17,7 @@ token-count = "llm_terminal_assistant.token_count_cli:main"
 
 [project.optional-dependencies]
 openai = ["openai>=2.53.0"]
-token-counting = ["transformers>=4.46.3,<5"]
+token-counting = ["transformers>=4.46.3,<6"]
 
 [build-system]
 requires = ["uv_build>=0.9.22,<0.10.0"]
