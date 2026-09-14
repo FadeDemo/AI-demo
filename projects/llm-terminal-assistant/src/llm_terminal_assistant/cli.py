@@ -16,7 +16,6 @@ from llm_terminal_assistant.conversation import (
 )
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
-    MODEL_PROFILES,
     ModelResponse,
     ModelResponseEndReason,
 )
@@ -148,7 +147,7 @@ def main():
     try:
         client.validate_reasoning_effort(
             config.reasoning_effort,
-            MODEL_PROFILES[config.model].allowed_reasoning_efforts,
+            config.model_profile.allowed_reasoning_efforts,
         )
     except ValueError:
         logger.exception("Invalid reasoning effort configuration.")

@@ -1,7 +1,7 @@
 import unittest
 
 from llm_terminal_assistant.adapter.deepseek_prompt_encoder import (
-    DeepSeekRequestEncoder,
+    create_deepseek_request_encoder,
 )
 from llm_terminal_assistant.budgeter import (
     Budgeter,
@@ -9,7 +9,12 @@ from llm_terminal_assistant.budgeter import (
     BudgetRejectionReason,
 )
 from llm_terminal_assistant.message import Message
-from llm_terminal_assistant.model import ModelLimits, ModelRequest
+from llm_terminal_assistant.model import (
+    DEEPSEEK_V4_FLASH,
+    DEEPSEEK_V41_FLASH,
+    ModelLimits,
+    ModelRequest,
+)
 
 
 class FixedTokenCounter:
@@ -189,23 +194,28 @@ class BudgeterTests(unittest.TestCase):
             reserved_output_tokens=20,
         )
         estimated_input_tokens = 10
-        counter = FixedTokenCounter(estimated_input_tokens)
-        budgeter = Budgeter(
-            token_counter=counter,
-            request_encoder=DeepSeekRequestEncoder(default_reasoning_effort="high"),
-            model_limits=ModelLimits(context_window_tokens=100),
-            safety_margin_tokens=0,
-        )
-
-        result = budgeter.check(request)
-
-        self.assertEqual(result.estimated_input_tokens, estimated_input_tokens)
-        self.assertEqual(len(counter.received_texts), 1)
-        encoded_request = counter.received_texts[0]
         separator = "\N{FULLWIDTH VERTICAL LINE}"
-        self.assertIn("SYSTEM_SENTINEL", encoded_request)
-        self.assertIn(f"<{separator}User{separator}>USER_SENTINEL", encoded_request)
-        self.assertIn(f"<{separator}Assistant{separator}>", encoded_request)
+
+        for profile in (DEEPSEEK_V4_FLASH, DEEPSEEK_V41_FLASH):
+            with self.subTest(profile=profile.profile_id):
+                counter = FixedTokenCounter(estimated_input_tokens)
+                budgeter = Budgeter(
+                    token_counter=counter,
+                    request_encoder=create_deepseek_request_encoder(profile),
+                    model_limits=ModelLimits(context_window_tokens=100),
+                    safety_margin_tokens=0,
+                )
+
+                result = budgeter.check(request)
+
+                self.assertEqual(result.estimated_input_tokens, estimated_input_tokens)
+                self.assertEqual(len(counter.received_texts), 1)
+                encoded_request = counter.received_texts[0]
+                self.assertIn("SYSTEM_SENTINEL", encoded_request)
+                self.assertIn(
+                    f"<{separator}User{separator}>USER_SENTINEL", encoded_request
+                )
+                self.assertIn(f"<{separator}Assistant{separator}>", encoded_request)
 
 
 if __name__ == "__main__":

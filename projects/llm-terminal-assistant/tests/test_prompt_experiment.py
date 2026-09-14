@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from llm_terminal_assistant.config import ModelConfig
 from llm_terminal_assistant.model import (
+    DEEPSEEK_V41_FLASH,
     InputTokensDetails,
     ModelRequest,
     ModelResponse,
@@ -50,7 +51,8 @@ def build_config() -> ModelConfig:
     return ModelConfig(
         api_key="test-key",
         base_url="https://example.test/v1",
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
+        model_profile=DEEPSEEK_V41_FLASH,
         provider="openai",
         reasoning_effort="low",
         temperature=0.2,

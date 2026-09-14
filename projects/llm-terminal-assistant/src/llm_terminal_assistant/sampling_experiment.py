@@ -15,7 +15,6 @@ from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import PROJECT_ROOT, ModelConfig, load_model_config
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
-    MODEL_PROFILES,
     ModelRequest,
     ModelResponseEndReason,
 )
@@ -83,7 +82,7 @@ def validate_experiment_settings(
     if max_output_tokens <= 0:
         raise ValueError("max-output-tokens must be greater than zero.")
 
-    model_profile = MODEL_PROFILES[config.model]
+    model_profile = config.model_profile
     parameter_config = (
         model_profile.temperature_config
         if parameter == "temperature"
@@ -287,7 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         client = create_model_client(config)
         client.validate_reasoning_effort(
             config.reasoning_effort,
-            MODEL_PROFILES[config.model].allowed_reasoning_efforts,
+            config.model_profile.allowed_reasoning_efforts,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("x", encoding="utf-8") as output_file:

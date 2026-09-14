@@ -13,7 +13,7 @@
 - 将应用请求中的 temperature 和 top-p 映射到 OpenAI Responses API 的 `temperature` 和 `top_p` 请求选项，并提供单变量批量实验入口。
 - 提供基于 JSON Schema Draft 2020-12 的学习卡片数据契约，并用真实 Schema 验证器完成默认离线测试。
 - 提供学习卡片的 JSON 解析、Schema 校验、来源业务规则校验和项目类型转换流水线；失败日志只包含错误类别、字段路径和请求 ID。
-- 使用固定 revision 的 DeepSeek-V4-Flash-0731 tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
+- 使用固定 revision 的 DeepSeek-V4.1-Flash tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
 
 当前课程阶段尚未将学习卡片生成和验证接入终端对话或远程模型请求，不执行工具请求，也没有实现旧历史摘要、流式响应或重试。连接失败和超时等 SDK 异常目前会从 `OpenAIClient.send()` 原样抛出；将其转换为项目自有错误的逻辑留待后续可靠性课程实现。
@@ -146,10 +146,10 @@ message_count=4 roles=['system', 'user', 'assistant', 'user'] content_lengths=[2
 
 长度随实际输入变化；日志不应出现消息正文。
 
-如果只让生成客户端使用 fake 响应，同时仍按 DeepSeek-V4-Flash-0731 的真实消息格式和 tokenizer 检查预算，则执行：
+如果只让生成客户端使用 fake 响应，同时仍按 DeepSeek-V4.1-Flash 的真实消息格式和 tokenizer 检查预算，则执行：
 
 ```shell
-PROVIDER=faked MODEL=deepseek-v4-flash \
+PROVIDER=faked MODEL=deepseek-flash \
   uv run --extra token-counting llm-terminal-assistant
 ```
 
@@ -205,19 +205,19 @@ uv run --extra openai llm-terminal-assistant
 PROVIDER=openai \
 API_KEY=your-api-key \
 BASE_URL=https://api.example.com/v1 \
-MODEL=deepseek-v4-flash \
+MODEL=deepseek-flash \
 REASONING_EFFORT=high \
 ./scripts/run-sampling-experiment.sh \
   --parameter temperature \
   --values 0.2 0.8 1.4 \
   --runs 2 \
   --max-output-tokens 16384 \
-  --output sampling-results/temperature-16384.jsonl
+  --output sampling-results/temperature-xxx.jsonl
 ```
 
 这条命令会发出 60 次真实模型请求，可能产生费用并受到速率限制。`--output` 必须指向尚不存在的文件，脚本不会覆盖已有结果；每完成一次请求就立即追加并刷新一条 JSONL 记录，因此中途失败时已完成的结果仍会保留。只要有请求失败，脚本会继续记录剩余请求，并最终返回非零退出码。
 
-示例中的 16384 是本项目针对 `deepseek-v4-flash` 且 OpenAI Responses API 的 `reasoning.effort` 为 `high` 时采用的实验上限，不是所有模型和任务的通用默认值。较早使用 512 和 1024 的实验都观察到 reasoning tokens 在产生正文前耗尽输出预算；16384 的正式实验中 60 条请求均正常完成。`max_output_tokens` 只声明请求允许使用的上限，不要求每条响应消耗完该额度；实际用量仍以服务返回的 usage 为准。
+示例中的 16384 是本项目针对 `deepseek-v4-flash` 且 OpenAI Responses API 的 `reasoning.effort` 为 `high` 时采用的实验上限，不是所有模型和任务的通用默认值。较早使用 512 和 1024 的实验都观察到 reasoning tokens 在产生正文前耗尽输出预算；16384 的正式实验中 60 条请求均正常完成。这些结论是在 DeepSeek-V4-Flash-0731 上测得的。该模型已下线：旧模型名 `deepseek-v4-flash` 仍可调用，但请求现在由 DeepSeek-V4.1-Flash 提供服务，因此这个上限对当前被服务的模型是否同样适用，尚未验证。本节已保存的结果（`sampling-results/` 下的 JSONL）同样由该模型产生，与改用 `deepseek-flash` 重新运行所得的结果不属于同一个模型，不宜合并比较。`max_output_tokens` 只声明请求允许使用的上限，不要求每条响应消耗完该额度；实际用量仍以服务返回的 usage 为准。
 
 每条记录包含输入编号、输入正文、模型、运行序号、所选变量、完整采样设置、输出预算、输出、结束原因、usage 和错误状态。另一个采样参数从环境配置读取；如果省略对应环境变量，它在所有请求中都保持省略，并在记录中保存为 `null`。
 
@@ -235,36 +235,36 @@ Prompt 实验入口读取 `samples/prompt-design/evaluation.json` 中的 12 个�
 PROVIDER=openai \
 API_KEY=your-api-key \
 BASE_URL=https://api.example.com/v1 \
-MODEL=deepseek-v4-flash \
+MODEL=deepseek-flash \
 REASONING_EFFORT=high \
 TEMPERATURE=0.2 \
 ./scripts/run-prompt-experiment.sh \
   --max-output-tokens 16384 \
-  --output prompt-results/zero-vs-few-shot.jsonl
+  --output prompt-results/zero-vs-few-shot-xxx.jsonl
 ```
 
-这条命令会访问远程模型服务，可能产生费用并受到速率限制，必须由学习者显式运行。命令行示例没有声明 `TOP_P`；如果要让目标服务采用默认值，还须确认当前进程环境和项目 `.env` 均未设置它。temperature、top-p、推理强度和输出预算在全部 24 个请求中保持一致，并写入每条实验记录。`--output` 必须指向尚不存在的文件，程序不会覆盖已有结果；每个请求结束后都会立即追加并刷新一条 JSONL 记录。
+这条命令会访问远程模型服务，可能产生费用并受到速率限制，必须由学习者显式运行。命令行示例没有声明 `TOP_P`；如果要让目标服务采用默认值，还须确认当前进程环境和项目 `.env` 均未设置它。temperature、top-p、推理强度和输出预算在全部 24 个请求中保持一致，并写入每条实验记录。`--output` 必须指向尚不存在的文件，程序不会覆盖已有结果；每个请求结束后都会立即追加并刷新一条 JSONL 记录。`prompt-results/` 下已保存的结果同样由已下线的 `deepseek-v4-flash` 产生，与改用 `deepseek-flash` 重新运行所得的结果不属于同一个模型，不宜合并比较。
 
 每条成功记录包含 Prompt 版本、样本 ID、类别、实际发送的完整消息、模型与参数、原始输出、结束原因和 usage。`judgement` 为每项预先记录的期望行为创建一个 `pending` 检查项，但程序不会自动判定语义质量；真实调用结束后，应由学习者或其明确指定的评判者逐项填写状态、证据、失败类别和备注，再汇总两个版本的通过数量、输入 Token 和主要失败类别。请求异常会记录为 `failed` 并标记 `not_evaluated`，程序继续处理剩余组合；有失败或不完整响应时最终返回非零退出码。
 
 ### Token 计数
 
-计数入口使用项目模型标识 `deepseek-v4-flash` 查找模型配置，再通过 Hugging Face Transformers 的 `AutoTokenizer.from_pretrained()` 加载 DeepSeek 官方 `deepseek-ai/DeepSeek-V4-Flash-0731` 仓库中固定 revision 的 tokenizer。它读取 `samples/token-counting/` 下的中文、英文、JSON 和 Python 文件原始文本，输出样本路径、原文、Python `len()` 字符数、Token 数、模型标识、仓库、revision 及计数工具版本。
+计数入口使用项目模型标识 `deepseek-flash` 查找模型配置，再通过 Hugging Face Transformers 的 `AutoTokenizer.from_pretrained()` 加载 DeepSeek 官方 `deepseek-ai/DeepSeek-V4.1-Flash` 仓库中固定 revision 的 tokenizer。它读取 `samples/token-counting/` 下的中文、英文、JSON 和 Python 文件原始文本，输出样本路径、原文、Python `len()` 字符数、Token 数、模型标识、仓库、revision 及计数工具版本。
 
 在项目目录执行：
 
 ```shell
-MODEL=deepseek-v4-flash uv run --extra token-counting token-count
+MODEL=deepseek-flash uv run --extra token-counting token-count
 ```
 
 首次运行时，Hugging Face Transformers 可能访问 Hugging Face Hub 并把 tokenizer 文件下载到本地缓存；这一步不调用远程模型推理 API，也不产生模型推理费用。`token-count` 是使用真实 tokenizer 的计数入口，不作为项目后续默认自动化测试的一部分，因为全新测试环境不一定已有 tokenizer 缓存，也不应为了运行测试而访问网络。后续预算器测试改用不读取 Hugging Face 缓存的确定性 fake 计数器。默认缓存目录为 `~/.cache/huggingface/hub`，可通过 Hugging Face Hub 的 `HF_HOME` 或 `HF_HUB_CACHE` 环境变量修改。缓存准备完成后，可通过 Hugging Face Hub 的 `HF_HUB_OFFLINE=1` 环境变量强制只使用本地缓存：
 
 ```shell
-HF_HUB_OFFLINE=1 MODEL=deepseek-v4-flash \
+HF_HUB_OFFLINE=1 MODEL=deepseek-flash \
   uv run --extra token-counting token-count
 ```
 
-离线命令在指定 revision 的 tokenizer 文件尚未缓存时会失败。Hugging Face Hub 的[缓存说明](https://huggingface.co/docs/huggingface_hub/main/guides/manage-cache)和[环境变量参考](https://huggingface.co/docs/huggingface_hub/main/package_reference/environment_variables)描述了缓存位置与离线开关。本次样本计数结果和观察结论记录在 [Token 与上下文窗口练习回答](../../notes/llm/answers/tokens-and-context.md)中。
+离线命令在指定 revision 的 tokenizer 文件尚未缓存时会失败。Hugging Face Hub 的[缓存说明](https://huggingface.co/docs/huggingface_hub/main/guides/manage-cache)和[环境变量参考](https://huggingface.co/docs/huggingface_hub/main/package_reference/environment_variables)描述了缓存位置与离线开关。本次样本计数结果和观察结论记录在 [Token 与上下文窗口练习回答](../../notes/llm/answers/tokens-and-context.md)中。该记录中的计数由 DeepSeek-V4-Flash-0731 的 tokenizer 产生；上述入口现在加载 DeepSeek-V4.1-Flash 的 tokenizer，因此重新计数得到的数值未必与记录一致。
 
 ## 验证
 

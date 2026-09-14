@@ -1,11 +1,12 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from llm_terminal_assistant._vendor.deepseek_ai.deepseek_v4 import encode_messages
-from llm_terminal_assistant.model import ModelRequest
+from llm_terminal_assistant.model import ModelProfile, ModelRequest, PromptFormat
 from llm_terminal_assistant.request_encoder import RequestEncoder
 
 _REASONING_EFFORT_MAPPING = {
+    "minimal": "low",
     "low": "low",
     "medium": "high",
     "high": "high",
@@ -47,9 +48,13 @@ def _resolve_reasoning_effort(
     )
 
 
+type DeepSeekMessageEncoder = Callable[..., str]
+
+
 def encode_deepseek_request(
     request: ModelRequest,
     default_reasoning_effort: str,
+    deepseek_message_encoder: DeepSeekMessageEncoder,
 ) -> str:
     reasoning = _resolve_reasoning_effort(
         requested_effort=request.reasoning_effort,
@@ -63,19 +68,43 @@ def encode_deepseek_request(
         for message in request.messages
     ]
 
-    return encode_messages(
+    return deepseek_message_encoder(
         messages=messages,
         thinking_mode=reasoning.thinking_mode,
         reasoning_effort=reasoning.reasoning_effort,
     )
 
 
+@dataclass
 class DeepSeekRequestEncoder(RequestEncoder):
-    def __init__(self, default_reasoning_effort: str):
-        self.default_reasoning_effort = default_reasoning_effort
+    default_reasoning_effort: str
+    deepseek_message_encoder: DeepSeekMessageEncoder
 
     def encode_request(self, request: ModelRequest) -> str:
         return encode_deepseek_request(
             request=request,
             default_reasoning_effort=self.default_reasoning_effort,
+            deepseek_message_encoder=self.deepseek_message_encoder,
         )
+
+
+def create_deepseek_request_encoder(
+    model_profile: ModelProfile,
+) -> DeepSeekRequestEncoder:
+    match model_profile.prompt_format:
+        case PromptFormat.DEEPSEEK_V4:
+            from llm_terminal_assistant._vendor.deepseek_ai.deepseek_v4 import (
+                encode_messages,
+            )
+        case PromptFormat.DEEPSEEK_V41:
+            from llm_terminal_assistant._vendor.deepseek_ai.deepseek_v41 import (
+                encode_messages,
+            )
+        case _:
+            raise ValueError(
+                f"Unsupported prompt format for DeepSeek encoding: {model_profile.prompt_format}"
+            )
+    return DeepSeekRequestEncoder(
+        default_reasoning_effort=model_profile.default_reasoning_effort,
+        deepseek_message_encoder=encode_messages,
+    )

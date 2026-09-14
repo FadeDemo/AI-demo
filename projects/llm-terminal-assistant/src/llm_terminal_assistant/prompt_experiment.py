@@ -16,7 +16,6 @@ from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import PROJECT_ROOT, ModelConfig, load_model_config
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
-    MODEL_PROFILES,
     ModelRequest,
     ModelResponseEndReason,
 )
@@ -335,7 +334,7 @@ def validate_experiment_settings(
         raise ValueError("Prompt experiments require PROVIDER=openai.")
     if max_output_tokens <= 0:
         raise ValueError("max-output-tokens must be greater than zero.")
-    model_limit = MODEL_PROFILES[config.model].limit.max_output_tokens
+    model_limit = config.model_profile.limit.max_output_tokens
     if model_limit is not None and max_output_tokens > model_limit:
         raise ValueError(
             f"max-output-tokens {max_output_tokens} exceeds the model limit "
@@ -509,7 +508,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         client = create_model_client(config)
         client.validate_reasoning_effort(
             config.reasoning_effort,
-            MODEL_PROFILES[config.model].allowed_reasoning_efforts,
+            config.model_profile.allowed_reasoning_efforts,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("x", encoding="utf-8") as output_file:

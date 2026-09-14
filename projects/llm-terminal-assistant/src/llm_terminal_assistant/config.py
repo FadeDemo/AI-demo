@@ -5,7 +5,11 @@ from typing import Literal
 
 from dotenv import load_dotenv
 
-from llm_terminal_assistant.model import MODEL_PROFILES
+from llm_terminal_assistant.model import (
+    CURRENT_PROFILE_BY_API_MODEL_ID,
+    MODEL_PROFILES,
+    ModelProfile,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
@@ -16,6 +20,7 @@ class ModelConfig:
     api_key: str
     base_url: str
     model: str
+    model_profile: ModelProfile
     reasoning_effort: str | None = None
     provider: Literal["faked", "openai"] = "faked"
     safety_margin_tokens: int = 1_024
@@ -32,7 +37,10 @@ def load_model_config() -> ModelConfig:
     model = os.getenv("MODEL")
     provider = os.getenv("PROVIDER")
     reasoning_effort = os.getenv("REASONING_EFFORT")
-    model_profile = MODEL_PROFILES.get(model)
+    profile_id = CURRENT_PROFILE_BY_API_MODEL_ID.get(model)
+    if not profile_id:
+        raise ValueError(f"Profile ID for model {model} not found.")
+    model_profile = MODEL_PROFILES.get(profile_id)
     if not model_profile:
         raise ValueError(f"Model profile for {model} not found.")
     temperature = os.getenv("TEMPERATURE")
@@ -63,4 +71,5 @@ def load_model_config() -> ModelConfig:
         reasoning_effort=reasoning_effort,
         temperature=temperature,
         top_p=top_p,
+        model_profile=model_profile,
     )

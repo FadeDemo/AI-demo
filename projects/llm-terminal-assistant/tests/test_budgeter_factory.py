@@ -6,7 +6,7 @@ from llm_terminal_assistant.cli import send_conversation_turn
 from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import ModelConfig
 from llm_terminal_assistant.message import Message
-from llm_terminal_assistant.model import FAKE_MODEL_ID
+from llm_terminal_assistant.model import FAKE_MODEL_ID, FAKE_MODEL_PROFILE
 
 
 def make_config(provider: str = "faked") -> ModelConfig:
@@ -14,6 +14,7 @@ def make_config(provider: str = "faked") -> ModelConfig:
         api_key="",
         base_url="",
         model=FAKE_MODEL_ID,
+        model_profile=FAKE_MODEL_PROFILE,
         provider=provider,
     )
 

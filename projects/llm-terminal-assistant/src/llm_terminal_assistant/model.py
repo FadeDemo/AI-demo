@@ -85,11 +85,18 @@ class TopPConfig:
     max_top_p: float
 
 
+class PromptFormat(StrEnum):
+    FAKE = "fake"
+    DEEPSEEK_V4 = "deepseek-v4"
+    DEEPSEEK_V41 = "deepseek-v4.1"
+
+
 @dataclass(frozen=True)
 class ModelProfile:
-    api_model_id: str
+    profile_id: str
     repository: str
     revision: str
+    prompt_format: PromptFormat
     limit: ModelLimits
     default_reasoning_effort: str
     temperature_config: TemperatureConfig
@@ -111,7 +118,7 @@ FAKE_MODEL_LIMITS = ModelLimits(
     max_input_tokens=16_384,
 )
 FAKE_MODEL_PROFILE = ModelProfile(
-    api_model_id=FAKE_MODEL_ID,
+    profile_id="fake-profile",
     repository="fake-repo/fake-model",
     revision="fake-revision",
     limit=FAKE_MODEL_LIMITS,
@@ -127,11 +134,12 @@ FAKE_MODEL_PROFILE = ModelProfile(
         min_top_p=0.0,
         max_top_p=1.0,
     ),
+    prompt_format=PromptFormat.FAKE,
 )
 
 
 DEEPSEEK_V4_FLASH = ModelProfile(
-    api_model_id="deepseek-v4-flash",
+    profile_id="deepseek-v4-flash-0731",
     repository="deepseek-ai/DeepSeek-V4-Flash-0731",
     revision="7872f01b1d1fe23eabc4c98b48bffcef5a386062",
     limit=ModelLimits(context_window_tokens=1_000_000, max_output_tokens=384_000),
@@ -147,9 +155,43 @@ DEEPSEEK_V4_FLASH = ModelProfile(
         min_top_p=0.0,
         max_top_p=1.0,
     ),
+    prompt_format=PromptFormat.DEEPSEEK_V4,
+)
+
+DEEPSEEK_V41_FLASH = ModelProfile(
+    profile_id="deepseek-v4.1-flash",
+    repository="deepseek-ai/DeepSeek-V4.1-Flash",
+    revision="dba1be0a40aa45a94ad051997016db3960a90277",
+    limit=ModelLimits(context_window_tokens=1_000_000, max_output_tokens=384_000),
+    allowed_reasoning_efforts=(
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ),
+    default_reasoning_effort="high",
+    temperature_config=TemperatureConfig(
+        default_temperature=1.0,
+        min_temperature=0.0,
+        max_temperature=2.0,
+    ),
+    top_p_config=TopPConfig(
+        default_top_p=1.0,
+        min_top_p=0.0,
+        max_top_p=1.0,
+    ),
+    prompt_format=PromptFormat.DEEPSEEK_V41,
 )
 
 MODEL_PROFILES = {
-    DEEPSEEK_V4_FLASH.api_model_id: DEEPSEEK_V4_FLASH,
-    FAKE_MODEL_PROFILE.api_model_id: FAKE_MODEL_PROFILE,
+    DEEPSEEK_V4_FLASH.profile_id: DEEPSEEK_V4_FLASH,
+    DEEPSEEK_V41_FLASH.profile_id: DEEPSEEK_V41_FLASH,
+    FAKE_MODEL_PROFILE.profile_id: FAKE_MODEL_PROFILE,
+}
+
+CURRENT_PROFILE_BY_API_MODEL_ID = {
+    "deepseek-flash": DEEPSEEK_V41_FLASH.profile_id,
+    "fake-model": FAKE_MODEL_PROFILE.profile_id,
 }

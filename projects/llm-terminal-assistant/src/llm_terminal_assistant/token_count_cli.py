@@ -6,7 +6,6 @@ from llm_terminal_assistant.adapter.huggingface_tokenizer import (
     load_huggingface_tokenizer,
 )
 from llm_terminal_assistant.config import load_model_config
-from llm_terminal_assistant.model import MODEL_PROFILES
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_DIR / "samples" / "token-counting"
@@ -15,9 +14,9 @@ DATA_DIR = PROJECT_DIR / "samples" / "token-counting"
 def main():
     model_config = load_model_config()
     print(
-        f"Using model: {model_config.model}, repository: {MODEL_PROFILES[model_config.model].repository}, revision: {MODEL_PROFILES[model_config.model].revision}, transformers version: {version('transformers')}, tokenizers version: {version('tokenizers')}"
+        f"Using model: {model_config.model}, repository: {model_config.model_profile.repository}, revision: {model_config.model_profile.revision}, transformers version: {version('transformers')}, tokenizers version: {version('tokenizers')}"
     )
-    tokenizer = load_huggingface_tokenizer(model_config.model)
+    tokenizer = load_huggingface_tokenizer(model_config.model_profile)
     token_counter = HuggingFaceTokenCounter(tokenizer=tokenizer)
     chinese_sample_path = DATA_DIR / "chinese.txt"
     chinese_text = chinese_sample_path.read_text(encoding="utf-8")
