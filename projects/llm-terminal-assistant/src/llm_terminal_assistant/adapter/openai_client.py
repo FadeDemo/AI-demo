@@ -44,6 +44,14 @@ class OpenAIClient(ModelClient):
             request_options["temperature"] = request.temperature
         if request.top_p is not None:
             request_options["top_p"] = request.top_p
+        if request.output_format is not None:
+            request_options["text"] = {
+                "format": {
+                    "type": request.output_format.type,
+                    "name": request.output_format.name,
+                    "schema": request.output_format.schema,
+                }
+            }
         openai_response = self.client.responses.create(**request_options)
         logger.debug("Using model: %s", openai_response.model)
         reason, error, incomplete_details = self.derive_end_reason(openai_response)

@@ -8,9 +8,17 @@ from llm_terminal_assistant.message import Message
 
 
 @dataclass
+class ModelOutputFormat:
+    type: Literal["text", "json_schema", "json_object"] = "text"
+    name: str | None = None
+    schema: dict[str, object] | None = None
+
+
+@dataclass
 class ModelRequest:
     messages: list[Message]
     reserved_output_tokens: int
+    output_format: ModelOutputFormat | None = None
     reasoning_effort: str | None = None
     temperature: float | None = None
     top_p: float | None = None

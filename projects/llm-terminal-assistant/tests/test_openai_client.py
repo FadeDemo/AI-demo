@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from llm_terminal_assistant.adapter.openai_client import OpenAIClient
 from llm_terminal_assistant.message import Message
-from llm_terminal_assistant.model import ModelRequest
+from llm_terminal_assistant.model import ModelOutputFormat, ModelRequest
 
 
 class RecordingResponses:
@@ -124,6 +124,56 @@ class OpenAIClientTests(unittest.TestCase):
 
         self.assertNotIn("temperature", responses.create_kwargs)
         self.assertNotIn("top_p", responses.create_kwargs)
+
+    def test_maps_json_schema_output_format_to_responses_text_format(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        schema = {
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string"},
+            },
+            "required": ["answer"],
+            "additionalProperties": False,
+        }
+        request = ModelRequest(
+            messages=[Message(role="user", content="question")],
+            reserved_output_tokens=321,
+            output_format=ModelOutputFormat(
+                type="json_schema",
+                name="answer",
+                schema=schema,
+            ),
+        )
+
+        client.send(request)
+
+        self.assertEqual(
+            responses.create_kwargs["text"],
+            {
+                "format": {
+                    "type": "json_schema",
+                    "name": "answer",
+                    "schema": schema,
+                }
+            },
+        )
+
+    def test_omits_text_configuration_when_output_format_is_none(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        request = ModelRequest(
+            messages=[Message(role="user", content="question")],
+            reserved_output_tokens=321,
+        )
+
+        client.send(request)
+
+        self.assertNotIn("text", responses.create_kwargs)
 
 
 if __name__ == "__main__":
