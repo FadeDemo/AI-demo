@@ -1,9 +1,10 @@
 """验证流水线的错误类别定义。
 
-本模块只需要：
+本模块只区分模型输出在验证边界上可以触发的三类失败：
 
-- 错误类别枚举：至少区分四类——语法解析失败、Schema 结构校验失败、
-  业务规则校验失败、项目类型转换失败；
+- 语法解析失败；
+- Schema 结构校验失败；
+- 业务规则校验失败；
 - 异常或错误对象：携带错误类别与（可能缺失的）字段路径；
   请求 ID 由验证流水线在日志点提供；不得保存或记录完整模型输出。
 """
@@ -17,7 +18,6 @@ class ErrorCategory(StrEnum):
     PARSE_ERROR = "parse_error"
     SCHEMA_VALIDATION_ERROR = "schema_validation_error"
     BUSINESS_RULE_VALIDATION_ERROR = "business_rule_validation_error"
-    TYPE_CONVERSION_ERROR = "type_conversion_error"
 
 
 class StructuredOutputError(Exception):
