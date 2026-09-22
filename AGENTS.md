@@ -6,6 +6,10 @@
 - A nested `AGENTS.md` may add stricter rules for its own directory. If a nested rule conflicts with this file, follow the more specific nested rule.
 - Follow the repository's general Markdown conventions in [`docs/markdown-style-guide.md`](docs/markdown-style-guide.md) in addition to the agent-specific safeguards below.
 
+## 渐进式学习辅导
+
+- 当用户正在亲自实现代码，并询问下一步要做什么或某一步如何实现时，默认只提供当前最小步骤、目标和验收点，不提前给出完整实现、全量代码或后续所有步骤；只有用户明确要求完整方案或完整代码时才展开。不得因此省略完成当前步骤所必需的约束、安全问题或已经确认的缺陷。
+
 ## Documentation changes
 
 ### 文档语言
@@ -164,6 +168,13 @@ For every Markdown change:
 
 3. Lint the changed Markdown files with the repository-local `markdownlint-cli2`.
 4. Inspect newly added or edited emphasis manually when rendered output is part of the reported issue. Formatter and linter success alone is not sufficient verification for delimiter-boundary defects.
+
+### 图示中的连接线与箭头
+
+- 修改 SVG 或其他图示中的连接线时，线段必须从源节点的外边界发出，并在目标节点的外边界结束；不得把端点放在节点内部或与边界之间留下无意的空隙。
+- 连接矩形节点的左、右边缘时，如果语义和布局没有要求偏移，默认使用对应边缘的垂直中点；连接上、下边缘时默认使用水平中点。连接线可以使用直线或曲线，但箭头尖端必须准确落在预期位置，且接入方向清晰，不得产生视觉偏移。
+- 连接线路径不得穿过无关节点、节点文字或其他箭头。需要绕行时，应保留足够间距，并让起点、终点和流向仍能一眼辨认。
+- 完成图示修改后，必须按完整画布和原始宽高比渲染并人工检查所有连接线。检查每条线的起点、终点、箭头方向、接入位置以及与其他元素的交叉情况；只通过 XML 解析、格式化或查看被裁切的缩略图不能代替这项检查。
 
 ### Provider-specific terminology
 
