@@ -2,16 +2,24 @@
 
 除仓库级规则外，以下规则适用于 `llm-terminal-assistant` 项目。
 
-## 结构化输出请求编码
+## 结构化输出与工具参数 Schema 的编码边界
 
-- 将 `ModelRequest.output_format` 视为提供方 API 选项。OpenAI Responses API
-  兼容适配器将它映射到 `text.format`。
-- 不得仅因为项目内置的编码器接受消息级 `response_format`，就把
-  `ModelRequest.output_format` 加入 DeepSeek Prompt 编码器或 Token 预算输入。
-  该能力不能证明 DeepSeek 托管的 Responses API 会如何把 `text.format` 映射到
-  模型 Prompt。
-- 在没有该托管 API 映射证据时，不得把 Prompt 编码器目前未编码 Schema
-  报告为缺陷。
-- 任何改变此边界的建议，都必须提供提供方的最新证据、到项目内置编码器的
-  具体映射方式，以及编码结果示例。如果只能确认 Token 统计行为，仍须明确说明
-  具体的 Prompt 转换方式尚未查明。
+- 将 `ModelRequest.output_format` 视为结构化输出的提供方 API 选项。OpenAI
+  Responses API 兼容适配器将它映射到 `text.format`；除非任务明确要求重新评估，
+  不得在工具调用、Token 预算或其他相邻任务中顺带扩展这条链路。
+- 必须区分结构化输出 Schema 与工具参数 Schema。前者约束模型最终响应的格式；
+  后者属于工具定义，用于描述工具参数。工具调用任务可以传输并计算工具定义及其
+  参数 Schema，但这不构成把 `ModelRequest.output_format` 加入 DeepSeek Prompt
+  编码器或 Token 预算输入的依据。
+- 不得仅因为项目内置的 DeepSeek 编码器接受消息级 `response_format`，就认定它与
+  托管 Responses API 的 `text.format` 等价。项目此前核查的 DeepSeek V4 和
+  V4.1 官方编码说明、测试与输入示例均未给出这两个字段之间的映射示例；源码存在
+  `response_format` 分支，只能证明本地编码器具备该分支，不能证明托管服务会把
+  `text.format` 放入哪条消息、传入完整配置还是仅传 Schema，或采用何种包装格式。
+- 在没有托管 API 映射证据时，保持当前边界：提供方适配器负责传输
+  `ModelRequest.output_format`，DeepSeek Prompt 编码器和本地 Token 预算不编码
+  结构化输出 Schema；不得将后者报告为当前缺陷或当前任务的未完成项。
+- 只有获得提供方最新的明确映射说明、完整编码示例，或者能够确定 Prompt 转换方式
+  的可重复 API 对照实验后，才能建议改变此边界。建议必须同时给出到项目内置编码器
+  的具体映射方式和编码结果示例；如果实验只能确认 Token 统计发生变化，仍须明确
+  说明具体的 Prompt 转换方式尚未查明。

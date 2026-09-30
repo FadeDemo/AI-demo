@@ -2,9 +2,9 @@
 title: LLM 使用基础
 type: index
 area: llm
-status: planned
+status: learning
 created: 2026-08-05
-updated: 2026-08-10
+updated: 2026-09-30
 tags:
   - ai
   - llm
@@ -101,7 +101,7 @@ tags:
 学习者需要以书面或口头形式准确回答：
 
 - 为什么模型输出是候选内容，而不是已经验证的事实或授权指令？
-- system、user、assistant 和 tool 消息分别由谁产生，信任级别有何不同？
+- system、user、assistant 消息和工具结果分别由谁产生，信任级别有何不同？
 - 为什么长上下文、低 temperature 和合法 JSON 都不能单独保证答案正确？
 - Schema 验证、业务规则验证和工具权限检查分别拦截什么问题？
 - 哪些失败可以重试，为什么幂等性会影响重试安全？
