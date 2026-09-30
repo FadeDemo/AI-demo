@@ -43,7 +43,7 @@ class StubRequestEncoder:
 
 def make_request(reserved_output_tokens: int = 20) -> ModelRequest:
     return ModelRequest(
-        messages=[
+        input=[
             Message(role="system", content="system instruction"),
             Message(role="user", content="user question"),
         ],
@@ -187,7 +187,7 @@ class BudgeterTests(unittest.TestCase):
 
     def test_real_encoder_includes_system_message_and_message_wrappers(self):
         request = ModelRequest(
-            messages=[
+            input=[
                 Message(role="system", content="SYSTEM_SENTINEL"),
                 Message(role="user", content="USER_SENTINEL"),
             ],

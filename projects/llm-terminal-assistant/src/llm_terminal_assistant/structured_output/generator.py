@@ -54,8 +54,8 @@ def _build_repair_request(
 ) -> ModelRequest:
     return replace(
         request,
-        messages=[
-            *request.messages,
+        input=[
+            *request.input,
             Message(role="assistant", content=invalid_output),
             Message(role="user", content=REPAIR_INSTRUCTION),
         ],

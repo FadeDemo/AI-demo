@@ -5,6 +5,8 @@ from enum import StrEnum
 from typing import Literal
 
 from llm_terminal_assistant.message import Message
+from llm_terminal_assistant.tools.definition import ToolDefinition
+from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 
 @dataclass
@@ -14,14 +16,18 @@ class ModelOutputFormat:
     schema: dict[str, object] | None = None
 
 
+type ModelInputItem = Message | ToolCallRequest | ToolCallResult
+
+
 @dataclass
 class ModelRequest:
-    messages: list[Message]
+    input: list[ModelInputItem]
     reserved_output_tokens: int
     output_format: ModelOutputFormat | None = None
     reasoning_effort: str | None = None
     temperature: float | None = None
     top_p: float | None = None
+    tools: list[ToolDefinition] = field(default_factory=list)
 
 
 class ModelResponseEndReason(StrEnum):
@@ -70,13 +76,6 @@ class InputTokensDetails:
 @dataclass
 class OutputTokensDetails:
     reasoning_tokens: int
-
-
-@dataclass
-class ToolCallRequest:
-    call_id: str
-    name: str
-    arguments: str
 
 
 @dataclass(frozen=True)

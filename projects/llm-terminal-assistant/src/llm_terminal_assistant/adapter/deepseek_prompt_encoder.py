@@ -65,7 +65,7 @@ def encode_deepseek_request(
             "role": message.role,
             "content": message.content,
         }
-        for message in request.messages
+        for message in request.input
     ]
 
     return deepseek_message_encoder(

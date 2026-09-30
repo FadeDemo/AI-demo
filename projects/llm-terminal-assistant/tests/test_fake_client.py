@@ -8,9 +8,12 @@ from llm_terminal_assistant.config import ModelConfig
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     FAKE_MODEL_PROFILE,
+    InputTokensDetails,
     ModelRequest,
     ModelResponse,
     ModelResponseEndReason,
+    ModelUsage,
+    OutputTokensDetails,
 )
 
 
@@ -26,8 +29,25 @@ def build_config() -> ModelConfig:
 
 def build_request() -> ModelRequest:
     return ModelRequest(
-        messages=[Message(role="user", content="test prompt")],
+        input=[Message(role="user", content="test prompt")],
         reserved_output_tokens=128,
+    )
+
+
+def build_response(text: str) -> ModelResponse:
+    return ModelResponse(
+        text=text,
+        reason=ModelResponseEndReason.COMPLETED_NORMALLY,
+        usage=ModelUsage(
+            input_tokens=0,
+            input_tokens_details=InputTokensDetails(
+                cached_tokens=0,
+                cache_write_tokens=0,
+            ),
+            output_tokens=0,
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+            total_tokens=0,
+        ),
     )
 
 
@@ -39,6 +59,38 @@ def capture_output(response: ModelResponse) -> str:
 
 
 class FakeClientTests(unittest.TestCase):
+    def test_returns_scripted_responses_and_records_requests_in_order(self):
+        first_response = build_response("first response")
+        second_response = build_response("second response")
+        first_request = build_request()
+        second_request = ModelRequest(
+            input=[Message(role="user", content="second prompt")],
+            reserved_output_tokens=128,
+        )
+        client = FakeClient(
+            build_config(),
+            scripted_responses=[first_response, second_response],
+        )
+
+        actual_first_response = client.send(first_request)
+        actual_second_response = client.send(second_request)
+
+        self.assertIs(actual_first_response, first_response)
+        self.assertIs(actual_second_response, second_response)
+        self.assertEqual(client.requests, [first_request, second_request])
+
+    def test_raises_when_scripted_responses_are_exhausted(self):
+        client = FakeClient(build_config(), scripted_responses=[])
+        request = build_request()
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "No more scripted responses available",
+        ):
+            client.send(request)
+
+        self.assertEqual(client.requests, [request])
+
     def test_displays_text_when_response_completed_normally(self):
         response = FakeClient(build_config()).send(build_request())
 

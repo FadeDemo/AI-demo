@@ -74,7 +74,7 @@ def valid_study_card() -> dict[str, object]:
 
 def base_request() -> ModelRequest:
     return ModelRequest(
-        messages=[
+        input=[
             Message(
                 role="user",
                 content="Create a study card from lesson-01.",
@@ -101,7 +101,7 @@ class StructuredOutputGeneratorTests(unittest.TestCase):
         self.assertEqual(card, StudyCard(**valid_study_card()))
         self.assertEqual(len(client.requests), 1)
         self.assertIsNone(request.output_format)
-        self.assertEqual(len(request.messages), 1)
+        self.assertEqual(len(request.input), 1)
 
         output_format = client.requests[0].output_format
         self.assertIsNotNone(output_format)
@@ -134,11 +134,11 @@ class StructuredOutputGeneratorTests(unittest.TestCase):
 
         initial_request, repair_request = client.requests
         self.assertEqual(
-            [message.role for message in repair_request.messages],
+            [message.role for message in repair_request.input],
             ["user", "assistant", "user"],
         )
-        self.assertEqual(repair_request.messages[-2].content, invalid_output)
-        self.assertEqual(repair_request.messages[-1].content, REPAIR_INSTRUCTION)
+        self.assertEqual(repair_request.input[-2].content, invalid_output)
+        self.assertEqual(repair_request.input[-1].content, REPAIR_INSTRUCTION)
         self.assertEqual(repair_request.output_format, initial_request.output_format)
 
     def test_second_parse_failure_stops_after_two_requests(self):

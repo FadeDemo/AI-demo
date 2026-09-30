@@ -97,9 +97,9 @@ class SamplingExperimentTests(unittest.TestCase):
             },
         )
         for request in client.requests:
-            self.assertEqual(len(request.messages), 2)
+            self.assertEqual(len(request.input), 2)
             self.assertEqual(
-                [message.role for message in request.messages], ["system", "user"]
+                [message.role for message in request.input], ["system", "user"]
             )
             self.assertEqual(request.top_p, 0.9)
             self.assertEqual(request.reserved_output_tokens, 256)

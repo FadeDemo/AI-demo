@@ -14,7 +14,7 @@ class FakeModelRequestEncoder(RequestEncoder):
             {
                 "messages": [
                     {"role": message.role, "content": message.content}
-                    for message in request.messages
+                    for message in request.input
                 ],
                 "reasoning_effort": request.reasoning_effort,
             },

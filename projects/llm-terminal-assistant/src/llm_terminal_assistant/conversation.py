@@ -50,7 +50,7 @@ def trim_history(
             + [current_user_message]
         )
         model_request = ModelRequest(
-            messages=messages,
+            input=messages,
             reserved_output_tokens=reserved_output_tokens,
             reasoning_effort=reasoning_effort,
             temperature=temperature,

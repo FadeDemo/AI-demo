@@ -163,7 +163,7 @@ class PromptExperimentTests(unittest.TestCase):
                 )
             )
             expected_message_count = 2 if record["prompt_version"] == "zero-shot" else 8
-            self.assertEqual(len(request.messages), expected_message_count)
+            self.assertEqual(len(request.input), expected_message_count)
             self.assertEqual(record["messages"][-1]["role"], "user")
 
     def test_records_a_request_failure_as_not_evaluated_and_continues(self):

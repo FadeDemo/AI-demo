@@ -4,5 +4,5 @@ from typing import Literal
 
 @dataclass
 class Message:
-    role: Literal["system", "user", "assistant", "tool"]
+    role: Literal["system", "user", "assistant"]
     content: str

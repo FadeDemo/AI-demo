@@ -25,7 +25,7 @@ class ContentRequestEncoder:
 
     def encode_request(self, request: ModelRequest) -> str:
         self.requests.append(request)
-        return "".join(message.content for message in request.messages)
+        return "".join(message.content for message in request.input)
 
 
 class TextLengthTokenCounter:
@@ -160,7 +160,7 @@ class ConversationTests(unittest.TestCase):
             self.current_user_message,
         ]
         self.assertEqual(trim_result.retained_completed_turns, expected_turns)
-        self.assertEqual(trim_result.request.messages, expected_messages)
+        self.assertEqual(trim_result.request.input, expected_messages)
         self.assertEqual(trim_result.dropped_completed_turns_count, 2)
         self.assertEqual(trim_result.budget_result.remaining_tokens, 0)
         self.assertEqual(len(encoder.requests), 3)

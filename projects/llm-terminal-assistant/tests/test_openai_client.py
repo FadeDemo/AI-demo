@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from llm_terminal_assistant.adapter.openai_client import OpenAIClient
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import ModelOutputFormat, ModelRequest
+from llm_terminal_assistant.tools.definition import ToolDefinition
+from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 
 class RecordingResponses:
@@ -31,13 +33,54 @@ class RecordingResponses:
 
 
 class OpenAIClientTests(unittest.TestCase):
+    def test_maps_input_items_to_responses_input_in_order(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        request = ModelRequest(
+            input=[
+                Message(role="user", content="What time is it?"),
+                ToolCallRequest(
+                    call_id="call-1",
+                    name="get_current_time",
+                    arguments='{"timezone":"Asia/Shanghai"}',
+                ),
+                ToolCallResult(
+                    call_id="call-1",
+                    output='{"time":"12:00"}',
+                ),
+            ],
+            reserved_output_tokens=321,
+        )
+
+        client.send(request)
+
+        self.assertEqual(
+            responses.create_kwargs["input"],
+            [
+                {"role": "user", "content": "What time is it?"},
+                {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "get_current_time",
+                    "arguments": '{"timezone":"Asia/Shanghai"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-1",
+                    "output": '{"time":"12:00"}',
+                },
+            ],
+        )
+
     def test_maps_reserved_output_tokens_to_responses_output_limit(self):
         responses = RecordingResponses()
         client = object.__new__(OpenAIClient)
         client.model = "test-model"
         client.client = SimpleNamespace(responses=responses)
         request = ModelRequest(
-            messages=[Message(role="user", content="question")],
+            input=[Message(role="user", content="question")],
             reserved_output_tokens=321,
         )
 
@@ -51,7 +94,7 @@ class OpenAIClientTests(unittest.TestCase):
         client.model = "test-model"
         client.client = SimpleNamespace(responses=responses)
         request = ModelRequest(
-            messages=[Message(role="user", content="question")],
+            input=[Message(role="user", content="question")],
             reserved_output_tokens=321,
             reasoning_effort="none",
         )
@@ -69,7 +112,7 @@ class OpenAIClientTests(unittest.TestCase):
         client.model = "test-model"
         client.client = SimpleNamespace(responses=responses)
         request = ModelRequest(
-            messages=[Message(role="user", content="question")],
+            input=[Message(role="user", content="question")],
             reserved_output_tokens=321,
             reasoning_effort=None,
         )
@@ -84,7 +127,7 @@ class OpenAIClientTests(unittest.TestCase):
         client.model = "test-model"
         client.client = SimpleNamespace(responses=responses)
         request = ModelRequest(
-            messages=[Message(role="user", content="question")],
+            input=[Message(role="user", content="question")],
             reserved_output_tokens=321,
             temperature=0.4,
         )
@@ -99,7 +142,7 @@ class OpenAIClientTests(unittest.TestCase):
         client.model = "test-model"
         client.client = SimpleNamespace(responses=responses)
         request = ModelRequest(
-            messages=[Message(role="user", content="question")],
+            input=[Message(role="user", content="question")],
             reserved_output_tokens=321,
             top_p=0.8,
         )
@@ -114,7 +157,7 @@ class OpenAIClientTests(unittest.TestCase):
         client.model = "test-model"
         client.client = SimpleNamespace(responses=responses)
         request = ModelRequest(
-            messages=[Message(role="user", content="question")],
+            input=[Message(role="user", content="question")],
             reserved_output_tokens=321,
             temperature=None,
             top_p=None,
@@ -139,7 +182,7 @@ class OpenAIClientTests(unittest.TestCase):
             "additionalProperties": False,
         }
         request = ModelRequest(
-            messages=[Message(role="user", content="question")],
+            input=[Message(role="user", content="question")],
             reserved_output_tokens=321,
             output_format=ModelOutputFormat(
                 type="json_schema",
@@ -167,13 +210,66 @@ class OpenAIClientTests(unittest.TestCase):
         client.model = "test-model"
         client.client = SimpleNamespace(responses=responses)
         request = ModelRequest(
-            messages=[Message(role="user", content="question")],
+            input=[Message(role="user", content="question")],
             reserved_output_tokens=321,
         )
 
         client.send(request)
 
         self.assertNotIn("text", responses.create_kwargs)
+
+    def test_maps_tool_definitions_to_responses_tools(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        parameter_schema = {
+            "type": "object",
+            "properties": {
+                "timezone": {"type": "string"},
+            },
+            "required": ["timezone"],
+            "additionalProperties": False,
+        }
+        request = ModelRequest(
+            input=[Message(role="user", content="question")],
+            reserved_output_tokens=321,
+            tools=[
+                ToolDefinition(
+                    name="get_current_time",
+                    description="Returns the current time.",
+                    parameter_schema=parameter_schema,
+                )
+            ],
+        )
+
+        client.send(request)
+
+        self.assertEqual(
+            responses.create_kwargs["tools"],
+            [
+                {
+                    "type": "function",
+                    "name": "get_current_time",
+                    "description": "Returns the current time.",
+                    "parameters": parameter_schema,
+                }
+            ],
+        )
+
+    def test_omits_tools_when_request_has_no_tool_definitions(self):
+        responses = RecordingResponses()
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.client = SimpleNamespace(responses=responses)
+        request = ModelRequest(
+            input=[Message(role="user", content="question")],
+            reserved_output_tokens=321,
+        )
+
+        client.send(request)
+
+        self.assertNotIn("tools", responses.create_kwargs)
 
 
 if __name__ == "__main__":

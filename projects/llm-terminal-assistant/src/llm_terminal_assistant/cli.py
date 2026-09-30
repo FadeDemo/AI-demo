@@ -77,9 +77,9 @@ def send_conversation_turn(
     model_request = trim_result.request
     logger.info(
         "message_count=%d roles=%s content_lengths=%s",
-        len(model_request.messages),
-        [msg.role for msg in model_request.messages],
-        [len(msg.content) for msg in model_request.messages],
+        len(model_request.input),
+        [msg.role for msg in model_request.input],
+        [len(msg.content) for msg in model_request.input],
     )
     model_response = client.send(model_request)
     return model_response, trim_result

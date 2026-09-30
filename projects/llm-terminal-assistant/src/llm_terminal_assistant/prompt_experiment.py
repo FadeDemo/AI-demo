@@ -388,7 +388,7 @@ def run_experiment(
             attempted += 1
             messages = build_messages(definition, version, sample)
             request = ModelRequest(
-                messages=messages,
+                input=messages,
                 reserved_output_tokens=max_output_tokens,
                 reasoning_effort=config.reasoning_effort,
                 temperature=config.temperature,

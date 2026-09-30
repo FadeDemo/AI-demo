@@ -147,7 +147,7 @@ def run_experiment(
                 )
                 top_p = value if parameter == "top_p" else config.top_p
                 request = ModelRequest(
-                    messages=[
+                    input=[
                         Message(role="system", content=system_prompt),
                         Message(role="user", content=experiment_input.prompt),
                     ],

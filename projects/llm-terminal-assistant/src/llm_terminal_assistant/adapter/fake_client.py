@@ -1,3 +1,5 @@
+from collections import deque
+
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.config import ModelConfig
 from llm_terminal_assistant.model import (
@@ -12,11 +14,26 @@ from llm_terminal_assistant.model import (
 
 
 class FakeClient(ModelClient):
-    def __init__(self, config: ModelConfig, outcome: str = "normal"):
+    def __init__(
+        self,
+        config: ModelConfig,
+        outcome: str = "normal",
+        *,
+        scripted_responses: list[ModelResponse] | None = None,
+    ):
         super().__init__(config)
         self.outcome = outcome
+        self.scripted_responses = (
+            deque(scripted_responses) if scripted_responses is not None else None
+        )
+        self.requests: list[ModelRequest] = []
 
     def send(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        if self.scripted_responses is not None:
+            if not self.scripted_responses:
+                raise RuntimeError("No more scripted responses available")
+            return self.scripted_responses.popleft()
         construction_options = {
             "text": "This is a fake response",
             "usage": ModelUsage(
