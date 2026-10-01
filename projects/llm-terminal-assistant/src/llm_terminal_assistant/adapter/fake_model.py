@@ -1,6 +1,9 @@
 import json
 from dataclasses import dataclass
 
+from llm_terminal_assistant.adapter.protocol_mapping import (
+    to_openai_responses_input_item,
+)
 from llm_terminal_assistant.model import ModelRequest
 from llm_terminal_assistant.request_encoder import RequestEncoder
 from llm_terminal_assistant.token_counter import TokenCounter
@@ -12,11 +15,18 @@ class FakeModelRequestEncoder(RequestEncoder):
     def encode_request(self, request: ModelRequest) -> str:
         return json.dumps(
             {
-                "messages": [
-                    {"role": message.role, "content": message.content}
-                    for message in request.input
+                "input": [
+                    to_openai_responses_input_item(item) for item in request.input
                 ],
                 "reasoning_effort": request.reasoning_effort,
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameter_schema": tool.parameter_schema,
+                    }
+                    for tool in request.tools
+                ],
             },
             ensure_ascii=False,
             separators=(",", ":"),

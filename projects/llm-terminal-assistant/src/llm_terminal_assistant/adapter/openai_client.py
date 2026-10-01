@@ -1,12 +1,13 @@
 import logging
 from typing import TYPE_CHECKING
 
+from llm_terminal_assistant.adapter.protocol_mapping import (
+    to_openai_responses_input_item,
+)
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.config import ModelConfig
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     InputTokensDetails,
-    ModelInputItem,
     ModelRequest,
     ModelResponse,
     ModelResponseEndReason,
@@ -15,7 +16,7 @@ from llm_terminal_assistant.model import (
     ModelUsage,
     OutputTokensDetails,
 )
-from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
+from llm_terminal_assistant.tools.protocol import ToolCallRequest
 
 if TYPE_CHECKING:
     from openai.types.responses import Response
@@ -30,31 +31,10 @@ class OpenAIClient(ModelClient):
         super().__init__(config)
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
-    @staticmethod
-    def _convert_input_item(item: ModelInputItem) -> dict[str, object]:
-        match item:
-            case Message(role=role, content=content):
-                return {"role": role, "content": content}
-            case ToolCallRequest(call_id=call_id, name=name, arguments=arguments):
-                return {
-                    "type": "function_call",
-                    "call_id": call_id,
-                    "name": name,
-                    "arguments": arguments,
-                }
-            case ToolCallResult(call_id=call_id, output=output):
-                return {
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": output,
-                }
-            case _:
-                raise TypeError(f"Unsupported input item type: {type(item).__name__}")
-
     def send(self, request: ModelRequest) -> ModelResponse:
         request_options = {
             "model": self.model,
-            "input": [OpenAIClient._convert_input_item(item) for item in request.input],
+            "input": [to_openai_responses_input_item(item) for item in request.input],
             "max_output_tokens": request.reserved_output_tokens,
         }
         if request.reasoning_effort is not None:
