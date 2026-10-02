@@ -15,6 +15,8 @@ from llm_terminal_assistant.model import (
     ModelLimits,
     ModelRequest,
 )
+from llm_terminal_assistant.tools.definition import ToolDefinition
+from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 
 class FixedTokenCounter:
@@ -74,6 +76,91 @@ def make_budgeter(
 
 
 class BudgeterTests(unittest.TestCase):
+    def test_empty_input_is_rejected_before_encoding_or_counting(self):
+        for tools in ([], [ToolDefinition("clock", "Read clock", {"type": "object"})]):
+            with self.subTest(tools=tools):
+                request = ModelRequest(input=[], reserved_output_tokens=20, tools=tools)
+                budgeter, counter, encoder = make_budgeter(estimated_input_tokens=10)
+
+                with self.assertRaisesRegex(
+                    ValueError, "Request input cannot be empty"
+                ):
+                    budgeter.check(request)
+
+                self.assertEqual(encoder.requests, [])
+                self.assertEqual(counter.received_texts, [])
+
+    def test_message_with_empty_content_is_allowed(self):
+        request = ModelRequest(input=[Message("user", "")], reserved_output_tokens=20)
+        budgeter, counter, encoder = make_budgeter(estimated_input_tokens=10)
+
+        result = budgeter.check(request)
+
+        self.assertEqual(result.estimated_input_tokens, 10)
+        self.assertEqual(encoder.requests, [request])
+        self.assertEqual(counter.received_texts, [encoder.encoded_request])
+
+    def test_real_encoders_include_tool_definition_call_and_result_in_budget(self):
+        request = ModelRequest(
+            input=[
+                Message("user", "QUESTION_SENTINEL"),
+                ToolCallRequest(
+                    "call-1", "lookup_clock", '{"timezone":"UTC_SENTINEL"}'
+                ),
+                Message("assistant", "CHECKING_SENTINEL"),
+                ToolCallResult("call-1", "RESULT_SENTINEL"),
+            ],
+            reserved_output_tokens=20,
+            tools=[
+                ToolDefinition(
+                    "lookup_clock",
+                    "DESCRIPTION_SENTINEL",
+                    {
+                        "type": "object",
+                        "properties": {
+                            "timezone": {
+                                "type": "string",
+                                "description": "SCHEMA_SENTINEL",
+                                "minLength": 1,
+                            }
+                        },
+                        "required": ["timezone"],
+                        "additionalProperties": False,
+                    },
+                )
+            ],
+        )
+        for profile in (DEEPSEEK_V4_FLASH, DEEPSEEK_V41_FLASH):
+            with self.subTest(profile=profile.profile_id):
+                counter = FixedTokenCounter(10)
+                budgeter = Budgeter(
+                    token_counter=counter,
+                    request_encoder=create_deepseek_request_encoder(profile),
+                    model_limits=ModelLimits(context_window_tokens=100),
+                    safety_margin_tokens=0,
+                )
+
+                result = budgeter.check(request)
+
+                self.assertEqual(result.estimated_input_tokens, 10)
+                self.assertEqual(len(counter.received_texts), 1)
+                encoded_request = counter.received_texts[0]
+                for sentinel in (
+                    "QUESTION_SENTINEL",
+                    "CHECKING_SENTINEL",
+                    "DESCRIPTION_SENTINEL",
+                    "SCHEMA_SENTINEL",
+                    "UTC_SENTINEL",
+                    "RESULT_SENTINEL",
+                ):
+                    self.assertEqual(encoded_request.count(sentinel), 1)
+                self.assertIn("minLength", encoded_request)
+                self.assertIn("required", encoded_request)
+                self.assertIn("additionalProperties", encoded_request)
+                self.assertIn(
+                    "<tool_result>RESULT_SENTINEL</tool_result>", encoded_request
+                )
+
     def test_budgeted_request_returns_result(self):
         request = make_request()
         budgeter, counter, encoder = make_budgeter(estimated_input_tokens=60)

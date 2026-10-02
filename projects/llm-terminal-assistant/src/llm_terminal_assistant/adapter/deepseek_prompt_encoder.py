@@ -2,6 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from llm_terminal_assistant.adapter.protocol_mapping import to_deepseek_messages
 from llm_terminal_assistant.model import ModelProfile, ModelRequest, PromptFormat
 from llm_terminal_assistant.request_encoder import RequestEncoder
 
@@ -60,13 +61,7 @@ def encode_deepseek_request(
         requested_effort=request.reasoning_effort,
         default_effort=default_reasoning_effort,
     )
-    messages = [
-        {
-            "role": message.role,
-            "content": message.content,
-        }
-        for message in request.input
-    ]
+    messages = to_deepseek_messages(request)
 
     return deepseek_message_encoder(
         messages=messages,

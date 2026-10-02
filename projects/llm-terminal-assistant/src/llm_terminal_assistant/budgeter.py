@@ -41,6 +41,8 @@ class Budgeter:
         self.request_encoder = request_encoder
 
     def check(self, request: ModelRequest) -> BudgetResult:
+        if not request.input:
+            raise ValueError("Request input cannot be empty")
         if (
             self.model_limits.context_window_tokens < 0
             or request.reserved_output_tokens < 0
