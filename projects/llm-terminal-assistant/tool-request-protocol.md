@@ -1,6 +1,8 @@
-# 工具预算编码规则
+# 工具请求协议与编码规则
 
-本文记录 `llm-terminal-assistant` 将工具相关请求转换为本地预算输入时采用的规则。预算流程先编码完整请求，再由 Token 计数器统计编码文本；工具定义、调用参数和工具结果都属于输入预算。
+本文记录 `llm-terminal-assistant` 的工具请求协议与编码规则，涵盖工具定义、调用与结果的提供方协议映射，同一次模型响应中调用与结果的组织顺序，以及本地预算编码。文中区分官方公开格式、官方示例和项目采用的策略。
+
+预算流程先编码完整请求，再由 Token 计数器统计编码文本；工具定义、调用参数和工具结果都属于输入预算。
 
 ## 协议映射与编码职责
 
@@ -60,6 +62,22 @@ DeepSeek 托管 Responses API 文档说明，该 API 的 `function_call` 会归�
 
 文档中的“相邻归并”是官方说明；优先方向、连续调用组织方式和没有相邻 assistant 时的补充规则是项目策略，不能据此断言托管服务器内部采取完全相同的处理。
 
+### 同一次模型响应中的调用与结果顺序
+
+OpenAI Responses API 的[官方函数调用示例](https://developers.openai.com/api/docs/guides/function-calling#handling-function-calls)先将该次响应的完整 `response.output` 列表加入下一次请求的输入，再遍历其中的 `function_call`，执行工具并逐个追加 `function_call_output`。每个结果通过该 API 的 `call_id` 对应原调用。这是官方示例的输入组织顺序，不是先追加一个调用及其结果，再追加下一个调用。
+
+DeepSeek Chat Completions API 的[官方思考模式工具调用示例](https://api-docs.deepseek.com/guides/thinking_mode/#tool-calls)先保存完整的 assistant 消息，其中包含该次响应的全部 `tool_calls`，随后遍历调用、执行工具并逐个追加工具结果消息；结果通过该接口的 `tool_call_id` 对应调用。该示例属于 Chat Completions API，不能作为 DeepSeek Responses API 内部转换过程的证明。
+
+项目构造工具后续请求时，参考上述示例采用以下顺序：保留原输入，追加该次响应的 assistant 正文（允许为空），再连续追加该次响应的全部 `ToolCallRequest`，最后按调用顺序追加对应的 `ToolCallResult`。例如同一次响应提出调用 A、B 时，输入排列为：
+
+```text
+原输入 → assistant 正文（允许为空）→ 调用 A → 调用 B → 结果 A → 结果 B
+```
+
+连续保留调用记录不要求并行执行工具。可以先加入全部调用记录，再逐个执行并立即追加各自结果。调用 ID 负责配对；上述排列负责保留同一次模型响应的调用分组。按项目当前的 DeepSeek 映射，连续调用会归并到同一条 assistant 消息；如果将结果 A 插在调用 A、B 之间，工具结果会中断归并，使调用 B 落入另一条 assistant 消息。
+
+这项顺序是官方示例支持的项目组织策略。DeepSeek Responses API 的[输入 Items 说明](https://api-docs.deepseek.com/zh-cn/guides/responses_api/#输入-items)明确说明 `function_call` 归并到相邻 assistant 消息，但没有明确规定所有调用项必须连续。这里的连续排列仅针对同一次模型响应中的调用，不应把不同次模型响应的调用跨过工具结果合并。
+
 ## DeepSeek 工具结果
 
 项目的 `ToolCallResult` 映射为 DeepSeek 官方消息编码器接受的工具消息：
@@ -90,3 +108,5 @@ DeepSeek 托管 Responses API 明确支持 `function_call_output`，但没有明
 - [DeepSeek V4.1 官方编码说明（项目固定版本）](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/dba1be0a40aa45a94ad051997016db3960a90277/encoding/README.md)：对应版本的消息格式和工具编码。
 - [DeepSeek Responses API 中文指南](https://api-docs.deepseek.com/zh-cn/guides/responses_api/)与[英文指南](https://api-docs.deepseek.com/guides/responses_api/)：该 API 的调用归并说明及工具结果支持。
 - [DeepSeek 工具调用中文指南](https://api-docs.deepseek.com/zh-cn/guides/tool_calls/)与[英文指南](https://api-docs.deepseek.com/guides/tool_calls/)：其中 `client.chat.completions.create` 示例属于 DeepSeek Chat Completions API，不能当作 Responses API 内部转换过程的证明。
+- [OpenAI Responses API 函数调用示例](https://developers.openai.com/api/docs/guides/function-calling#handling-function-calls)：先保存完整模型输出，再执行工具并追加对应结果。
+- [DeepSeek 思考模式工具调用示例](https://api-docs.deepseek.com/guides/thinking_mode/#tool-calls)：Chat Completions API 先保存包含全部调用的 assistant 消息，再逐个追加工具结果。
