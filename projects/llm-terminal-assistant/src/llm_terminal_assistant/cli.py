@@ -24,7 +24,9 @@ from llm_terminal_assistant.model import (
 )
 from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.executor import ToolExecutor
+from llm_terminal_assistant.tools.factory import create_default_tool_registry
 from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
+from llm_terminal_assistant.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +128,8 @@ def send_conversation_turn(
 
 def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
     completed_turns: list[ConversationTurn] = []
+    registry: ToolRegistry = create_default_tool_registry()
+    tool_executor = ToolExecutor(tool_registry=registry)
     print("Please enter your prompt (type 'exit' to quit):\n")
     while True:
         user_input = input("> ")
@@ -147,6 +151,8 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
                 reasoning_effort=config.reasoning_effort,
                 temperature=config.temperature,
                 top_p=config.top_p,
+                tools=registry.get_tool_list(),
+                executor=tool_executor,
             )
         except BudgetRejectedError as error:
             logger.error(error.reason)
@@ -159,6 +165,12 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
         except ValueError:
             logger.exception("Invalid conversation configuration.")
             return
+        if (
+            model_response.reason == ModelResponseEndReason.COMPLETED_NORMALLY
+            and model_response.tool_calls
+        ):
+            print("No final answer was produced. Additional tool calls remain pending.")
+            continue
         completed_turns = trim_result.retained_completed_turns
         assistant_msg = model_response_to_assistant_message(model_response)
         completed_turns.append(
