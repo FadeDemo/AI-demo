@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from llm_terminal_assistant.budgeter import (
     Budgeter,
@@ -7,7 +7,14 @@ from llm_terminal_assistant.budgeter import (
     BudgetResult,
 )
 from llm_terminal_assistant.message import Message
-from llm_terminal_assistant.model import ModelRequest
+from llm_terminal_assistant.model import (
+    ModelInputItem,
+    ModelRequest,
+    ModelResponse,
+    ModelResponseEndReason,
+)
+from llm_terminal_assistant.tools.definition import ToolDefinition
+from llm_terminal_assistant.tools.executor import ToolExecutor
 
 
 @dataclass(frozen=True)
@@ -27,13 +34,14 @@ class HistoryTrimResult:
 def trim_history(
     system_message: Message,
     completed_turns: list[ConversationTurn],
-    current_user_message: Message,
+    current_turn_input: list[ModelInputItem],
     reserved_output_tokens: int,
     min_reserved_recent_turns: int,
     budgeter: Budgeter,
     reasoning_effort: str | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
+    tools: list[ToolDefinition] | None = None,
 ) -> HistoryTrimResult:
     if min_reserved_recent_turns < 1:
         raise ValueError("min_reserved_recent_turns must be at least 1")
@@ -47,7 +55,7 @@ def trim_history(
                 for turn in retained_completed_turns
                 for msg in (turn.user_message, turn.assistant_message)
             ]
-            + [current_user_message]
+            + current_turn_input
         )
         model_request = ModelRequest(
             input=messages,
@@ -55,6 +63,7 @@ def trim_history(
             reasoning_effort=reasoning_effort,
             temperature=temperature,
             top_p=top_p,
+            tools=tools if tools is not None else [],
         )
         try:
             budget_result = budgeter.check(model_request)
@@ -76,3 +85,27 @@ def trim_history(
                 raise
             retained_completed_turns.pop(0)
             dropped_completed_turns_count += 1
+
+
+def build_tool_followup_request(
+    request: ModelRequest,
+    response: ModelResponse,
+    executor: ToolExecutor,
+) -> ModelRequest:
+    if response.reason != ModelResponseEndReason.COMPLETED_NORMALLY:
+        raise ValueError(
+            f"Cannot build tool follow-up request: response reason is {response.reason}"
+        )
+    if not response.tool_calls:
+        raise ValueError("No tool calls found in the response")
+    followup_request = replace(
+        request,
+        input=[
+            *request.input,
+            Message(role="assistant", content=response.text),
+            *response.tool_calls,
+        ],
+    )
+    for tool_call in response.tool_calls:
+        followup_request.input.append(executor.execute_call(tool_call))
+    return followup_request

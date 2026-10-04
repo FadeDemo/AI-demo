@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass
 
@@ -10,6 +11,10 @@ from llm_terminal_assistant.tools.errors import (
     ToolExecutionError,
     ToolExecutionErrorCategory,
     UnknownToolError,
+)
+from llm_terminal_assistant.tools.protocol import (
+    ToolCallRequest,
+    ToolCallResult,
 )
 from llm_terminal_assistant.tools.registry import RegisteredTool, ToolRegistry
 
@@ -69,3 +74,38 @@ class ToolExecutor:
                     message=f"Execution of tool '{tool_name}' failed.",
                 )
             )
+
+    @staticmethod
+    def _error_call_result(
+        call_id: str,
+        category: ToolExecutionErrorCategory,
+        message: str,
+    ) -> ToolCallResult:
+        return ToolCallResult(
+            call_id=call_id,
+            output=json.dumps({"error": {"category": category, "message": message}}),
+        )
+
+    def execute_call(self, call: ToolCallRequest) -> ToolCallResult:
+        try:
+            arguments = json.loads(call.arguments)
+        except json.JSONDecodeError:
+            return self._error_call_result(
+                call.call_id,
+                ToolExecutionErrorCategory.INVALID_ARGUMENTS,
+                "Tool arguments must be valid JSON.",
+            )
+        if not isinstance(arguments, dict):
+            return self._error_call_result(
+                call.call_id,
+                ToolExecutionErrorCategory.INVALID_ARGUMENTS,
+                "Tool arguments must be a JSON object.",
+            )
+        result: ToolExecutionResult = self.execute(call.name, arguments)
+        if result.error is not None:
+            return self._error_call_result(
+                call.call_id,
+                result.error.category,
+                result.error.message,
+            )
+        return ToolCallResult(call_id=call.call_id, output=json.dumps(result.output))

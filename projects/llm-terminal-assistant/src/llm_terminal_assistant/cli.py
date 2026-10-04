@@ -12,13 +12,19 @@ from llm_terminal_assistant.config import ModelConfig, load_model_config
 from llm_terminal_assistant.conversation import (
     ConversationTurn,
     HistoryTrimResult,
+    build_tool_followup_request,
     trim_history,
 )
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
+    ModelInputItem,
+    ModelRequest,
     ModelResponse,
     ModelResponseEndReason,
 )
+from llm_terminal_assistant.tools.definition import ToolDefinition
+from llm_terminal_assistant.tools.executor import ToolExecutor
+from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +49,17 @@ def model_response_to_assistant_message(response: ModelResponse) -> Message:
     return Message(role="assistant", content=response.text)
 
 
+def log_model_request_summary(request: ModelRequest) -> None:
+    logger.info(
+        "Model request: input_item_count=%d message_count=%d tool_call_count=%d tool_result_count=%d tool_definition_count=%d",
+        len(request.input),
+        sum(isinstance(item, Message) for item in request.input),
+        sum(isinstance(item, ToolCallRequest) for item in request.input),
+        sum(isinstance(item, ToolCallResult) for item in request.input),
+        len(request.tools),
+    )
+
+
 def send_conversation_turn(
     client: ModelClient,
     budgeter: Budgeter,
@@ -54,35 +71,57 @@ def send_conversation_turn(
     reasoning_effort: str | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
+    tools: list[ToolDefinition] | None = None,
+    executor: ToolExecutor | None = None,
 ) -> tuple[ModelResponse, HistoryTrimResult]:
-    trim_result: HistoryTrimResult = trim_history(
-        system_message=system_message,
-        completed_turns=completed_turns,
-        current_user_message=current_user_message,
-        reserved_output_tokens=reserved_output_tokens,
-        reasoning_effort=reasoning_effort,
-        min_reserved_recent_turns=min_reserved_recent_turns,
-        budgeter=budgeter,
-        temperature=temperature,
-        top_p=top_p,
-    )
-    budget_result = trim_result.budget_result
-    logger.info(
-        "Budget check passed: estimated_input_tokens=%d reserved_output_tokens=%d safety_margin_tokens=%d remaining_tokens=%d",
-        budget_result.estimated_input_tokens,
-        budget_result.reserved_output_tokens,
-        budget_result.safety_margin_tokens,
-        budget_result.remaining_tokens,
-    )
+    def trim_and_send(
+        turn_input: list[ModelInputItem],
+        history: list[ConversationTurn],
+    ) -> tuple[ModelResponse, HistoryTrimResult]:
+        trim_result = trim_history(
+            system_message=system_message,
+            completed_turns=history,
+            current_turn_input=turn_input,
+            reserved_output_tokens=reserved_output_tokens,
+            reasoning_effort=reasoning_effort,
+            min_reserved_recent_turns=min_reserved_recent_turns,
+            budgeter=budgeter,
+            temperature=temperature,
+            top_p=top_p,
+            tools=tools,
+        )
+        budget_result = trim_result.budget_result
+        logger.info(
+            "Budget check passed: estimated_input_tokens=%d reserved_output_tokens=%d safety_margin_tokens=%d remaining_tokens=%d",
+            budget_result.estimated_input_tokens,
+            budget_result.reserved_output_tokens,
+            budget_result.safety_margin_tokens,
+            budget_result.remaining_tokens,
+        )
+        log_model_request_summary(trim_result.request)
+        return client.send(trim_result.request), trim_result
+
+    current_turn_input = [current_user_message]
+    model_response, trim_result = trim_and_send(current_turn_input, completed_turns)
+    if (
+        model_response.reason != ModelResponseEndReason.COMPLETED_NORMALLY
+        or not model_response.tool_calls
+    ):
+        return model_response, trim_result
+    if executor is None:
+        raise ValueError("Tool calls were made, but no executor was provided.")
+
     model_request = trim_result.request
-    logger.info(
-        "message_count=%d roles=%s content_lengths=%s",
-        len(model_request.input),
-        [msg.role for msg in model_request.input],
-        [len(msg.content) for msg in model_request.input],
+    followup_request = build_tool_followup_request(
+        request=model_request,
+        response=model_response,
+        executor=executor,
     )
-    model_response = client.send(model_request)
-    return model_response, trim_result
+    current_turn_start = len(model_request.input) - len(current_turn_input)
+    return trim_and_send(
+        followup_request.input[current_turn_start:],
+        trim_result.retained_completed_turns,
+    )
 
 
 def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):

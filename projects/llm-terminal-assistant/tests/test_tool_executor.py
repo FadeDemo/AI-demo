@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from llm_terminal_assistant.tools.definition import (
@@ -6,8 +7,12 @@ from llm_terminal_assistant.tools.definition import (
     ToolDefinition,
     ToolOutput,
 )
-from llm_terminal_assistant.tools.errors import ToolExecutionErrorCategory
+from llm_terminal_assistant.tools.errors import (
+    InvalidToolArgumentsError,
+    ToolExecutionErrorCategory,
+)
 from llm_terminal_assistant.tools.executor import ToolExecutor
+from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 from llm_terminal_assistant.tools.registry import ToolRegistry
 
 
@@ -17,7 +22,7 @@ class RecordingHandler:
         output: ToolOutput | None = None,
         error: Exception | None = None,
     ):
-        self.output = output or {"status": "ok"}
+        self.output = output if output is not None else {"status": "ok"}
         self.error = error
         self.calls: list[dict[str, object]] = []
 
@@ -109,6 +114,150 @@ class ToolExecutorTests(unittest.TestCase):
             ToolExecutionErrorCategory.EXECUTION_FAILED,
         )
         self.assertNotIn(sensitive_detail, result.error.message)
+        self.assertEqual(handler.calls, [{"value": 21}])
+
+
+class ToolCallExecutionTests(unittest.TestCase):
+    def decode_result(self, result: ToolCallResult) -> dict[str, object]:
+        self.assertIsInstance(result, ToolCallResult)
+        self.assertEqual(result.call_id, "call-1")
+        self.assertIsInstance(result.output, str)
+        return json.loads(result.output)
+
+    def test_valid_call_returns_original_output_and_executes_once(self):
+        for output in ({"doubled": 42, "text": "测试"}, {}):
+            with self.subTest(output=output):
+                handler = RecordingHandler(output=output)
+                executor = make_executor(handler)
+                call = ToolCallRequest("call-1", "example_tool", '{"value":21}')
+
+                result = executor.execute_call(call)
+
+                self.assertEqual(self.decode_result(result), output)
+                self.assertEqual(handler.calls, [{"value": 21}])
+                self.assertEqual(
+                    call,
+                    ToolCallRequest("call-1", "example_tool", '{"value":21}'),
+                )
+
+    def test_invalid_json_returns_error_without_executing_handler(self):
+        for arguments in ("", "{", '{"value":', "not JSON"):
+            with self.subTest(arguments=arguments):
+                handler = RecordingHandler()
+
+                result = make_executor(handler).execute_call(
+                    ToolCallRequest("call-1", "example_tool", arguments)
+                )
+
+                self.assertEqual(
+                    self.decode_result(result),
+                    {
+                        "error": {
+                            "category": "invalid_arguments",
+                            "message": "Tool arguments must be valid JSON.",
+                        }
+                    },
+                )
+                self.assertEqual(handler.calls, [])
+
+    def test_non_object_json_returns_error_without_executing_handler(self):
+        for arguments in ("[]", "[1]", "null", "true", "21", "1.5", '"text"'):
+            with self.subTest(arguments=arguments):
+                handler = RecordingHandler()
+
+                result = make_executor(handler).execute_call(
+                    ToolCallRequest("call-1", "example_tool", arguments)
+                )
+
+                self.assertEqual(
+                    self.decode_result(result),
+                    {
+                        "error": {
+                            "category": "invalid_arguments",
+                            "message": "Tool arguments must be a JSON object.",
+                        }
+                    },
+                )
+                self.assertEqual(handler.calls, [])
+
+    def test_schema_errors_are_preserved_without_executing_handler(self):
+        for arguments in ({}, {"value": "21"}, {"value": 21, "extra": True}):
+            with self.subTest(arguments=arguments):
+                handler = RecordingHandler()
+                executor = make_executor(handler)
+                expected_error = executor.execute("example_tool", arguments).error
+
+                result = executor.execute_call(
+                    ToolCallRequest("call-1", "example_tool", json.dumps(arguments))
+                )
+
+                self.assertEqual(
+                    self.decode_result(result),
+                    {
+                        "error": {
+                            "category": "invalid_arguments",
+                            "message": expected_error.message,
+                        }
+                    },
+                )
+                self.assertEqual(handler.calls, [])
+
+    def test_unknown_tool_returns_error_without_executing_handler(self):
+        handler = RecordingHandler()
+
+        result = make_executor(handler).execute_call(
+            ToolCallRequest("call-1", "missing_tool", '{"value":21}')
+        )
+
+        self.assertEqual(
+            self.decode_result(result),
+            {
+                "error": {
+                    "category": "unknown_tool",
+                    "message": "Tool 'missing_tool' not found in registry",
+                }
+            },
+        )
+        self.assertEqual(handler.calls, [])
+
+    def test_handler_parameter_rejection_returns_invalid_arguments(self):
+        handler = RecordingHandler(error=InvalidToolArgumentsError("Rejected value"))
+
+        result = make_executor(handler).execute_call(
+            ToolCallRequest("call-1", "example_tool", '{"value":21}')
+        )
+
+        self.assertEqual(
+            self.decode_result(result),
+            {
+                "error": {
+                    "category": "invalid_arguments",
+                    "message": "Invalid arguments for tool 'example_tool': Rejected value",
+                }
+            },
+        )
+        self.assertEqual(handler.calls, [{"value": 21}])
+
+    def test_handler_failure_returns_execution_error_without_internal_detail(self):
+        internal_detail = "internal failure sentinel"
+        handler = RecordingHandler(error=RuntimeError(internal_detail))
+        executor = make_executor(handler)
+
+        with self.assertLogs("llm_terminal_assistant.tools.executor", level="ERROR"):
+            result = executor.execute_call(
+                ToolCallRequest("call-1", "example_tool", '{"value":21}')
+            )
+
+        self.assertEqual(
+            self.decode_result(result),
+            {
+                "error": {
+                    "category": "execution_failed",
+                    "message": "Execution of tool 'example_tool' failed.",
+                }
+            },
+        )
+        self.assertNotIn(internal_detail, result.output)
         self.assertEqual(handler.calls, [{"value": 21}])
 
 

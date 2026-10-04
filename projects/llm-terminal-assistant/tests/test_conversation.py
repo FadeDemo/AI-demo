@@ -1,22 +1,41 @@
+import json
 import unittest
+from copy import deepcopy
+from dataclasses import replace
+from unittest.mock import Mock
 
+from llm_terminal_assistant.adapter.fake_model import FakeModelRequestEncoder
 from llm_terminal_assistant.budgeter import (
     Budgeter,
     BudgetRejectedError,
     BudgetRejectionReason,
 )
 from llm_terminal_assistant.cli import send_conversation_turn
-from llm_terminal_assistant.conversation import ConversationTurn
+from llm_terminal_assistant.conversation import (
+    ConversationTurn,
+    build_tool_followup_request,
+    trim_history,
+)
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     InputTokensDetails,
     ModelLimits,
+    ModelOutputFormat,
     ModelRequest,
     ModelResponse,
     ModelResponseEndReason,
     ModelUsage,
     OutputTokensDetails,
 )
+from llm_terminal_assistant.tools.definition import (
+    RegisteredTool,
+    ToolArguments,
+    ToolDefinition,
+    ToolOutput,
+)
+from llm_terminal_assistant.tools.executor import ToolExecutor
+from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
+from llm_terminal_assistant.tools.registry import ToolRegistry
 
 
 class ContentRequestEncoder:
@@ -39,6 +58,15 @@ class TextLengthTokenCounter:
     ) -> int:
         self.received_texts.append(text)
         return len(text)
+
+
+class RecordingFakeRequestEncoder(FakeModelRequestEncoder):
+    def __init__(self):
+        self.requests: list[ModelRequest] = []
+
+    def encode_request(self, request: ModelRequest) -> str:
+        self.requests.append(request)
+        return super().encode_request(request)
 
 
 class SpyModelClient:
@@ -241,6 +269,639 @@ class ConversationTests(unittest.TestCase):
 
         self.assertEqual(encoder.requests, [])
         self.assertEqual(self.client.requests, [])
+
+
+class ToolConversationTests(unittest.TestCase):
+    def setUp(self):
+        self.system_message = Message("system", "system")
+        self.current_user_message = Message("user", "current")
+        self.completed_turns = [
+            ConversationTurn(
+                Message("user", f"u{index}" * 500),
+                Message("assistant", f"a{index}" * 500),
+            )
+            for index in range(3)
+        ]
+        self.tools = [
+            ToolDefinition(
+                "clock",
+                "Read the clock",
+                {
+                    "type": "object",
+                    "properties": {"timezone": {"type": "string", "minLength": 1}},
+                    "required": ["timezone"],
+                    "additionalProperties": False,
+                },
+            ),
+            ToolDefinition("other", "Another tool", {"type": "object"}),
+        ]
+
+    def make_request(
+        self,
+        turns: list[ConversationTurn],
+        tools: list[ToolDefinition],
+    ) -> ModelRequest:
+        return ModelRequest(
+            input=[
+                self.system_message,
+                *flatten_turns(turns),
+                self.current_user_message,
+            ],
+            reserved_output_tokens=10,
+            tools=tools,
+        )
+
+    def make_budgeter(
+        self,
+        limits: ModelLimits,
+    ) -> tuple[Budgeter, RecordingFakeRequestEncoder]:
+        encoder = RecordingFakeRequestEncoder()
+        return (
+            Budgeter(
+                token_counter=TextLengthTokenCounter(),
+                request_encoder=encoder,
+                model_limits=limits,
+                safety_margin_tokens=0,
+            ),
+            encoder,
+        )
+
+    def trim_kwargs(self, budgeter: Budgeter) -> dict[str, object]:
+        return {
+            "system_message": self.system_message,
+            "completed_turns": self.completed_turns,
+            "current_user_message": self.current_user_message,
+            "reserved_output_tokens": 10,
+            "min_reserved_recent_turns": 1,
+            "budgeter": budgeter,
+        }
+
+    def test_trim_history_without_tools_keeps_empty_list_and_full_history(self):
+        cases = {"omitted": {}, "None": {"tools": None}, "empty": {"tools": []}}
+        expected_tokens = len(
+            FakeModelRequestEncoder().encode_request(
+                self.make_request(self.completed_turns, [])
+            )
+        )
+        for name, options in cases.items():
+            with self.subTest(name=name):
+                budgeter, encoder = self.make_budgeter(
+                    ModelLimits(context_window_tokens=expected_tokens + 10)
+                )
+
+                result = trim_history(
+                    system_message=self.system_message,
+                    completed_turns=self.completed_turns,
+                    current_turn_input=[self.current_user_message],
+                    reserved_output_tokens=10,
+                    min_reserved_recent_turns=1,
+                    budgeter=budgeter,
+                    **options,
+                )
+
+                self.assertEqual(result.request.tools, [])
+                self.assertEqual(result.retained_completed_turns, self.completed_turns)
+                self.assertEqual(result.dropped_completed_turns_count, 0)
+                self.assertEqual(
+                    result.budget_result.estimated_input_tokens, expected_tokens
+                )
+                self.assertEqual(len(encoder.requests), 1)
+                self.assertIs(encoder.requests[0], result.request)
+
+    def test_tool_payload_triggers_trimming_and_is_retained_in_every_candidate(self):
+        plain_tokens = len(
+            FakeModelRequestEncoder().encode_request(
+                self.make_request(self.completed_turns, [])
+            )
+        )
+        cases = {
+            "context window": ModelLimits(context_window_tokens=plain_tokens + 10),
+            "maximum input": ModelLimits(
+                context_window_tokens=100_000,
+                max_input_tokens=plain_tokens,
+            ),
+        }
+        original_turns, original_tools = deepcopy((self.completed_turns, self.tools))
+        for name, limits in cases.items():
+            with self.subTest(name=name):
+                budgeter, encoder = self.make_budgeter(limits)
+                client = SpyModelClient()
+
+                response, result = send_conversation_turn(
+                    client=client,
+                    **self.trim_kwargs(budgeter),
+                    tools=self.tools,
+                )
+
+                self.assertEqual(response.text, "fake response")
+                self.assertEqual(
+                    result.retained_completed_turns, self.completed_turns[1:]
+                )
+                self.assertEqual(result.dropped_completed_turns_count, 1)
+                self.assertEqual(len(encoder.requests), 2)
+                for request in encoder.requests:
+                    self.assertEqual(request.tools, original_tools)
+                self.assertEqual(
+                    encoder.requests[0].input,
+                    self.make_request(original_turns, original_tools).input,
+                )
+                self.assertEqual(len(client.requests), 1)
+                self.assertIs(client.requests[0], result.request)
+                self.assertIs(encoder.requests[-1], result.request)
+                self.assertEqual(
+                    result.budget_result.estimated_input_tokens,
+                    len(FakeModelRequestEncoder().encode_request(result.request)),
+                )
+                self.assertEqual(self.completed_turns, original_turns)
+                self.assertEqual(self.tools, original_tools)
+
+    def test_send_without_tools_preserves_original_behavior(self):
+        cases = {"omitted": {}, "None": {"tools": None}, "empty": {"tools": []}}
+        for name, options in cases.items():
+            with self.subTest(name=name):
+                budgeter, encoder = self.make_budgeter(
+                    ModelLimits(context_window_tokens=100_000)
+                )
+                client = SpyModelClient()
+
+                response, result = send_conversation_turn(
+                    client=client,
+                    **self.trim_kwargs(budgeter),
+                    **options,
+                )
+
+                self.assertEqual(response.text, "fake response")
+                self.assertEqual(result.request.tools, [])
+                self.assertEqual(result.retained_completed_turns, self.completed_turns)
+                self.assertEqual(result.dropped_completed_turns_count, 0)
+                self.assertEqual(len(client.requests), 1)
+                self.assertIs(client.requests[0], result.request)
+                self.assertIs(encoder.requests[-1], result.request)
+
+    def test_tool_budget_rejection_does_not_send_or_modify_history(self):
+        plain_tokens = len(
+            FakeModelRequestEncoder().encode_request(
+                self.make_request(self.completed_turns[-1:], [])
+            )
+        )
+        budgeter, encoder = self.make_budgeter(
+            ModelLimits(context_window_tokens=100_000, max_input_tokens=plain_tokens)
+        )
+        client = SpyModelClient()
+        original_turns, original_tools = deepcopy((self.completed_turns, self.tools))
+
+        with self.assertRaises(BudgetRejectedError) as caught:
+            send_conversation_turn(
+                client=client,
+                **self.trim_kwargs(budgeter),
+                tools=self.tools,
+            )
+
+        self.assertEqual(
+            caught.exception.reason, BudgetRejectionReason.MAX_INPUT_EXCEEDED
+        )
+        self.assertEqual(client.requests, [])
+        self.assertEqual(len(encoder.requests), 3)
+        for request in encoder.requests:
+            self.assertEqual(request.tools, original_tools)
+        self.assertEqual(self.completed_turns, original_turns)
+        self.assertEqual(self.tools, original_tools)
+
+
+class ToolFollowupRequestTests(unittest.TestCase):
+    def setUp(self):
+        self.executed_values: list[int] = []
+
+        def handler(arguments: ToolArguments) -> ToolOutput:
+            value = arguments["value"]
+            self.executed_values.append(value)
+            return {"value": value}
+
+        definition = ToolDefinition(
+            name="echo",
+            description="Return the supplied integer.",
+            parameter_schema={
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "required": ["value"],
+                "additionalProperties": False,
+            },
+        )
+        self.executor = ToolExecutor(
+            ToolRegistry([RegisteredTool(definition, handler)])
+        )
+        self.request = ModelRequest(
+            input=[Message("system", "system"), Message("user", "question")],
+            reserved_output_tokens=128,
+            output_format=ModelOutputFormat(type="json_object"),
+            reasoning_effort="none",
+            temperature=0.5,
+            top_p=0.9,
+            tools=[definition],
+        )
+        self.calls = [
+            ToolCallRequest("call-1", "echo", '{"value":21}'),
+            ToolCallRequest("call-2", "echo", '{"value":42}'),
+        ]
+
+    def make_response(
+        self,
+        *,
+        text: str = "Let me check.",
+        reason: ModelResponseEndReason = ModelResponseEndReason.COMPLETED_NORMALLY,
+        calls: list[ToolCallRequest] | None = None,
+    ) -> ModelResponse:
+        return ModelResponse(
+            text=text,
+            reason=reason,
+            usage=ModelUsage(
+                input_tokens=0,
+                input_tokens_details=InputTokensDetails(0, 0),
+                output_tokens=0,
+                output_tokens_details=OutputTokensDetails(0),
+                total_tokens=0,
+            ),
+            tool_calls=self.calls if calls is None else calls,
+        )
+
+    def make_sending_budgeter(
+        self,
+        *,
+        context_window_tokens: int = 100_000,
+        max_input_tokens: int | None = None,
+    ) -> tuple[Budgeter, RecordingFakeRequestEncoder]:
+        encoder = RecordingFakeRequestEncoder()
+        return (
+            Budgeter(
+                token_counter=TextLengthTokenCounter(),
+                request_encoder=encoder,
+                model_limits=ModelLimits(
+                    context_window_tokens=context_window_tokens,
+                    max_input_tokens=max_input_tokens,
+                ),
+                safety_margin_tokens=0,
+            ),
+            encoder,
+        )
+
+    def send_turn(self, client, budgeter, **overrides):
+        kwargs = {
+            "client": client,
+            "budgeter": budgeter,
+            "system_message": self.request.input[0],
+            "completed_turns": [],
+            "current_user_message": self.request.input[1],
+            "reserved_output_tokens": self.request.reserved_output_tokens,
+            "min_reserved_recent_turns": 1,
+            "reasoning_effort": self.request.reasoning_effort,
+            "temperature": self.request.temperature,
+            "top_p": self.request.top_p,
+            "tools": self.request.tools,
+            "executor": self.executor,
+        }
+        kwargs.update(overrides)
+        return send_conversation_turn(**kwargs)
+
+    def test_sending_plain_response_does_not_execute_tools(self):
+        client = Mock()
+        final_response = self.make_response(text="Done.", calls=[])
+        client.send.return_value = final_response
+        executor = Mock(spec=ToolExecutor)
+        budgeter, encoder = self.make_sending_budgeter()
+
+        response, result = self.send_turn(client, budgeter, executor=executor)
+
+        self.assertIs(response, final_response)
+        client.send.assert_called_once_with(result.request)
+        executor.execute_call.assert_not_called()
+        self.assertEqual(encoder.requests, [result.request])
+
+    def test_sending_noncompleted_response_does_not_execute_tools_or_send_again(self):
+        for reason in (
+            ModelResponseEndReason.REQUEST_FAILED,
+            ModelResponseEndReason.REQUEST_CANCELLED,
+            ModelResponseEndReason.REQUEST_INCOMPLETE,
+        ):
+            with self.subTest(reason=reason):
+                client = Mock()
+                initial_response = self.make_response(reason=reason)
+                client.send.return_value = initial_response
+                executor = Mock(spec=ToolExecutor)
+                budgeter, encoder = self.make_sending_budgeter()
+
+                response, result = self.send_turn(client, budgeter, executor=executor)
+
+                self.assertIs(response, initial_response)
+                client.send.assert_called_once_with(result.request)
+                executor.execute_call.assert_not_called()
+                self.assertEqual(encoder.requests, [result.request])
+
+    def test_sending_tool_response_without_executor_fails_before_second_request(self):
+        client = Mock()
+        client.send.return_value = self.make_response()
+        budgeter, encoder = self.make_sending_budgeter()
+
+        with self.assertRaisesRegex(ValueError, "no executor"):
+            self.send_turn(client, budgeter, executor=None)
+
+        self.assertEqual(client.send.call_count, 1)
+        self.assertEqual(len(encoder.requests), 1)
+        self.assertEqual(self.executed_values, [])
+
+    def test_single_tool_success_or_error_is_budgeted_and_sent_with_matching_id(self):
+        for call, expected_error in (
+            (self.calls[0], None),
+            (ToolCallRequest("unknown", "missing", "{}"), "unknown_tool"),
+        ):
+            with self.subTest(error=expected_error):
+                self.executed_values.clear()
+                client = Mock()
+                final_response = self.make_response(text="Done.", calls=[])
+                client.send.side_effect = [
+                    self.make_response(text="", calls=[call]),
+                    final_response,
+                ]
+                budgeter, encoder = self.make_sending_budgeter()
+
+                response, result = self.send_turn(client, budgeter)
+
+                self.assertIs(response, final_response)
+                self.assertEqual(client.send.call_count, 2)
+                self.assertEqual(len(encoder.requests), 2)
+                for sent, checked in zip(
+                    client.send.call_args_list, encoder.requests, strict=True
+                ):
+                    self.assertIs(sent.args[0], checked)
+                    self.assertEqual(checked.tools, self.request.tools)
+                    self.assertEqual(checked.reserved_output_tokens, 128)
+                    self.assertEqual(checked.reasoning_effort, "none")
+                    self.assertEqual(checked.temperature, 0.5)
+                    self.assertEqual(checked.top_p, 0.9)
+                self.assertIs(result.request, encoder.requests[-1])
+                self.assertEqual(
+                    result.request.input[:4],
+                    [*self.request.input, Message("assistant", ""), call],
+                )
+                output = result.request.input[-1]
+                self.assertIsInstance(output, ToolCallResult)
+                self.assertEqual(output.call_id, call.call_id)
+                payload = json.loads(output.output)
+                if expected_error is None:
+                    self.assertEqual(payload, {"value": 21})
+                    self.assertEqual(self.executed_values, [21])
+                else:
+                    self.assertEqual(payload["error"]["category"], expected_error)
+                    self.assertEqual(self.executed_values, [])
+                self.assertEqual(
+                    result.budget_result.estimated_input_tokens,
+                    len(FakeModelRequestEncoder().encode_request(result.request)),
+                )
+
+    def test_followup_budget_rejection_does_not_send_second_request(self):
+        initial_request = replace(self.request, output_format=None)
+        initial_tokens = len(FakeModelRequestEncoder().encode_request(initial_request))
+        for limits, reason in (
+            (
+                {"context_window_tokens": initial_tokens + 128},
+                BudgetRejectionReason.CONTEXT_WINDOW_EXCEEDED,
+            ),
+            (
+                {"max_input_tokens": initial_tokens},
+                BudgetRejectionReason.MAX_INPUT_EXCEEDED,
+            ),
+        ):
+            with self.subTest(reason=reason):
+                self.executed_values.clear()
+                client = Mock()
+                client.send.return_value = self.make_response(calls=self.calls[:1])
+                budgeter, encoder = self.make_sending_budgeter(**limits)
+                original_request = deepcopy(self.request)
+
+                with self.assertRaises(BudgetRejectedError) as caught:
+                    self.send_turn(client, budgeter)
+
+                self.assertEqual(caught.exception.reason, reason)
+                self.assertEqual(client.send.call_count, 1)
+                self.assertEqual(len(encoder.requests), 2)
+                self.assertEqual(self.executed_values, [21])
+                self.assertEqual(self.request, original_request)
+                self.assertEqual(encoder.requests[-1].input[-2], self.calls[0])
+                self.assertIsInstance(encoder.requests[-1].input[-1], ToolCallResult)
+
+    def test_followup_trimming_preserves_current_turn_and_does_not_restore_old_history(
+        self,
+    ):
+        current_user = Message("user", "question" * 100)
+        self.request.input[1] = current_user
+        turns = [
+            ConversationTurn(
+                Message("user", "old" * 1_000), Message("assistant", "old" * 1_000)
+            ),
+            ConversationTurn(
+                Message("user", current_user.content),
+                Message("assistant", "previous" * 200),
+            ),
+            ConversationTurn(
+                Message("user", "recent" * 200), Message("assistant", "answer" * 200)
+            ),
+        ]
+        original_turns = deepcopy(turns)
+        first_retained_request = replace(
+            self.request,
+            output_format=None,
+            input=[self.request.input[0], *flatten_turns(turns[1:]), current_user],
+        )
+        first_tokens = len(
+            FakeModelRequestEncoder().encode_request(first_retained_request)
+        )
+        budgeter, encoder = self.make_sending_budgeter(
+            context_window_tokens=first_tokens + 128
+        )
+        client = Mock()
+        initial_response = self.make_response(calls=self.calls[:1])
+        final_response = self.make_response(text="Done.", calls=[])
+        client.send.side_effect = [initial_response, final_response]
+
+        response, result = self.send_turn(client, budgeter, completed_turns=turns)
+
+        self.assertIs(response, final_response)
+        self.assertEqual(client.send.call_count, 2)
+        self.assertEqual(len(encoder.requests), 4)
+        self.assertEqual(client.send.call_args_list[0].args[0], first_retained_request)
+        self.assertIs(client.send.call_args_list[0].args[0], encoder.requests[1])
+        self.assertIs(client.send.call_args_list[1].args[0], encoder.requests[3])
+        self.assertEqual(
+            encoder.requests[2].input[:5],
+            [self.request.input[0], *flatten_turns(turns[1:])],
+        )
+        self.assertEqual(result.retained_completed_turns, turns[2:])
+        self.assertEqual(
+            result.request.input[:6],
+            [
+                self.request.input[0],
+                *flatten_turns(turns[2:]),
+                current_user,
+                Message("assistant", initial_response.text),
+                self.calls[0],
+            ],
+        )
+        self.assertEqual(len(result.request.input), 7)
+        self.assertIsInstance(result.request.input[-1], ToolCallResult)
+        self.assertEqual(result.request.input[-1].call_id, self.calls[0].call_id)
+        self.assertEqual(self.executed_values, [21])
+        self.assertEqual(turns, original_turns)
+
+    def test_groups_calls_before_results_and_executes_each_once_in_order(self):
+        response = self.make_response()
+
+        result = build_tool_followup_request(self.request, response, self.executor)
+
+        self.assertEqual(
+            result.input[:5],
+            [*self.request.input, Message("assistant", response.text), *self.calls],
+        )
+        outputs = result.input[5:]
+        self.assertEqual(len(outputs), 2)
+        for output, call, value in zip(outputs, self.calls, (21, 42), strict=True):
+            self.assertIsInstance(output, ToolCallResult)
+            self.assertEqual(output.call_id, call.call_id)
+            self.assertEqual(json.loads(output.output), {"value": value})
+        self.assertEqual(self.executed_values, [21, 42])
+
+    def test_tool_followup_logs_counts_and_sends_without_logging_payloads(self):
+        client = Mock()
+        final_response = self.make_response(text="Done.", calls=[])
+        client.send.side_effect = [self.make_response(), final_response]
+        budgeter = Budgeter(
+            token_counter=TextLengthTokenCounter(),
+            request_encoder=FakeModelRequestEncoder(),
+            model_limits=ModelLimits(context_window_tokens=100_000),
+            safety_margin_tokens=0,
+        )
+
+        with self.assertLogs("llm_terminal_assistant.cli", level="INFO") as logs:
+            response, result = send_conversation_turn(
+                client=client,
+                budgeter=budgeter,
+                system_message=self.request.input[0],
+                completed_turns=[],
+                current_user_message=self.request.input[1],
+                reserved_output_tokens=128,
+                min_reserved_recent_turns=1,
+                tools=self.request.tools,
+                executor=self.executor,
+            )
+
+        self.assertIs(response, final_response)
+        self.assertEqual(client.send.call_count, 2)
+        self.assertIs(client.send.call_args.args[0], result.request)
+        summaries = [
+            record.getMessage()
+            for record in logs.records
+            if record.getMessage().startswith("Model request:")
+        ]
+        self.assertEqual(
+            summaries,
+            [
+                "Model request: input_item_count=2 message_count=2 tool_call_count=0 tool_result_count=0 tool_definition_count=1",
+                "Model request: input_item_count=7 message_count=3 tool_call_count=2 tool_result_count=2 tool_definition_count=1",
+            ],
+        )
+        for payload in ("system", "question", "Let me check.", '{"value":21}'):
+            self.assertNotIn(payload, "\n".join(logs.output))
+
+    def test_preserves_request_options_and_does_not_modify_inputs(self):
+        previous_call = ToolCallRequest("previous", "echo", '{"value":7}')
+        self.request.input[1:1] = [
+            previous_call,
+            ToolCallResult("previous", '{"value":7}'),
+        ]
+        response = self.make_response()
+        original_request, original_response = deepcopy((self.request, response))
+
+        result = build_tool_followup_request(self.request, response, self.executor)
+
+        self.assertIsNot(result, self.request)
+        self.assertIsNot(result.input, self.request.input)
+        self.assertEqual(self.request, original_request)
+        self.assertEqual(response, original_response)
+        self.assertEqual(result.input[:4], original_request.input)
+        self.assertEqual(result.reserved_output_tokens, 128)
+        self.assertEqual(result.output_format, original_request.output_format)
+        self.assertEqual(result.reasoning_effort, "none")
+        self.assertEqual(result.temperature, 0.5)
+        self.assertEqual(result.top_p, 0.9)
+        self.assertEqual(result.tools, original_request.tools)
+        result.input.append(Message("assistant", "later"))
+        self.assertEqual(self.request, original_request)
+
+    def test_empty_assistant_text_is_valid_and_still_returns_tool_results(self):
+        response = self.make_response(text="", calls=self.calls[:1])
+
+        result = build_tool_followup_request(self.request, response, self.executor)
+
+        self.assertEqual(
+            result.input[:4],
+            [*self.request.input, Message("assistant", ""), self.calls[0]],
+        )
+        self.assertEqual(len(result.input), 5)
+        self.assertIsInstance(result.input[-1], ToolCallResult)
+        self.assertEqual(result.input[-1].call_id, "call-1")
+        self.assertEqual(json.loads(result.input[-1].output), {"value": 21})
+        self.assertEqual(self.executed_values, [21])
+
+    def test_error_results_are_included_with_matching_call_ids(self):
+        calls = [
+            self.calls[0],
+            ToolCallRequest("unknown", "missing", "{}"),
+            ToolCallRequest("invalid-json", "echo", "{"),
+            ToolCallRequest("invalid-schema", "echo", '{"value":"21"}'),
+        ]
+        response = self.make_response(calls=calls)
+
+        result = build_tool_followup_request(self.request, response, self.executor)
+
+        self.assertEqual(result.input[3:7], calls)
+        outputs = result.input[7:]
+        self.assertEqual(len(outputs), len(calls))
+        for output, call in zip(outputs, calls, strict=True):
+            self.assertIsInstance(output, ToolCallResult)
+            self.assertEqual(output.call_id, call.call_id)
+        self.assertEqual(json.loads(outputs[0].output), {"value": 21})
+        self.assertEqual(
+            [json.loads(output.output)["error"]["category"] for output in outputs[1:]],
+            ["unknown_tool", "invalid_arguments", "invalid_arguments"],
+        )
+        self.assertEqual(self.executed_values, [21])
+
+    def test_noncompleted_response_is_rejected_before_tool_execution(self):
+        for reason in (
+            ModelResponseEndReason.REQUEST_FAILED,
+            ModelResponseEndReason.REQUEST_CANCELLED,
+            ModelResponseEndReason.REQUEST_INCOMPLETE,
+        ):
+            with self.subTest(reason=reason):
+                response = self.make_response(reason=reason)
+                executor = Mock(spec=ToolExecutor)
+                original_request, original_response = deepcopy((self.request, response))
+
+                with self.assertRaisesRegex(ValueError, "response reason"):
+                    build_tool_followup_request(self.request, response, executor)
+
+                executor.execute_call.assert_not_called()
+                self.assertEqual(self.request, original_request)
+                self.assertEqual(response, original_response)
+
+    def test_no_tool_calls_are_rejected_before_tool_execution(self):
+        response = self.make_response(calls=[])
+        executor = Mock(spec=ToolExecutor)
+        original_request = deepcopy(self.request)
+
+        with self.assertRaisesRegex(ValueError, "No tool calls"):
+            build_tool_followup_request(self.request, response, executor)
+
+        executor.execute_call.assert_not_called()
+        self.assertEqual(self.request, original_request)
 
 
 if __name__ == "__main__":
