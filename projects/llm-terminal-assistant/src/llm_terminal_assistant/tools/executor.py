@@ -57,6 +57,7 @@ class ToolExecutor:
                 )
             )
         try:
+            logger.info("Executing tool: tool_name=%s", tool_name)
             output: ToolOutput = tool.handler(arguments)
             return ToolExecutionResult(output=output)
         except InvalidToolArgumentsError as e:
