@@ -33,7 +33,9 @@ from llm_terminal_assistant.tools.definition import (
     ToolDefinition,
     ToolOutput,
 )
+from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.executor import ToolExecutor
+from llm_terminal_assistant.tools.loop import ToolLoopLimits
 from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 from llm_terminal_assistant.tools.registry import ToolRegistry
 
@@ -732,6 +734,144 @@ class ToolFollowupRequestTests(unittest.TestCase):
                 self.assertEqual(self.request, original_request)
                 self.assertEqual(encoder.requests[-1].input[-2], self.calls[0])
                 self.assertIsInstance(encoder.requests[-1].input[-1], ToolCallResult)
+
+    def test_consecutive_followups_preserve_current_turn_and_budget_each_request(self):
+        for second_value in (21, 42):
+            with self.subTest(second_value=second_value):
+                self.executed_values.clear()
+                turns = [make_turn(1)]
+                original_turns = deepcopy(turns)
+                first_call = self.calls[0]
+                second_call = ToolCallRequest(
+                    "call-3", "echo", json.dumps({"value": second_value})
+                )
+                first_response = self.make_response(
+                    text="First check.", calls=[first_call]
+                )
+                second_response = self.make_response(
+                    text="Second check.", calls=[second_call]
+                )
+                final_response = self.make_response(text="Done.", calls=[])
+                client = Mock()
+                client.send.side_effect = [
+                    first_response,
+                    second_response,
+                    final_response,
+                ]
+                budgeter, encoder = self.make_sending_budgeter()
+
+                response, result = self.send_turn(
+                    client, budgeter, completed_turns=turns
+                )
+
+                initial_input = [
+                    self.request.input[0],
+                    *flatten_turns(turns),
+                    self.request.input[1],
+                ]
+                first_followup_input = [
+                    *initial_input,
+                    Message("assistant", first_response.text),
+                    first_call,
+                    ToolCallResult(first_call.call_id, json.dumps({"value": 21})),
+                ]
+                final_input = [
+                    *first_followup_input,
+                    Message("assistant", second_response.text),
+                    second_call,
+                    ToolCallResult(
+                        second_call.call_id, json.dumps({"value": second_value})
+                    ),
+                ]
+                self.assertIs(response, final_response)
+                self.assertEqual(client.send.call_count, 3)
+                self.assertEqual(len(encoder.requests), 3)
+                for sent, checked, expected_input in zip(
+                    client.send.call_args_list,
+                    encoder.requests,
+                    (initial_input, first_followup_input, final_input),
+                    strict=True,
+                ):
+                    self.assertIs(sent.args[0], checked)
+                    self.assertEqual(checked.input, expected_input)
+                    self.assertEqual(checked.tools, self.request.tools)
+                self.assertIs(result.request, encoder.requests[-1])
+                self.assertEqual(self.executed_values, [21, second_value])
+                self.assertEqual(turns, original_turns)
+
+    def test_loop_limits_stop_before_extra_tool_execution_or_model_request(self):
+        cases = (
+            (
+                ToolLoopLimits(max_tool_rounds=1, max_model_requests=5),
+                ToolLoopStopReason.MAX_TOOL_ROUNDS_REACHED,
+                2,
+                [21, 42],
+            ),
+            (
+                ToolLoopLimits(max_tool_rounds=5, max_model_requests=1),
+                ToolLoopStopReason.MAX_MODEL_REQUESTS_REACHED,
+                1,
+                [],
+            ),
+            (
+                ToolLoopLimits(max_tool_rounds=5, max_model_requests=2),
+                ToolLoopStopReason.MAX_MODEL_REQUESTS_REACHED,
+                2,
+                [21, 42],
+            ),
+        )
+        for limits, reason, request_count, executed_values in cases:
+            with self.subTest(limits=limits):
+                self.executed_values.clear()
+                client = Mock()
+                client.send.return_value = self.make_response()
+                budgeter, encoder = self.make_sending_budgeter()
+
+                with self.assertRaises(ToolLoopStoppedError) as caught:
+                    self.send_turn(client, budgeter, tool_loop_limits=limits)
+
+                self.assertEqual(caught.exception.reason, reason)
+                self.assertEqual(client.send.call_count, request_count)
+                self.assertEqual(len(encoder.requests), request_count)
+                self.assertEqual(self.executed_values, executed_values)
+
+    def test_later_followup_budget_rejection_does_not_send_third_request(self):
+        first_response = self.make_response(text="First check.", calls=self.calls[:1])
+        second_response = self.make_response(text="Second check.", calls=self.calls[1:])
+        first_followup_input = [
+            *self.request.input,
+            Message("assistant", first_response.text),
+            self.calls[0],
+            ToolCallResult(self.calls[0].call_id, json.dumps({"value": 21})),
+        ]
+        first_followup_request = replace(
+            self.request, input=first_followup_input, output_format=None
+        )
+        token_limit = len(
+            FakeModelRequestEncoder().encode_request(first_followup_request)
+        )
+        budgeter, encoder = self.make_sending_budgeter(max_input_tokens=token_limit)
+        client = Mock()
+        client.send.side_effect = [first_response, second_response]
+
+        with self.assertRaises(BudgetRejectedError) as caught:
+            self.send_turn(client, budgeter)
+
+        self.assertEqual(
+            caught.exception.reason, BudgetRejectionReason.MAX_INPUT_EXCEEDED
+        )
+        self.assertEqual(client.send.call_count, 2)
+        self.assertEqual(len(encoder.requests), 3)
+        self.assertEqual(self.executed_values, [21, 42])
+        self.assertEqual(
+            encoder.requests[-1].input,
+            [
+                *first_followup_input,
+                Message("assistant", second_response.text),
+                self.calls[1],
+                ToolCallResult(self.calls[1].call_id, json.dumps({"value": 42})),
+            ],
+        )
 
     def test_followup_trimming_preserves_current_turn_and_does_not_restore_old_history(
         self,

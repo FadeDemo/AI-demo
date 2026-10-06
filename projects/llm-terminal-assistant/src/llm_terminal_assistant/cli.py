@@ -23,8 +23,10 @@ from llm_terminal_assistant.model import (
     ModelResponseEndReason,
 )
 from llm_terminal_assistant.tools.definition import ToolDefinition
+from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.executor import ToolExecutor
 from llm_terminal_assistant.tools.factory import create_default_tool_registry
+from llm_terminal_assistant.tools.loop import ToolLoopLimits
 from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 from llm_terminal_assistant.tools.registry import ToolRegistry
 
@@ -33,6 +35,8 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
+
+DEFAULT_TOOL_LOOP_LIMITS = ToolLoopLimits()
 
 
 def output_model_response(response: ModelResponse):
@@ -75,6 +79,7 @@ def send_conversation_turn(
     top_p: float | None = None,
     tools: list[ToolDefinition] | None = None,
     executor: ToolExecutor | None = None,
+    tool_loop_limits: ToolLoopLimits = DEFAULT_TOOL_LOOP_LIMITS,
 ) -> tuple[ModelResponse, HistoryTrimResult]:
     def trim_and_send(
         turn_input: list[ModelInputItem],
@@ -113,17 +118,34 @@ def send_conversation_turn(
     if executor is None:
         raise ValueError("Tool calls were made, but no executor was provided.")
 
-    model_request = trim_result.request
-    followup_request = build_tool_followup_request(
-        request=model_request,
-        response=model_response,
-        executor=executor,
-    )
-    current_turn_start = len(model_request.input) - len(current_turn_input)
-    return trim_and_send(
-        followup_request.input[current_turn_start:],
-        trim_result.retained_completed_turns,
-    )
+    tool_rounds, model_requests = 0, 1
+    while (
+        model_response.reason == ModelResponseEndReason.COMPLETED_NORMALLY
+        and model_response.tool_calls
+    ):
+        if tool_rounds >= tool_loop_limits.max_tool_rounds:
+            raise ToolLoopStoppedError(
+                reason=ToolLoopStopReason.MAX_TOOL_ROUNDS_REACHED
+            )
+        if model_requests >= tool_loop_limits.max_model_requests:
+            raise ToolLoopStoppedError(
+                reason=ToolLoopStopReason.MAX_MODEL_REQUESTS_REACHED
+            )
+        model_request = trim_result.request
+        followup_request = build_tool_followup_request(
+            request=model_request,
+            response=model_response,
+            executor=executor,
+        )
+        current_turn_start = len(model_request.input) - len(current_turn_input)
+        current_turn_input = followup_request.input[current_turn_start:]
+        model_response, trim_result = trim_and_send(
+            current_turn_input,
+            trim_result.retained_completed_turns,
+        )
+        tool_rounds += 1
+        model_requests += 1
+    return model_response, trim_result
 
 
 def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
@@ -153,6 +175,7 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
                 top_p=config.top_p,
                 tools=registry.get_tool_list(),
                 executor=tool_executor,
+                tool_loop_limits=config.tool_loop_limits,
             )
         except BudgetRejectedError as error:
             logger.error(error.reason)
@@ -162,6 +185,9 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
             ):
                 continue
             return
+        except ToolLoopStoppedError as error:
+            logger.error("Tool loop stopped due to: %s", error.reason.value)
+            continue
         except ValueError:
             logger.exception("Invalid conversation configuration.")
             return

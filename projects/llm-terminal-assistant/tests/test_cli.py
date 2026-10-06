@@ -4,7 +4,7 @@ from contextlib import redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime
 from io import StringIO
-from unittest.mock import Mock, patch
+from unittest.mock import DEFAULT, Mock, patch
 
 from llm_terminal_assistant.adapter.fake_client import FakeClient
 from llm_terminal_assistant.adapter.fake_model import (
@@ -12,7 +12,7 @@ from llm_terminal_assistant.adapter.fake_model import (
     FakeModelRequestEncoder,
 )
 from llm_terminal_assistant.budgeter import Budgeter
-from llm_terminal_assistant.cli import talk
+from llm_terminal_assistant.cli import send_conversation_turn, talk
 from llm_terminal_assistant.config import ModelConfig
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
@@ -26,7 +26,9 @@ from llm_terminal_assistant.model import (
     ModelUsage,
     OutputTokensDetails,
 )
+from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.factory import create_default_tool_registry
+from llm_terminal_assistant.tools.loop import ToolLoopLimits
 from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 
@@ -106,6 +108,39 @@ class TalkTests(unittest.TestCase):
             ],
         )
 
+    def test_tool_loop_stop_shows_reason_and_allows_next_question(self):
+        for reason in ToolLoopStopReason:
+            with self.subTest(reason=reason):
+                self.encoder.reset_mock()
+                with (
+                    patch(
+                        "llm_terminal_assistant.cli.send_conversation_turn",
+                        side_effect=[ToolLoopStoppedError(reason), DEFAULT],
+                        wraps=send_conversation_turn,
+                    ) as send_turn,
+                    self.assertLogs(
+                        "llm_terminal_assistant.cli", level="ERROR"
+                    ) as logs,
+                ):
+                    client, output = self.run_talk(
+                        ["Stopped question", "Next question"],
+                        [make_response("Next answer")],
+                    )
+
+                self.assertIn(
+                    f"Tool loop stopped due to: {reason.value}", logs.output[0]
+                )
+                self.assertEqual(send_turn.call_count, 2)
+                self.assertEqual(len(client.requests), 1)
+                self.assertIn("Next answer", output)
+                self.assertEqual(
+                    client.requests[0].input,
+                    [
+                        Message("system", "You are a helpful assistant."),
+                        Message("user", "Next question"),
+                    ],
+                )
+
     def test_time_tool_result_is_returned_and_only_final_answer_is_displayed(self):
         tool_call = ToolCallRequest(
             call_id="time-call-1",
@@ -145,26 +180,31 @@ class TalkTests(unittest.TestCase):
         self.assertNotIn("Checking the clock.", output)
         self.assertNotIn(tool_call.call_id, output)
 
-    def test_remaining_tool_calls_do_not_display_or_save_unfinished_turn(self):
+    def test_tool_round_limit_does_not_display_or_save_unfinished_turn(self):
+        self.config = replace(
+            self.config,
+            tool_loop_limits=ToolLoopLimits(max_tool_rounds=1, max_model_requests=5),
+        )
         first_call = ToolCallRequest(
             "time-call-1", "get_current_time", '{"timezone":"Asia/Shanghai"}'
         )
         pending_call = replace(first_call, call_id="time-call-2")
-        client, output = self.run_talk(
-            ["Earlier question", "Unfinished question", "Next question"],
-            [
-                make_response("Earlier answer"),
-                make_response("Checking the clock.", [first_call]),
-                make_response("More checking is needed.", [pending_call]),
-                make_response("Next answer"),
-            ],
-        )
+        with self.assertLogs("llm_terminal_assistant.cli", level="ERROR") as logs:
+            client, output = self.run_talk(
+                ["Earlier question", "Unfinished question", "Next question"],
+                [
+                    make_response("Earlier answer"),
+                    make_response("Checking the clock.", [first_call]),
+                    make_response("More checking is needed.", [pending_call]),
+                    make_response("Next answer"),
+                ],
+            )
 
         self.assertEqual(len(client.requests), 4)
         self.clock.assert_called_once_with()
         self.assertIn(
-            "No final answer was produced. Additional tool calls remain pending.",
-            output,
+            "Tool loop stopped due to: max_tool_rounds_reached",
+            logs.output[0],
         )
         self.assertNotIn("Checking the clock.", output)
         self.assertNotIn("More checking is needed.", output)
