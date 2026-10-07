@@ -6,6 +6,10 @@ from datetime import UTC, datetime
 from io import StringIO
 from unittest.mock import DEFAULT, Mock, patch
 
+from prompt_toolkit.application import create_app_session
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.output import DummyOutput
+
 from llm_terminal_assistant.adapter.fake_client import FakeClient
 from llm_terminal_assistant.adapter.fake_model import (
     CodePointTokenCounter,
@@ -70,7 +74,10 @@ class TalkTests(unittest.TestCase):
         client = FakeClient(self.config, scripted_responses=responses)
         output = StringIO()
         with (
-            patch("builtins.input", side_effect=[*prompts, "exit"]),
+            patch(
+                "llm_terminal_assistant.cli.prompt",
+                side_effect=[*prompts, "exit"],
+            ),
             patch(
                 "llm_terminal_assistant.cli.create_default_tool_registry",
                 return_value=self.registry,
@@ -87,6 +94,44 @@ class TalkTests(unittest.TestCase):
         for request in client.requests:
             self.assertEqual(request.tools, self.registry.get_tool_list())
         return client, output.getvalue()
+
+    def test_bracketed_multiline_paste_is_sent_once_and_exit_still_works(self):
+        for trailing_newline in ("", "\n"):
+            with self.subTest(trailing_newline=bool(trailing_newline)):
+                self.encoder.reset_mock()
+                text = f"请按顺序完成以下步骤\n\n1. 查询时间。\n2. 根据结果继续。{trailing_newline}"
+                client = FakeClient(
+                    self.config, scripted_responses=[make_response("Done")]
+                )
+                output = StringIO()
+                with (
+                    create_pipe_input() as terminal_input,
+                    create_app_session(input=terminal_input, output=DummyOutput()),
+                    patch(
+                        "llm_terminal_assistant.cli.create_default_tool_registry",
+                        return_value=self.registry,
+                    ),
+                    redirect_stdout(output),
+                ):
+                    terminal_input.send_text(f"\x1b[200~{text}\x1b[201~\rexit\r")
+                    talk(client, self.config, self.budgeter)
+
+                self.assertEqual(len(client.requests), 1)
+                self.assertEqual(
+                    client.requests[0].input,
+                    [
+                        Message("system", "You are a helpful assistant."),
+                        Message("user", text),
+                    ],
+                )
+                self.assertIn("Done", output.getvalue())
+                self.assertIn("Exiting...", output.getvalue())
+
+    def test_exit_with_surrounding_whitespace_does_not_send_a_request(self):
+        client, output = self.run_talk([" \nEXIT\n "], [])
+
+        self.assertEqual(client.requests, [])
+        self.assertIn("Exiting...", output)
 
     def test_plain_answers_reuse_registry_without_executing_tools(self):
         client, output = self.run_talk(
@@ -218,6 +263,61 @@ class TalkTests(unittest.TestCase):
                 Message("user", "Next question"),
             ],
         )
+
+    def test_execution_budget_resets_after_completed_or_stopped_turn(self):
+        self.config = replace(
+            self.config,
+            tool_loop_limits=ToolLoopLimits(
+                max_tool_rounds=5,
+                max_model_requests=6,
+                max_tool_executions=1,
+            ),
+        )
+        first_call = ToolCallRequest(
+            "time-call-1", "get_current_time", '{"timezone":"Asia/Shanghai"}'
+        )
+        pending_call = replace(first_call, call_id="pending-call")
+        next_call = replace(first_call, call_id="time-call-2")
+        for stopped in (False, True):
+            with self.subTest(stopped=stopped):
+                self.clock.reset_mock()
+                self.encoder.reset_mock()
+                first_calls = [first_call, pending_call] if stopped else [first_call]
+                responses = [make_response("First check.", first_calls)]
+                if not stopped:
+                    responses.append(make_response("First answer"))
+                responses.extend(
+                    [
+                        make_response("Next check.", [next_call]),
+                        make_response("Next answer"),
+                    ]
+                )
+
+                with self.assertLogs(
+                    "llm_terminal_assistant.cli", level="INFO"
+                ) as logs:
+                    client, output = self.run_talk(
+                        ["First question", "Next question"], responses
+                    )
+
+                self.assertEqual(len(client.requests), 3 if stopped else 4)
+                self.assertEqual(self.clock.call_count, 2)
+                self.assertIn("Next answer", output)
+                self.assertNotIn("First check.", output)
+                self.assertNotIn("Next check.", output)
+                stop_logs = [
+                    message for message in logs.output if "Tool loop stopped" in message
+                ]
+                if stopped:
+                    self.assertEqual(len(stop_logs), 1)
+                    self.assertIn("max_tool_executions_reached", stop_logs[0])
+                    self.assertNotIn("First answer", output)
+                else:
+                    self.assertEqual(stop_logs, [])
+                    self.assertIn("First answer", output)
+                result = client.requests[-1].input[-1]
+                self.assertIsInstance(result, ToolCallResult)
+                self.assertEqual(result.call_id, next_call.call_id)
 
     def test_noncompleted_responses_with_calls_show_status_and_keep_text_in_history(
         self,

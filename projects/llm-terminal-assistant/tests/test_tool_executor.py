@@ -10,8 +10,11 @@ from llm_terminal_assistant.tools.definition import (
 from llm_terminal_assistant.tools.errors import (
     InvalidToolArgumentsError,
     ToolExecutionErrorCategory,
+    ToolLoopStoppedError,
+    ToolLoopStopReason,
 )
 from llm_terminal_assistant.tools.executor import ToolExecutor
+from llm_terminal_assistant.tools.loop import ToolExecutionBudget
 from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 from llm_terminal_assistant.tools.registry import ToolRegistry
 
@@ -123,6 +126,115 @@ class ToolCallExecutionTests(unittest.TestCase):
         self.assertEqual(result.call_id, "call-1")
         self.assertIsInstance(result.output, str)
         return json.loads(result.output)
+
+    def test_shared_budget_stops_next_call_before_handler_execution(self):
+        handler = RecordingHandler(output={"status": "ok"})
+        executor = make_executor(handler)
+        budget = ToolExecutionBudget(max_tool_executions=1)
+
+        result = executor.execute_call(
+            ToolCallRequest("call-1", "example_tool", '{"value":21}'),
+            budget=budget,
+        )
+
+        self.assertEqual(self.decode_result(result), {"status": "ok"})
+        self.assertEqual(budget.used_tool_executions, 1)
+        with self.assertRaises(ToolLoopStoppedError) as caught:
+            executor.execute_call(
+                ToolCallRequest("call-2", "example_tool", '{"value":42}'),
+                budget=budget,
+            )
+
+        self.assertEqual(
+            caught.exception.reason,
+            ToolLoopStopReason.MAX_TOOL_EXECUTIONS_REACHED,
+        )
+        self.assertEqual(handler.calls, [{"value": 21}])
+        self.assertEqual(budget.used_tool_executions, 1)
+
+    def test_rejected_calls_leave_budget_available_for_valid_call(self):
+        cases = (
+            ("missing_tool", '{"value":21}', ToolExecutionErrorCategory.UNKNOWN_TOOL),
+            ("example_tool", "{", ToolExecutionErrorCategory.INVALID_ARGUMENTS),
+            ("example_tool", "[]", ToolExecutionErrorCategory.INVALID_ARGUMENTS),
+            ("example_tool", "{}", ToolExecutionErrorCategory.INVALID_ARGUMENTS),
+            (
+                "example_tool",
+                '{"value":"21"}',
+                ToolExecutionErrorCategory.INVALID_ARGUMENTS,
+            ),
+            (
+                "example_tool",
+                '{"value":21,"extra":true}',
+                ToolExecutionErrorCategory.INVALID_ARGUMENTS,
+            ),
+        )
+        for name, arguments, category in cases:
+            with self.subTest(name=name, arguments=arguments):
+                handler = RecordingHandler()
+                executor = make_executor(handler)
+                budget = ToolExecutionBudget(max_tool_executions=1)
+
+                result = executor.execute_call(
+                    ToolCallRequest("call-1", name, arguments), budget=budget
+                )
+
+                self.assertEqual(
+                    self.decode_result(result)["error"]["category"], category
+                )
+                self.assertEqual(handler.calls, [])
+                self.assertEqual(budget.used_tool_executions, 0)
+
+                valid_result = executor.execute_call(
+                    ToolCallRequest("call-1", "example_tool", '{"value":21}'),
+                    budget=budget,
+                )
+
+                self.assertEqual(self.decode_result(valid_result), {"status": "ok"})
+                self.assertEqual(handler.calls, [{"value": 21}])
+                self.assertEqual(budget.used_tool_executions, 1)
+
+    def test_handler_errors_consume_budget_and_stop_next_call(self):
+        cases = (
+            (
+                InvalidToolArgumentsError("Rejected value"),
+                ToolExecutionErrorCategory.INVALID_ARGUMENTS,
+            ),
+            (
+                RuntimeError("handler failure"),
+                ToolExecutionErrorCategory.EXECUTION_FAILED,
+            ),
+        )
+        for error, category in cases:
+            with self.subTest(error=type(error).__name__):
+                handler = RecordingHandler(error=error)
+                executor = make_executor(handler)
+                budget = ToolExecutionBudget(max_tool_executions=1)
+
+                with self.assertLogs(
+                    "llm_terminal_assistant.tools.executor", level="INFO"
+                ):
+                    result = executor.execute_call(
+                        ToolCallRequest("call-1", "example_tool", '{"value":21}'),
+                        budget=budget,
+                    )
+
+                self.assertEqual(
+                    self.decode_result(result)["error"]["category"], category
+                )
+                self.assertEqual(budget.used_tool_executions, 1)
+                with self.assertRaises(ToolLoopStoppedError) as caught:
+                    executor.execute_call(
+                        ToolCallRequest("call-2", "example_tool", '{"value":42}'),
+                        budget=budget,
+                    )
+
+                self.assertEqual(
+                    caught.exception.reason,
+                    ToolLoopStopReason.MAX_TOOL_EXECUTIONS_REACHED,
+                )
+                self.assertEqual(handler.calls, [{"value": 21}])
+                self.assertEqual(budget.used_tool_executions, 1)
 
     def test_valid_call_returns_original_output_and_executes_once(self):
         for output in ({"doubled": 42, "text": "测试"}, {}):
@@ -243,7 +355,9 @@ class ToolCallExecutionTests(unittest.TestCase):
         handler = RecordingHandler(error=RuntimeError(internal_detail))
         executor = make_executor(handler)
 
-        with self.assertLogs("llm_terminal_assistant.tools.executor", level="ERROR"):
+        with self.assertLogs(
+            "llm_terminal_assistant.tools.executor", level="ERROR"
+        ) as logs:
             result = executor.execute_call(
                 ToolCallRequest("call-1", "example_tool", '{"value":21}')
             )
@@ -258,6 +372,11 @@ class ToolCallExecutionTests(unittest.TestCase):
             },
         )
         self.assertNotIn(internal_detail, result.output)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("example_tool", logs.records[0].getMessage())
+        self.assertIn("failed", logs.records[0].getMessage())
+        self.assertNotIn(internal_detail, "\n".join(logs.output))
+        self.assertIsNone(logs.records[0].exc_info)
         self.assertEqual(handler.calls, [{"value": 21}])
 
 

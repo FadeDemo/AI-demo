@@ -1,5 +1,7 @@
 import logging
 
+from prompt_toolkit import prompt
+
 from llm_terminal_assistant.budgeter import (
     Budgeter,
     BudgetRejectedError,
@@ -26,7 +28,7 @@ from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.executor import ToolExecutor
 from llm_terminal_assistant.tools.factory import create_default_tool_registry
-from llm_terminal_assistant.tools.loop import ToolLoopLimits
+from llm_terminal_assistant.tools.loop import ToolExecutionBudget, ToolLoopLimits
 from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 from llm_terminal_assistant.tools.registry import ToolRegistry
 
@@ -119,6 +121,9 @@ def send_conversation_turn(
         raise ValueError("Tool calls were made, but no executor was provided.")
 
     tool_rounds, model_requests = 0, 1
+    tool_execution_budget = ToolExecutionBudget(
+        max_tool_executions=tool_loop_limits.max_tool_executions
+    )
     while (
         model_response.reason == ModelResponseEndReason.COMPLETED_NORMALLY
         and model_response.tool_calls
@@ -136,6 +141,7 @@ def send_conversation_turn(
             request=model_request,
             response=model_response,
             executor=executor,
+            tool_execution_budget=tool_execution_budget,
         )
         current_turn_start = len(model_request.input) - len(current_turn_input)
         current_turn_input = followup_request.input[current_turn_start:]
@@ -154,8 +160,8 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
     tool_executor = ToolExecutor(tool_registry=registry)
     print("Please enter your prompt (type 'exit' to quit):\n")
     while True:
-        user_input = input("> ")
-        if user_input.lower() == "exit":
+        user_input = prompt("> ", multiline=False)
+        if user_input.strip().lower() == "exit":
             print("Exiting...")
             return
         reserved_output_tokens = config.default_reserved_output_tokens

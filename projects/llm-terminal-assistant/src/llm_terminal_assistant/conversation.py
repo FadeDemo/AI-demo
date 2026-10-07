@@ -15,6 +15,7 @@ from llm_terminal_assistant.model import (
 )
 from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.executor import ToolExecutor
+from llm_terminal_assistant.tools.loop import ToolExecutionBudget
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,7 @@ def build_tool_followup_request(
     request: ModelRequest,
     response: ModelResponse,
     executor: ToolExecutor,
+    tool_execution_budget: ToolExecutionBudget | None = None,
 ) -> ModelRequest:
     if response.reason != ModelResponseEndReason.COMPLETED_NORMALLY:
         raise ValueError(
@@ -107,5 +109,7 @@ def build_tool_followup_request(
         ],
     )
     for tool_call in response.tool_calls:
-        followup_request.input.append(executor.execute_call(tool_call))
+        followup_request.input.append(
+            executor.execute_call(tool_call, tool_execution_budget)
+        )
     return followup_request

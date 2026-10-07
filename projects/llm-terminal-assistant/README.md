@@ -7,16 +7,19 @@
 - 使用项目自己的 `Message`、`ModelRequest`、`ModelResponse` 和 `ModelClient`，业务对话逻辑不依赖 SDK 原始响应对象。
 - 通过 `client_factory` 按配置选择 `FakeClient` 或 `OpenAIClient`；`FakeClient` 不导入 OpenAI SDK、不调用远程生成服务，也不产生模型费用，预算计数所需资源由 `MODEL` 独立决定。
 - 支持持续进行终端对话，并把成功响应后的 `user` 和 `assistant` 消息保存为完整问答轮次。
-- 每轮发送前只记录消息数量、有序角色列表和逐条正文字符数，不把消息正文写入日志。
+- 在支持 bracketed paste 的终端中，可以直接粘贴多行文本；粘贴中的换行和空行保留在同一条消息内，按 Enter 后整段发送。
+- 每轮发送前记录输入项、消息、工具调用、工具结果和工具定义的数量，不把消息正文写入日志。
 - 每次生成调用前执行请求级 Token 预算检查；上下文窗口或最大输入超限时，按完整问答轮次从旧到新裁剪历史，直到请求通过或达到强制保留边界。
 - 将 OpenAI Responses API 的正文、结束状态、usage 和工具请求转换为项目自己的 `ModelResponse`。
+- 通过注册表和参数 Schema 校验工具请求，执行只读 `get_current_time` 工具，并在同一用户轮次内连续回传结果；未注册工具返回稳定的拒绝结果。
+- 为每轮工具流程设置工具回传轮数、模型请求次数和实际工具执行次数的独立上限，触发保护时记录停止原因并允许继续提问。
 - 将应用请求中的 temperature 和 top-p 映射到 OpenAI Responses API 的 `temperature` 和 `top_p` 请求选项，并提供单变量批量实验入口。
 - 提供基于 JSON Schema Draft 2020-12 的学习卡片数据契约，并用真实 Schema 验证器完成默认离线测试。
 - 提供学习卡片的 JSON 解析、Schema 校验、来源业务规则校验和项目类型转换流水线；失败日志只包含错误类别、字段路径和请求 ID。
 - 使用固定 revision 的 DeepSeek-V4.1-Flash tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
 
-当前课程阶段尚未将学习卡片生成和验证接入终端对话或远程模型请求，不执行工具请求，也没有实现旧历史摘要、流式响应或重试。连接失败和超时等 SDK 异常目前会从 `OpenAIClient.send()` 原样抛出；将其转换为项目自有错误的逻辑留待后续可靠性课程实现。
+当前课程阶段尚未将学习卡片生成和验证接入终端对话或远程模型请求，也没有实现跨用户轮次的工具事件回放、旧历史摘要、流式响应或重试。连接失败和超时等 SDK 异常目前会从 `OpenAIClient.send()` 原样抛出；将其转换为项目自有错误的逻辑留待后续可靠性课程实现。
 
 ## 项目结构
 
@@ -49,6 +52,7 @@ src/llm_terminal_assistant/
 │   ├── schema_validator.py
 │   └── study_card.py
 ├── token_count_cli.py
+├── tools/
 └── token_counter.py
 tests/
 ├── test_budgeter.py
@@ -67,15 +71,16 @@ tests/
 - `client.py`：`ModelClient` 协议。
 - `client_factory.py`：根据 provider 延迟导入并创建适配器。
 - `config.py`：加载项目根目录 `.env` 和进程环境变量。
-- `conversation.py`：完整问答轮次、候选请求组装和历史裁剪策略。
+- `conversation.py`：完整问答轮次、候选请求组装、工具结果回传和历史裁剪策略。
 - `message.py`、`model.py`：服务商无关的消息、请求、响应、usage 和工具请求结构。
 - `prompt_experiment.py`：组合零样本或少样本 Prompt 与固定评测集，执行独立请求并保存待人工评判的实验记录。
 - `sampling_experiment.py`：用固定输入重复执行彼此独立的单变量请求，并逐条保存实验记录。
 - `structured_output/`：学习卡片的四步验证流水线、稳定错误类别、安全日志和项目类型。
 - `token_counter.py`：Token 计数器协议。
 - `token_count_cli.py`：读取四类固定样本并输出字符数、Token 数和计数环境元数据。
+- `tools/`：工具定义、注册表、参数校验与执行、调用与结果协议，以及循环限制和执行预算。
 - `adapter/`：fake、OpenAI、DeepSeek 请求编码和 Hugging Face tokenizer 的具体适配实现。
-- `tests/`：完全离线的预算边界、生成调用拦截、fake-model、OpenAI 请求映射、学习卡片 Schema 和验证流水线测试。
+- `tests/`：完全离线的预算边界、生成调用拦截、工具执行与连续回传、fake-model、OpenAI 请求映射、学习卡片 Schema 和验证流水线测试。
 
 ## 安装
 
@@ -102,15 +107,18 @@ uv sync --extra token-counting
 
 程序从项目根目录的 `.env` 或当前进程环境读取以下变量：
 
-| 变量               | 含义                                                   |
-| ------------------ | ------------------------------------------------------ |
-| `PROVIDER`         | 客户端类型：`faked` 或 `openai`                        |
-| `API_KEY`          | 远程模型服务凭据；fake 模式不会使用                    |
-| `BASE_URL`         | OpenAI Responses API 或兼容服务的基础 URL              |
-| `MODEL`            | 请求使用的模型标识或显式的 `fake-model`                |
-| `REASONING_EFFORT` | OpenAI Responses API 的 reasoning effort；省略时不发送 |
-| `TEMPERATURE`      | OpenAI Responses API 的 `temperature`；省略时不发送    |
-| `TOP_P`            | OpenAI Responses API 的 `top_p`；省略时不发送          |
+| 变量                  | 含义                                                   |
+| --------------------- | ------------------------------------------------------ |
+| `PROVIDER`            | 客户端类型：`faked` 或 `openai`                        |
+| `API_KEY`             | 远程模型服务凭据；fake 模式不会使用                    |
+| `BASE_URL`            | OpenAI Responses API 或兼容服务的基础 URL              |
+| `MODEL`               | 请求使用的模型标识或显式的 `fake-model`                |
+| `REASONING_EFFORT`    | OpenAI Responses API 的 reasoning effort；省略时不发送 |
+| `TEMPERATURE`         | OpenAI Responses API 的 `temperature`；省略时不发送    |
+| `TOP_P`               | OpenAI Responses API 的 `top_p`；省略时不发送          |
+| `MAX_TOOL_ROUNDS`     | 每轮最大工具回传轮数；默认 3                           |
+| `MAX_MODEL_REQUESTS`  | 每轮最大模型请求次数，包含首次请求；默认 4             |
+| `MAX_TOOL_EXECUTIONS` | 每轮最大实际工具执行次数；默认 8                       |
 
 本地 `.env` 不应提交。示例值必须使用占位符：
 
@@ -127,6 +135,8 @@ MODEL=<model-id>
 
 ## 运行
 
+终端输入由 `prompt_toolkit` 接收。在支持 bracketed paste（带粘贴边界标记）的终端中，粘贴整段文本不会自动发送，即使文本末尾带换行也会等待你按 Enter；按 Enter 后，整段作为一条用户消息提交，无需额外命令。单独输入 `exit` 后按 Enter 退出，退出命令忽略大小写和首尾空白。
+
 ### 完全离线的 Fake 客户端和模型
 
 使用 `faked` provider 和显式的 `fake-model`，可以离线验证预算拦截、多轮消息顺序和历史裁剪后的发送路径，不需要 API Key、真实 tokenizer 或模型缓存：
@@ -140,11 +150,11 @@ PROVIDER=faked MODEL=fake-model uv run llm-terminal-assistant
 输入前两轮问题后，程序会返回固定响应，并分别记录类似以下的安全元数据；之后可以继续输入更多轮次，直到输入 `exit`：
 
 ```text
-message_count=2 roles=['system', 'user'] content_lengths=[28, 14]
-message_count=4 roles=['system', 'user', 'assistant', 'user'] content_lengths=[28, 14, 23, 15]
+Model request: input_item_count=2 message_count=2 tool_call_count=0 tool_result_count=0 tool_definition_count=1
+Model request: input_item_count=4 message_count=4 tool_call_count=0 tool_result_count=0 tool_definition_count=1
 ```
 
-长度随实际输入变化；日志不应出现消息正文。
+默认 fake 响应不提出工具调用，因此两轮都只有普通消息；请求仍携带注册表中的工具定义。日志不应出现消息正文。
 
 如果只让生成客户端使用 fake 响应，同时仍按 DeepSeek-V4.1-Flash 的真实消息格式和 tokenizer 检查预算，则执行：
 
@@ -169,6 +179,26 @@ remaining_tokens = context_window_tokens
 所有单项限制满足且 `remaining_tokens` 大于或等于 0 时才调用生成客户端。拒绝请求时不调用客户端，并提供稳定原因：`negative_limit`、`max_input_exceeded`、`max_output_exceeded` 或 `context_window_exceeded`。
 
 不同提供方和接口使用不同的输出限制参数。本项目的 OpenAI 适配器调用 OpenAI Responses API 时，把单次请求的 `reserved_output_tokens` 映射为该接口的 `max_output_tokens`。应用预算策略使用的 `safety_margin_tokens` 不发送给模型服务。
+
+### 工具调用与循环保护
+
+终端对话将注册表中的工具定义传给模型。只有正常完成且包含工具请求的响应进入工具处理：先查找注册表并校验参数，再执行 handler，将带对应调用 ID 的结果交回模型。模型继续提出调用时重复处理，直到返回不含工具调用的最终回答。失败、取消或不完整的模型响应沿用已有状态处理。
+
+工具结果正文属于输入数据，其中的文字指令不会直接触发执行或修改注册表。模型随后提出的每个调用仍经过注册表和参数校验，未注册工具返回 `unknown_tool` 拒绝结果。CLI 只展示最终回答；工具流程触发保护性停止时记录停止原因，并允许下一轮继续提问。
+
+以下限制属于应用策略，由 `.env` 或进程环境变量配置，不作为模型服务 API 参数发送。省略变量时采用默认值；显式设置必须能解析为正整数，空值、非整数、零和负数会被拒绝。三项上限独立设置，不要求彼此相等或满足固定关系。
+
+| 环境变量              | 默认值 | 计数方式                                                                                                    | 稳定停止原因                  |
+| --------------------- | ------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `MAX_TOOL_ROUNDS`     | 3      | 处理一次模型响应中的全部工具请求，并将结果作为下一次模型请求发送，计一轮回传                                | `max_tool_rounds_reached`     |
+| `MAX_MODEL_REQUESTS`  | 4      | 按实际发送的模型请求计数，包含首次请求和每次工具回传后的请求                                                | `max_model_requests_reached`  |
+| `MAX_TOOL_EXECUTIONS` | 8      | 每次实际进入工具 handler 计一次，执行报错也计入；未注册、JSON 解析失败或进入 handler 前的参数校验失败不计入 | `max_tool_executions_reached` |
+
+例如，一次模型响应包含 3 个合法工具调用，全部执行并回传后，累计执行 3 次工具、完成 1 轮回传、发送 2 次模型请求。若执行上限为 2，则执行前两个调用后，在第三个进入 handler 前停止，不再发送该次回传请求。
+
+应用在继续工具回传前检查回传轮数和模型请求额度，在参数校验通过后、进入 handler 前检查并消耗执行额度。工具执行额度在同一用户轮次的多次回传间共享，新用户轮次重新计数；达到上限后尝试继续对应操作才触发停止。相同工具和参数可以重复调用，每次实际执行都计入额度，当前不设置重复调用禁令。每次模型请求仍须经过 Token 预算检查。
+
+工具执行日志只记录工具名称和固定状态信息，异常日志不附带 handler 的原始异常或回溯，也不记录完整参数或工具结果。当前已完成轮次仍只保存用户消息和最终助手正文，跨用户轮次的工具事件保存与回放属于后续能力。
 
 ### 历史裁剪
 
@@ -296,10 +326,12 @@ PROVIDER=faked MODEL=fake-model uv run llm-terminal-assistant
 
 依次输入至少两轮不同问题，确认：
 
-1. 第一轮日志的 `message_count` 为 2，角色顺序为 `system`、`user`。
-2. 第二轮日志的 `message_count` 为 4，角色顺序为 `system`、`user`、`assistant`、`user`。
-3. 每轮 `content_lengths` 的项目数与角色数相同。
+1. 第一轮日志的 `input_item_count` 和 `message_count` 均为 2。
+2. 第二轮日志的 `input_item_count` 和 `message_count` 均为 4。
+3. 每轮 `tool_call_count` 和 `tool_result_count` 为 0，`tool_definition_count` 为 1。
 4. 日志不包含 system、user 或 assistant 消息正文。
 5. 每轮都显示 fake 响应，可以继续输入后续问题，运行期间不访问网络。
 
 自动化测试使用六个固定的完整问答轮次验证：预算内历史保持不变；上下文窗口或最大输入超限时删除最早完整轮次；裁剪后保留 `system`、本轮 `user` 和声明的最近轮次；强制内容仍超限、输出上限超限、负数限制或裁剪策略无效时不调用 fake 模型生成客户端。测试还覆盖零剩余空间的允许路径、完整消息编码、完全离线的 `fake-model` 路径，以及 OpenAI Responses API 输出上限映射。上述终端交互流程保留为手动验收方式。
+
+工具流程测试通过终端使用的单轮处理入口驱动连续调用，分别触发三项次数上限，并检查停止原因、后续模型请求和实际执行记录。恶意工具结果场景使用只读 fake 工具和预设模型响应，验证恶意文字原样回传、后续未注册写工具实际到达注册表校验并返回 `unknown_tool`，最后正常取得最终回答；测试不进行真实写操作。测试还覆盖同批和跨次回传的执行额度累计、新用户轮次额度重置，以及工具异常日志不包含异常正文和回溯。
