@@ -221,6 +221,7 @@ The YAML front matter `status` field describes the learner's progress, not wheth
 - Use `completed` only when the user explicitly confirms that the learner has completed the material. Do not infer completion from a polished document, complete lesson content, passing repository checks, existing exercises, or generated answer templates.
 - A course index must not be marked `completed` merely because all child course documents have been written.
 - Use the `updated` field, not `status`, to record that document content was created or revised.
+- 当对话涉及整课验收，或 Agent 给出整课验收结论时，必须核对对应课程文件及已存在的回答记录的学习状态，即使这些文件尚未修改或暂存；状态是否需要更新仍按本节原有的学习进度规则判断，需要修改的关联文件须纳入本次收尾和提交范围。
 
 Do not write this for a newly generated course whose learner progress is unknown:
 
