@@ -23,6 +23,7 @@ from llm_terminal_assistant.model import (
     FAKE_MODEL_PROFILE,
     InputTokensDetails,
     ModelLimits,
+    ModelRequest,
     ModelResponse,
     ModelResponseEndReason,
     ModelResponseError,
@@ -70,7 +71,13 @@ class TalkTests(unittest.TestCase):
         self.clock = Mock(return_value=datetime(2026, 10, 4, 4, 0, tzinfo=UTC))
         self.registry = create_default_tool_registry(clock=self.clock)
 
-    def run_talk(self, prompts: list[str], responses: list[ModelResponse]):
+    def run_talk(
+        self,
+        prompts: list[str],
+        responses: list[ModelResponse],
+        *,
+        expected_budget_checks: int | None = None,
+    ):
         client = FakeClient(self.config, scripted_responses=responses)
         output = StringIO()
         with (
@@ -87,10 +94,15 @@ class TalkTests(unittest.TestCase):
             talk(client, self.config, self.budgeter)
 
         create_registry.assert_called_once_with()
-        self.assertEqual(
-            [call.args[0] for call in self.encoder.encode_request.call_args_list],
-            client.requests,
-        )
+        checked_requests = [
+            call.args[0] for call in self.encoder.encode_request.call_args_list
+        ]
+        if expected_budget_checks is None:
+            self.assertEqual(checked_requests, client.requests)
+        else:
+            self.assertEqual(len(checked_requests), expected_budget_checks)
+        for request in client.requests:
+            self.assertTrue(any(request is checked for checked in checked_requests))
         for request in client.requests:
             self.assertEqual(request.tools, self.registry.get_tool_list())
         return client, output.getvalue()
@@ -186,21 +198,23 @@ class TalkTests(unittest.TestCase):
                     ],
                 )
 
-    def test_time_tool_result_is_returned_and_only_final_answer_is_displayed(self):
+    def test_time_tool_history_is_replayed_and_only_final_answers_are_displayed(self):
         tool_call = ToolCallRequest(
             call_id="time-call-1",
             name="get_current_time",
             arguments='{"timezone":"Asia/Shanghai"}',
         )
-        client, output = self.run_talk(
-            ["What time is it in Shanghai?"],
-            [
-                make_response("Checking the clock.", [tool_call]),
-                make_response("Shanghai time is 12:00."),
-            ],
-        )
+        with self.assertLogs("llm_terminal_assistant", level="INFO") as logs:
+            client, output = self.run_talk(
+                ["What time is it in Shanghai?", "Did you use a tool?"],
+                [
+                    make_response("Checking the clock.", [tool_call]),
+                    make_response("Shanghai time is 12:00."),
+                    make_response("Yes, I used the clock tool."),
+                ],
+            )
 
-        self.assertEqual(len(client.requests), 2)
+        self.assertEqual(len(client.requests), 3)
         self.clock.assert_called_once_with()
         second_input = client.requests[1].input
         self.assertEqual(
@@ -222,8 +236,130 @@ class TalkTests(unittest.TestCase):
             },
         )
         self.assertIn("Shanghai time is 12:00.", output)
+        self.assertIn("Yes, I used the clock tool.", output)
         self.assertNotIn("Checking the clock.", output)
         self.assertNotIn(tool_call.call_id, output)
+        self.assertEqual(
+            client.requests[0].input,
+            [
+                Message("system", "You are a helpful assistant."),
+                Message("user", "What time is it in Shanghai?"),
+            ],
+        )
+        self.assertEqual(
+            client.requests[2].input,
+            [
+                *second_input,
+                Message("assistant", "Shanghai time is 12:00."),
+                Message("user", "Did you use a tool?"),
+            ],
+        )
+        log_text = "\n".join(logs.output)
+        self.assertNotIn(tool_call.arguments, log_text)
+        self.assertNotIn(result.output, log_text)
+        self.assertIn("tool_call_count=1 tool_result_count=1", log_text)
+
+    def test_talk_trims_whole_tool_turns_and_saves_current_turn_after_trimming(self):
+        system_message = Message("system", "You are a helpful assistant.")
+        tool_call = ToolCallRequest(
+            "time-call-1", "get_current_time", '{"timezone":"Asia/Shanghai"}'
+        )
+        tool_turn = [
+            Message("user", "What time is it?"),
+            Message("assistant", "Checking the clock."),
+            tool_call,
+            ToolCallResult(
+                tool_call.call_id,
+                json.dumps(
+                    {
+                        "timezone": "Asia/Shanghai",
+                        "current_time": "2026-10-04T12:00:00+08:00",
+                    }
+                ),
+            ),
+            Message("assistant", "Shanghai time is 12:00."),
+        ]
+        recent_turn = [
+            Message("user", "Recent question"),
+            Message("assistant", "r" * 1_000),
+        ]
+        current_user = Message("user", "q" * 1_200)
+        current_answer = Message("assistant", "Current answer")
+        next_user = Message("user", "Next question")
+        for retain_tool_turn in (True, False):
+            with self.subTest(retain_tool_turn=retain_tool_turn):
+                self.clock.reset_mock()
+                self.encoder.reset_mock()
+                retained_history = (
+                    [*tool_turn, *recent_turn] if retain_tool_turn else recent_turn
+                )
+                expected_current_input = [
+                    system_message,
+                    *retained_history,
+                    current_user,
+                ]
+                expected_request = ModelRequest(
+                    input=expected_current_input,
+                    reserved_output_tokens=self.config.default_reserved_output_tokens,
+                    tools=self.registry.get_tool_list(),
+                )
+                expected_encoded = FakeModelRequestEncoder().encode_request(
+                    expected_request
+                )
+                counter = Mock(wraps=CodePointTokenCounter())
+                self.budgeter = Budgeter(
+                    token_counter=counter,
+                    request_encoder=self.encoder,
+                    model_limits=ModelLimits(
+                        context_window_tokens=len(expected_encoded)
+                        + self.config.default_reserved_output_tokens
+                    ),
+                    safety_margin_tokens=0,
+                )
+                prompts = [
+                    tool_turn[0].content,
+                    recent_turn[0].content,
+                    current_user.content,
+                    next_user.content,
+                ]
+                responses = [
+                    make_response("Checking the clock.", [tool_call]),
+                    make_response(tool_turn[-1].content),
+                    make_response(recent_turn[-1].content),
+                    make_response(current_answer.content),
+                    make_response("Next answer"),
+                ]
+                if retain_tool_turn:
+                    prompts.insert(0, "Old question")
+                    responses.insert(0, make_response("Old answer"))
+                expected_requests = len(responses)
+
+                client, output = self.run_talk(
+                    prompts,
+                    responses,
+                    expected_budget_checks=expected_requests + 2,
+                )
+
+                self.assertEqual(len(client.requests), expected_requests)
+                self.clock.assert_called_once_with()
+                self.assertEqual(client.requests[-2].input, expected_current_input)
+                self.assertEqual(
+                    counter.count_tokens.call_args_list[-3].args[0],
+                    expected_encoded,
+                )
+                self.assertEqual(
+                    client.requests[-1].input,
+                    [
+                        system_message,
+                        *(recent_turn if retain_tool_turn else []),
+                        current_user,
+                        current_answer,
+                        next_user,
+                    ],
+                )
+                self.assertIn("Current answer", output)
+                self.assertIn("Next answer", output)
+                self.assertNotIn("Checking the clock.", output)
 
     def test_tool_round_limit_does_not_display_or_save_unfinished_turn(self):
         self.config = replace(
@@ -373,11 +509,12 @@ class TalkTests(unittest.TestCase):
                     self.assertIn(notice, output)
                     self.assertNotIn("Additional tool calls remain pending.", output)
                     self.assertNotIn(response.text, output)
+                    history_items = client.requests[-2].input[1:]
                     self.assertEqual(
                         client.requests[-1].input,
                         [
                             Message("system", "You are a helpful assistant."),
-                            Message("user", "Interrupted question"),
+                            *history_items,
                             Message("assistant", response.text),
                             Message("user", "Next question"),
                         ],

@@ -20,8 +20,7 @@ from llm_terminal_assistant.tools.loop import ToolExecutionBudget
 
 @dataclass(frozen=True)
 class ConversationTurn:
-    user_message: Message
-    assistant_message: Message
+    items: list[ModelInputItem]
 
 
 @dataclass
@@ -51,11 +50,7 @@ def trim_history(
     while True:
         messages = (
             [system_message]
-            + [
-                msg
-                for turn in retained_completed_turns
-                for msg in (turn.user_message, turn.assistant_message)
-            ]
+            + [msg for turn in retained_completed_turns for msg in turn.items]
             + current_turn_input
         )
         model_request = ModelRequest(

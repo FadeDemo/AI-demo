@@ -204,9 +204,11 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
             print("No final answer was produced. Additional tool calls remain pending.")
             continue
         completed_turns = trim_result.retained_completed_turns
+        current_turn_start = 1 + sum(len(turn.items) for turn in completed_turns)
+        current_turn_input = trim_result.request.input[current_turn_start:]
         assistant_msg = model_response_to_assistant_message(model_response)
         completed_turns.append(
-            ConversationTurn(user_message=user_msg, assistant_message=assistant_msg)
+            ConversationTurn(items=[*current_turn_input, assistant_msg])
         )
         output_model_response(model_response)
 
