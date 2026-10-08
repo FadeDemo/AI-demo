@@ -2,7 +2,7 @@
 title: 工具调用练习回答
 type: answer
 area: llm
-status: learning
+status: completed
 created: 2026-10-08
 updated: 2026-10-08
 tags:

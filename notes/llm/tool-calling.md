@@ -2,9 +2,9 @@
 title: 工具调用
 type: concept
 area: llm
-status: learning
+status: completed
 created: 2026-08-05
-updated: 2026-10-06
+updated: 2026-10-08
 tags:
   - llm
   - tool-calling
