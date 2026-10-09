@@ -96,6 +96,7 @@ git diff --unified=0 -- <changed-course-files> |
 ### 课程任务的范围与前置能力
 
 - 编写、修改或验收课程任务时，只能把当前课程明确讲解的概念、当前任务明确要求实现的行为，以及先修课程已经引入的契约作为必需范围。不得把代码审查中发现的架构改进、生产环境最佳实践或后续课程能力追加为当前任务的验收要求。
+- 采用教学简化策略时，应说明它是本课的选择、选择原因和适用范围，不得将其写成通用的必需条件。
 - 每项任务要求和通过条件都必须能够追溯到课程正文已经介绍的概念或行为契约，并对应一个由任务明确要求产生的可观察结果。仅仅存在相关代码、潜在风险或未来使用场景，不构成当前任务的实现要求。
 - 如果某项要求依赖尚未引入的数据格式、接口、状态策略、应用模块或后续处理流程，必须选择以下一种处理方式：
   - 在当前课程中先解释该前置能力，并明确要求实现最小的生产者、消费者和可测试边界；
@@ -187,29 +188,84 @@ For every Markdown change:
 - 连接线路径不得穿过无关节点、节点文字或其他箭头。需要绕行时，应保留足够间距，并让起点、终点和流向仍能一眼辨认。
 - 完成图示修改后，必须按完整画布和原始宽高比渲染并人工检查所有连接线。检查每条线的起点、终点、箭头方向、接入位置以及与其他元素的交叉情况；只通过 XML 解析、格式化或查看被裁切的缩略图不能代替这项检查。
 
-### Provider-specific terminology
+### 课程表达的完整性与简洁性
 
-When documentation names a provider-, product-, API-, model-, or version-specific parameter, endpoint, or behavior, identify its owner and applicable interface at first use. State the generic concept separately from the provider-specific example; do not present a specific identifier as though every provider, API, or model uses it.
+- 精简句子时，应保留理解所必需的主体、动作、条件和结果。上下文已明确的信息可以省略，但不得产生歧义或要求学习者猜测处理流程。
+- 不得为了省字，将完整条件压缩成含义不清的短语。例如，“读取异常”可能表示读取过程中发生异常，也可能表示读取一个异常对象，应根据实际含义展开。
+- 使用“则”“因此”“否则”等连接词时，应确保对应的条件、因果依据或分支关系清楚可见；连接词本身不能替代这些说明。条件表达明确时可以使用“则”，不应将这条规则理解为禁止某个连接词。
+- 完成课程文档修改前，人工检查新增或编辑的行为说明：读者能否明确判断“什么情况下，由谁执行什么动作，产生什么结果”。不必每句重复全部信息，但理解当前说明所必需的信息必须能从当前上下文确定；格式化和 lint 不能替代这项检查。
 
-When the explanation depends on exact provider-specific behavior, verify it against documentation maintained by that provider and link the source near the explanation when appropriate.
+以下示例假设课程已说明“消费者”是负责读取和处理响应事件的应用代码。
 
-Do not write:
-
-```markdown
-`max_output_tokens` controls the output limit.
-```
-
-Write:
+不要这样写（反例）：
 
 ```markdown
-Different providers and APIs use different output-limit parameters. For example, the OpenAI Responses API uses `max_output_tokens`.
+读取异常则记录相应失败类别。
 ```
 
-Before finishing a Markdown change, list code-formatted identifiers in the changed prose and manually verify that the first use of each provider-specific identifier names its owner, interface, and scope:
+应当这样写（正例）：
 
-```shell
-rg -n '`[A-Za-z][A-Za-z0-9_.-]*`' <changed-markdown-files>
+```markdown
+读取过程中发生异常时，消费者应记录对应的失败类别。
 ```
+
+正例明确保留了异常发生的条件、执行主体和处理动作，避免读者把“读取异常”误解为读取某个异常对象。
+
+### 术语引入、分类与适用范围
+
+#### 课程术语与分类
+
+- 首次引入影响课程理解、任务实现或验收的术语时，应先说明它指什么，以及它与已经讲解的概念有什么关系，再在正文、任务或通过条件中使用。先修课程已定义的概念可以明确引用其所在课程或章节，不必重复展开。
+- 使用“普通”“特殊”“模式”“类型”等分类性称呼前，应说明分类依据及本课涉及的类别。只介绍理解当前内容所需的范围，不为解释一个名称额外引入课外体系；不能让读者自行推测类别按输出用途、数据格式还是处理方式划分。
+- 区分通用概念、提供方或 SDK 的术语，以及课程自行采用的称呼。课程自定义的名称必须说明含义和适用范围，不能让读者误以为它是行业、模型接口或 SDK 规定的分类。
+- 同一概念应保持称呼一致；确需采用别称或换一种表达时，应先说明两者的关系。不同概念也不能仅因相关就交替使用同一个名称，不能让读者自行猜测是否出现了新概念。
+
+以下示例假设先修课程已讲解提供方适配层、结构化验证和工具执行，当前课程只要求增加回答正文的流式展示。
+
+不要这样写（反例）：
+
+```markdown
+普通文本流式模式需要三类事件。
+```
+
+这个表述没有解释“普通文本”的分类依据，也没有说明“模式”属于模型接口、SDK 还是应用自己的处理流程。
+
+应当这样写（正例）：
+
+```markdown
+本课按输出用途划定练习范围：供用户阅读的回答正文用于展示，结构化数据需要交给程序验证，工具参数需要交给执行器校验。本课只为回答正文实现流式展示；结构化数据和工具参数继续使用已有的完整响应处理流程。
+
+适配层将 SDK 事件转换成应用自己的事件。用于逐段展示回答正文的应用事件协议，至少需要表达文本增量、用量统计和终止事件。
+```
+
+这个示例直接说明输出用途、练习范围和协议归属，不需要学习者自行推测“普通模式”意味着什么；“已有处理流程”指示例上下文已声明由先修课程提供的能力。
+
+#### 提供方专属术语
+
+- 文档提及提供方、产品、API、模型或版本专属的参数、端点或行为时，必须在首次使用处标明所属提供方或产品、适用接口和范围。先说明通用概念，再给出提供方专属示例；不得把某个具体标识符写成所有提供方、接口或模型都采用的通用名称。
+- 用某个提供方或接口说明通用概念时，应以“例如”等明确措辞引入，避免暗示课程要求采用该提供方或接口。
+- 解释依赖提供方的精确行为时，必须依据该提供方维护的文档核实，并在适当情况下将来源链接放在相关说明附近。
+
+不要这样写（反例）：
+
+```markdown
+`max_output_tokens` 控制输出上限。
+```
+
+应当这样写（正例）：
+
+```markdown
+不同提供方和 API 使用不同的输出上限参数。例如，OpenAI Responses API 使用 `max_output_tokens`。
+```
+
+#### 验证要求
+
+- 完成课程文档修改前，逐项检查新增或编辑的术语与分类名称：定义是否先于使用或能明确定位到先修内容，分类依据与本课涉及的类别是否清楚，与前文的关系及所属范围是否明确，后文称呼是否一致。检查对象包括未使用行内代码格式的名称；格式化、lint 和标识符扫描不能替代这项人工检查。
+- 完成 Markdown 修改前，使用以下命令列出行内代码格式的标识符，并逐项人工确认提供方专属标识符的首次使用已说明所属提供方或产品、接口及适用范围：
+
+  ```shell
+  rg -n '`[A-Za-z][A-Za-z0-9_.-]*`' <changed-markdown-files>
+  ```
 
 ### Learning status metadata
 
