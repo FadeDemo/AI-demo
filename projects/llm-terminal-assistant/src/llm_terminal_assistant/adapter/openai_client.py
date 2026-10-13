@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from llm_terminal_assistant.adapter.protocol_mapping import (
@@ -15,6 +16,9 @@ from llm_terminal_assistant.model import (
     ModelResponseIncompleteDetails,
     ModelUsage,
     OutputTokensDetails,
+)
+from llm_terminal_assistant.stream.events import (
+    StreamEvent,
 )
 from llm_terminal_assistant.tools.protocol import ToolCallRequest
 
@@ -132,3 +136,44 @@ class OpenAIClient(ModelClient):
                 f"Reasoning effort '{effort}' is not supported for model '{self.model}'. "
                 f"Supported efforts: {supported_efforts}"
             )
+
+    def send_stream(self, request: ModelRequest) -> Iterator[StreamEvent]:
+        request_options = {
+            "model": self.model,
+            "input": [to_openai_responses_input_item(item) for item in request.input],
+            "max_output_tokens": request.reserved_output_tokens,
+        }
+        if request.reasoning_effort is not None:
+            request_options["reasoning"] = {
+                "effort": request.reasoning_effort,
+            }
+        if request.temperature is not None:
+            request_options["temperature"] = request.temperature
+        if request.top_p is not None:
+            request_options["top_p"] = request.top_p
+        if request.output_format is not None:
+            request_options["text"] = {
+                "format": {
+                    "type": request.output_format.type,
+                    "name": request.output_format.name,
+                    "schema": request.output_format.schema,
+                }
+            }
+        if request.tools:
+            request_options["tools"] = [
+                {
+                    "type": "function",
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameter_schema,
+                }
+                for tool in request.tools
+            ]
+        request_options["stream"] = True
+        events = self.client.responses.create(**request_options)
+        for event in events:
+            if (
+                event.type == "response.output_text.delta"
+                or event.type == "response.completed"
+            ):
+                pass
