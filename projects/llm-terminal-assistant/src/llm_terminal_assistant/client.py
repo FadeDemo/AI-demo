@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Generator
 from typing import Protocol
 
 from llm_terminal_assistant.config import ModelConfig
@@ -14,7 +14,7 @@ class ModelClient(Protocol):
 
     def send(self, request: ModelRequest) -> ModelResponse: ...
 
-    def send_stream(self, request: ModelRequest) -> Iterator[StreamEvent]: ...
+    def send_stream(self, request: ModelRequest) -> Generator[StreamEvent]: ...
 
     def validate_reasoning_effort(
         self, effort: str | None, allowed_efforts: tuple[str, ...]

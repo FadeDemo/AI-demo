@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from typing import TYPE_CHECKING
 
 from llm_terminal_assistant.adapter.protocol_mapping import (
@@ -18,7 +18,10 @@ from llm_terminal_assistant.model import (
     OutputTokensDetails,
 )
 from llm_terminal_assistant.stream.events import (
+    EndEvent,
     StreamEvent,
+    TextDeltaEvent,
+    UsageEvent,
 )
 from llm_terminal_assistant.tools.protocol import ToolCallRequest
 
@@ -35,8 +38,8 @@ class OpenAIClient(ModelClient):
         super().__init__(config)
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
-    def send(self, request: ModelRequest) -> ModelResponse:
-        request_options = {
+    def _build_request_options(self, request: ModelRequest) -> dict[str, object]:
+        request_options: dict[str, object] = {
             "model": self.model,
             "input": [to_openai_responses_input_item(item) for item in request.input],
             "max_output_tokens": request.reserved_output_tokens,
@@ -67,6 +70,10 @@ class OpenAIClient(ModelClient):
                 }
                 for tool in request.tools
             ]
+        return request_options
+
+    def send(self, request: ModelRequest) -> ModelResponse:
+        request_options = self._build_request_options(request)
         openai_response = self.client.responses.create(**request_options)
         logger.debug("Using model: %s", openai_response.model)
         reason, error, incomplete_details = self.derive_end_reason(openai_response)
@@ -137,43 +144,54 @@ class OpenAIClient(ModelClient):
                 f"Supported efforts: {supported_efforts}"
             )
 
-    def send_stream(self, request: ModelRequest) -> Iterator[StreamEvent]:
-        request_options = {
-            "model": self.model,
-            "input": [to_openai_responses_input_item(item) for item in request.input],
-            "max_output_tokens": request.reserved_output_tokens,
-        }
-        if request.reasoning_effort is not None:
-            request_options["reasoning"] = {
-                "effort": request.reasoning_effort,
-            }
-        if request.temperature is not None:
-            request_options["temperature"] = request.temperature
-        if request.top_p is not None:
-            request_options["top_p"] = request.top_p
-        if request.output_format is not None:
-            request_options["text"] = {
-                "format": {
-                    "type": request.output_format.type,
-                    "name": request.output_format.name,
-                    "schema": request.output_format.schema,
-                }
-            }
-        if request.tools:
-            request_options["tools"] = [
-                {
-                    "type": "function",
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameter_schema,
-                }
-                for tool in request.tools
-            ]
+    def send_stream(self, request: ModelRequest) -> Generator[StreamEvent]:
+        request_options = self._build_request_options(request)
         request_options["stream"] = True
         events = self.client.responses.create(**request_options)
-        for event in events:
-            if (
-                event.type == "response.output_text.delta"
-                or event.type == "response.completed"
-            ):
-                pass
+        try:
+            for event in events:
+                if event.type == "response.output_text.delta":
+                    yield TextDeltaEvent(
+                        delta=event.delta,
+                    )
+                elif event.type == "response.completed":
+                    openai_response = event.response
+                    reason, error, incomplete_details = self.derive_end_reason(
+                        openai_response
+                    )
+                    yield UsageEvent(
+                        usage=ModelUsage(
+                            input_tokens=openai_response.usage.input_tokens,
+                            input_tokens_details=InputTokensDetails(
+                                cached_tokens=openai_response.usage.input_tokens_details.cached_tokens,
+                                cache_write_tokens=openai_response.usage.input_tokens_details.cache_write_tokens,
+                            ),
+                            output_tokens=openai_response.usage.output_tokens,
+                            output_tokens_details=OutputTokensDetails(
+                                reasoning_tokens=openai_response.usage.output_tokens_details.reasoning_tokens,
+                            ),
+                            total_tokens=openai_response.usage.total_tokens,
+                        ),
+                    )
+                    yield EndEvent(
+                        reason=reason,
+                        error=error,
+                        incomplete_details=incomplete_details,
+                    )
+                elif (
+                    event.type == "response.incomplete"
+                    or event.type == "response.failed"
+                ):
+                    openai_response = event.response
+                    reason, error, incomplete_details = self.derive_end_reason(
+                        openai_response
+                    )
+                    yield EndEvent(
+                        reason=reason,
+                        error=error,
+                        incomplete_details=incomplete_details,
+                    )
+                else:
+                    logger.warning("Event type %s not supported", event.type)
+        finally:
+            events.close()

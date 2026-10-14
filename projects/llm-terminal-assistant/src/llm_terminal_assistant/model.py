@@ -35,6 +35,7 @@ class ModelResponseEndReason(StrEnum):
     REQUEST_FAILED = "request_failed"
     REQUEST_CANCELLED = "request_cancelled"
     REQUEST_INCOMPLETE = "request_incomplete"
+    MISSING_END_EVENT = "missing_end_event"
 
 
 @dataclass
@@ -52,7 +53,7 @@ class ModelResponseIncompleteDetails:
 class ModelResponse:
     text: str
     reason: ModelResponseEndReason
-    usage: ModelUsage
+    usage: ModelUsage | None
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     error: ModelResponseError | None = None
     incomplete_details: ModelResponseIncompleteDetails | None = None

@@ -1,5 +1,5 @@
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Generator
 
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.config import ModelConfig
@@ -75,7 +75,7 @@ class FakeClient(ModelClient):
                 f"Supported efforts: {allowed_efforts}"
             )
 
-    def send_stream(self, request: ModelRequest) -> Iterator[StreamEvent]:
+    def send_stream(self, request: ModelRequest) -> Generator[StreamEvent]:
         self.requests.append(request)
         if self.scripted_events is not None:
             if not self.scripted_events:
