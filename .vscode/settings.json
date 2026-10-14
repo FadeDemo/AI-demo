@@ -1,7 +1,5 @@
 {
-  "python-envs.workspaceSearchPaths": [
-    "./projects/llm-terminal-assistant/.venv"
-  ],
+  "python-envs.workspaceSearchPaths": ["./projects/llm-terminal-assistant/.venv"],
   "python-envs.pythonProjects": [
     {
       "path": "projects/llm-terminal-assistant",
@@ -11,18 +9,10 @@
   ],
   "python.terminal.executeInFileDir": false,
   "terminal.integrated.cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
-  "python.analysis.extraPaths": [
-    "${workspaceFolder}/projects/llm-terminal-assistant/src"
-  ],
-  "pylint.interpreter": [
-    "${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"
-  ],
-  "autopep8.interpreter": [
-    "${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"
-  ],
-  "isort.interpreter": [
-    "${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"
-  ],
+  "python.analysis.extraPaths": ["${workspaceFolder}/projects/llm-terminal-assistant/src"],
+  "pylint.interpreter": ["${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"],
+  "autopep8.interpreter": ["${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"],
+  "isort.interpreter": ["${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"],
   "python.testing.cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": false,
@@ -30,5 +20,6 @@
   "python.testing.pytestArgs": [],
   "pylint.cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
   "python.useEnvironmentsExtension": true,
-  "python.terminal.activateEnvironment": true
+  "python.terminal.activateEnvironment": true,
+  "cursorpyright.analysis.extraPaths": ["${workspaceFolder}/projects/llm-terminal-assistant/src"]
 }
