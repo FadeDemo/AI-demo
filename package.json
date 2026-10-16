@@ -16,7 +16,7 @@
     "format:python:check": "npm run format:python-course:check && npm run format:engineering-foundations:check",
     "format:python-course:check": "cd projects/python && uv run ruff format --check .",
     "format:engineering-foundations:check": "cd projects/engineering-foundations && uv run ruff format --check .",
-    "lint": "npm run lint:markdown && npm run lint:html && npm run lint:python",
+    "lint": "npm run lint:markdown && npm run lint:html && npm run lint:python && npm run lint:scripts",
     "lint:markdown": "markdownlint-cli2",
     "lint:html": "html-validate \"projects/**/*.html\"",
     "lint:python": "npm run lint:python-course && npm run lint:engineering-foundations",
@@ -24,9 +24,13 @@
     "lint:engineering-foundations": "cd projects/engineering-foundations && uv run ruff check .",
     "lint:python:fix": "npm run lint:python-course:fix && npm run lint:engineering-foundations:fix",
     "lint:python-course:fix": "cd projects/python && uv run ruff check --fix .",
-    "lint:engineering-foundations:fix": "cd projects/engineering-foundations && uv run ruff check --fix ."
+    "lint:engineering-foundations:fix": "cd projects/engineering-foundations && uv run ruff check --fix .",
+    "lint:scripts": "eslint --config scripts/eslint.config.mjs scripts/cursor-helper/*.js scripts/eslint.config.mjs"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
     "html-validate": "11.6.2",
     "markdownlint-cli2": "0.23.2",
     "prettier": "3.9.5"

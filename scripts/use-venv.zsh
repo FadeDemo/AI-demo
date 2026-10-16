@@ -2,106 +2,254 @@
 # use-venv-managed-command
 
 set -eu
-typeset -gr VSCODE_VENV_SCRIPT_PATH="${0:A}"
+typeset -gr USE_VENV_SCRIPT_PATH="${0:A}"
+
+# Keep existing callers' environment overrides; explicitly set new names win.
+for use_venv_suffix in CURSOR_EXTENSION_DIRECTORY CURSOR_LOG_DIRECTORY EDITOR_STORAGE_DIRECTORY; do
+  use_venv_new_name="USE_VENV_$use_venv_suffix"
+  use_venv_old_name="VSCODE_VENV_$use_venv_suffix"
+  if ((!${+parameters[$use_venv_new_name]} && ${+parameters[$use_venv_old_name]})); then
+    export "$use_venv_new_name=${(P)use_venv_old_name}"
+  fi
+done
+unset use_venv_suffix use_venv_new_name use_venv_old_name
+
+export USE_VENV_STATE_DIRECTORY="${USE_VENV_STATE_DIRECTORY:-$HOME/Library/Application Support/use-venv/transactions}"
+
+runtime_state() {
+  python3 - "$1" "$USE_VENV_STATE_DIRECTORY" "${2:-}" <<'RUNTIME_STATE_PYTHON'
+import json
+import shutil
+import sys
+from pathlib import Path
+
+
+def prepare_root(path):
+    root = Path(path).expanduser()
+    if not root.is_absolute() or root.is_symlink():
+        raise RuntimeError(
+            "Runtime state directory must be an absolute non-symlink path"
+        )
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def migrate_tree(source, destination):
+    if source.is_symlink() or any(path.is_symlink() for path in source.rglob("*")):
+        raise RuntimeError(
+            f"Legacy backup contains symbolic links; retained at {source}"
+        )
+    if destination.exists():
+        raise RuntimeError(
+            f"Backup destination already exists; preserving both {source} and {destination}"
+        )
+    shutil.move(str(source), str(destination))
+    print(f"Migrated:    {source} -> {destination}")
+
+
+def migrate_legacy(workspace, root):
+    legacy = workspace / ".agent-tmp"
+    if legacy.is_symlink():
+        raise RuntimeError("Legacy transaction directory must not be a symlink")
+    if not legacy.is_dir():
+        return
+    api = legacy / "cursor-api-repair"
+    if api.exists():
+        if not all(
+            (api / name).is_file()
+            for name in ("state.json", "original.json", "applied.json")
+        ):
+            raise RuntimeError(f"Incomplete legacy API backup; retained at {api}")
+        json.loads((api / "state.json").read_text())
+        migrate_tree(api, root / api.name)
+    for package in sorted(legacy.glob("cursor-envs-transaction.*")):
+        if (
+            not (package / "backup.json").exists()
+            and not (package / "original.vsix").exists()
+        ):
+            continue
+        if (
+            not (package / "backup.json").is_file()
+            or not (package / "original.vsix").is_file()
+        ):
+            raise RuntimeError(
+                f"Incomplete legacy extension backup; retained at {package}"
+            )
+        json.loads((package / "backup.json").read_text())
+        migrate_tree(package, root / package.name)
+
+
+if __name__ == "__main__":
+    try:
+        root = prepare_root(sys.argv[2])
+        if sys.argv[1] == "prepare":
+            print(root)
+        elif sys.argv[1] == "migrate":
+            migrate_legacy(Path(sys.argv[3]), root)
+    except (OSError, ValueError, RuntimeError) as error:
+        print(f"use-venv: {error}", file=sys.stderr)
+        sys.exit(1)
+RUNTIME_STATE_PYTHON
+}
+
+prepare_runtime_state() {
+  USE_VENV_STATE_DIRECTORY="$(runtime_state prepare)" || fail "cannot prepare runtime state directory"
+  export USE_VENV_STATE_DIRECTORY
+}
 
 print_usage() {
   cat <<'EOF'
-Usage: use-venv [PROJECT_OR_VENV_PATH] [--workspace WORKSPACE_PATH] [--reload]
+Usage: use-venv [PROJECT_OR_VENV_PATH] [--workspace WORKSPACE_PATH]
+                [--editor vscode|cursor|both] [--repair-cursor-envs]
+                [--repair-cursor-api] [--reload]
+       use-venv PROJECT --editor cursor --rollback-cursor-api
        use-venv --install
        use-venv --uninstall
 
-Switch a VS Code workspace to an existing Python .venv, update workspace and
+Switch a VS Code or Cursor workspace to an existing Python .venv, update workspace and
 debug settings, let Python Environments discover it, and realign the
 extension's selected environment when it points elsewhere (macOS only).
 
 Arguments:
   PROJECT_OR_VENV_PATH  Project directory, .venv directory, or a directory
                         inside the project. Defaults to the current directory.
-  --workspace PATH      VS Code workspace root. By default, search upward for
+  --workspace PATH      Workspace root. By default, search upward for
                         .vscode/settings.json and then for .git.
+  --editor EDITOR       Select vscode (default), cursor, or both. Editors that
+                        are not running are reported as pending, not launched.
+  --repair-cursor-envs  Allow repairing Cursor's Python Environments package
+                        from a matching platform VSIX and reloading its
+                        window after replacement. Requires cursor/both.
+  --repair-cursor-api   Repair a missing terminalDataWriteEvent grant, restart
+                        Cursor, and verify activation in a new terminal. Run
+                        outside Cursor. May be combined with package repair.
+  --rollback-cursor-api Restore an unfinished API repair from its backup and
+                        restart Cursor. Requires --editor cursor.
   --install             Install or update a standalone ~/.local/bin/use-venv.
   --uninstall           Remove the managed ~/.local/bin/use-venv installation.
-  --reload              Also attempt a guarded VS Code window reload on macOS.
+  --reload              Also attempt a guarded target-editor reload on macOS.
                         A reload failure rolls back the file changes.
   --no-reload           Compatibility alias for the default no-reload behavior.
   -h, --help            Show this help.
 EOF
 }
 
+configure_editor() {
+  case "$1" in
+    vscode)
+      USE_VENV_EDITOR_LABEL="VS Code"
+      USE_VENV_EDITOR_APPLICATION="Visual Studio Code"
+      USE_VENV_EDITOR_PROCESS="Code"
+      USE_VENV_EDITOR_STORAGE_NAME="Code"
+      ;;
+    cursor)
+      USE_VENV_EDITOR_LABEL="Cursor"
+      USE_VENV_EDITOR_APPLICATION="Cursor"
+      USE_VENV_EDITOR_PROCESS="Cursor"
+      USE_VENV_EDITOR_STORAGE_NAME="Cursor"
+      ;;
+    *) fail "unknown editor: $1" ;;
+  esac
+}
+
+typeset -g USE_VENV_EDITOR_LABEL="VS Code"
+typeset -g USE_VENV_EDITOR_APPLICATION="Visual Studio Code"
+typeset -g USE_VENV_EDITOR_PROCESS="Code"
+typeset -g USE_VENV_EDITOR_STORAGE_NAME="Code"
+typeset -g USE_VENV_SELECTION_PENDING=false
+typeset -g USE_VENV_CURSOR_REPAIR_DIRECTORY=""
+typeset -g USE_VENV_CURSOR_REPAIR_COMMITTED=false
+typeset -g USE_VENV_CURSOR_RELOADED=false
+typeset -g USE_VENV_CURSOR_API_ACTIVE=false
+typeset -g USE_VENV_CURSOR_API_REQUIRED=false
+
 fail() {
   print -u2 "use-venv: $1"
   exit 1
 }
 
-typeset -g VSCODE_VENV_TRANSACTION_ACTIVE=false
-typeset -g VSCODE_VENV_TRANSACTION_APPLIED=false
-typeset -g VSCODE_VENV_TRANSACTION_DIRECTORY=""
-typeset -g VSCODE_VENV_TRANSACTION_SETTINGS_PATH=""
-typeset -g VSCODE_VENV_TRANSACTION_LAUNCH_PATH=""
-typeset -g VSCODE_VENV_TRANSACTION_SETTINGS_ORIGINAL_EXISTS=false
-typeset -g VSCODE_VENV_TRANSACTION_LAUNCH_ORIGINAL_EXISTS=false
-typeset -g VSCODE_VENV_TRANSACTION_SETTINGS_APPLIED_EXISTS=false
-typeset -g VSCODE_VENV_TRANSACTION_LAUNCH_APPLIED_EXISTS=false
+typeset -g USE_VENV_TRANSACTION_ACTIVE=false
+typeset -g USE_VENV_TRANSACTION_APPLIED=false
+typeset -g USE_VENV_TRANSACTION_DIRECTORY=""
+typeset -g USE_VENV_TRANSACTION_SETTINGS_PATH=""
+typeset -g USE_VENV_TRANSACTION_LAUNCH_PATH=""
+typeset -g USE_VENV_TRANSACTION_SETTINGS_ORIGINAL_EXISTS=false
+typeset -g USE_VENV_TRANSACTION_LAUNCH_ORIGINAL_EXISTS=false
+typeset -g USE_VENV_TRANSACTION_SETTINGS_APPLIED_EXISTS=false
+typeset -g USE_VENV_TRANSACTION_LAUNCH_APPLIED_EXISTS=false
 
 cleanup_file_transaction() {
-  local transaction_directory="$VSCODE_VENV_TRANSACTION_DIRECTORY"
+  local transaction_directory="$USE_VENV_TRANSACTION_DIRECTORY"
   [[ -n "$transaction_directory" ]] || return 0
 
   rm -f \
     "$transaction_directory/settings.original" \
     "$transaction_directory/settings.applied" \
     "$transaction_directory/launch.original" \
-    "$transaction_directory/launch.applied"
+    "$transaction_directory/launch.applied" \
+    "$transaction_directory/state.json"
   rmdir "$transaction_directory"
-  VSCODE_VENV_TRANSACTION_DIRECTORY=""
+  USE_VENV_TRANSACTION_DIRECTORY=""
 }
 
 begin_file_transaction() {
-  local temporary_root="${TMPDIR:-/tmp}"
-  local settings_path="$VSCODE_VENV_WORKSPACE_DIRECTORY/.vscode/settings.json"
-  local launch_path="$VSCODE_VENV_WORKSPACE_DIRECTORY/.vscode/launch.json"
+  prepare_runtime_state
+  local temporary_root="$USE_VENV_STATE_DIRECTORY"
+  local settings_path="$USE_VENV_WORKSPACE_DIRECTORY/.vscode/settings.json"
+  local launch_path="$USE_VENV_WORKSPACE_DIRECTORY/.vscode/launch.json"
 
-  VSCODE_VENV_TRANSACTION_DIRECTORY="$(
-    mktemp -d "$temporary_root/use-venv.XXXXXXXX"
+  USE_VENV_TRANSACTION_DIRECTORY="$(
+    mktemp -d "$temporary_root/workspace-config.XXXXXXXX"
   )" || fail "cannot create a transaction directory"
-  VSCODE_VENV_TRANSACTION_SETTINGS_PATH="$settings_path"
-  VSCODE_VENV_TRANSACTION_LAUNCH_PATH="$launch_path"
+  USE_VENV_TRANSACTION_SETTINGS_PATH="$settings_path"
+  USE_VENV_TRANSACTION_LAUNCH_PATH="$launch_path"
+  python3 - "$USE_VENV_TRANSACTION_DIRECTORY/state.json" "$USE_VENV_WORKSPACE_DIRECTORY" "$settings_path" "$launch_path" <<'CONFIG_TRANSACTION_PYTHON'
+import json
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {"workspace": sys.argv[2], "settings": sys.argv[3], "launch": sys.argv[4]}
+    )
+)
+CONFIG_TRANSACTION_PYTHON
 
   if [[ -f "$settings_path" ]]; then
     if ! cp -p \
       "$settings_path" \
-      "$VSCODE_VENV_TRANSACTION_DIRECTORY/settings.original"; then
+      "$USE_VENV_TRANSACTION_DIRECTORY/settings.original"; then
       cleanup_file_transaction
       fail "cannot back up $settings_path"
     fi
-    VSCODE_VENV_TRANSACTION_SETTINGS_ORIGINAL_EXISTS=true
+    USE_VENV_TRANSACTION_SETTINGS_ORIGINAL_EXISTS=true
   fi
   if [[ -f "$launch_path" ]]; then
     if ! cp -p \
       "$launch_path" \
-      "$VSCODE_VENV_TRANSACTION_DIRECTORY/launch.original"; then
+      "$USE_VENV_TRANSACTION_DIRECTORY/launch.original"; then
       cleanup_file_transaction
       fail "cannot back up $launch_path"
     fi
-    VSCODE_VENV_TRANSACTION_LAUNCH_ORIGINAL_EXISTS=true
+    USE_VENV_TRANSACTION_LAUNCH_ORIGINAL_EXISTS=true
   fi
 
-  VSCODE_VENV_TRANSACTION_ACTIVE=true
+  USE_VENV_TRANSACTION_ACTIVE=true
 }
 
 capture_applied_file_transaction() {
-  local settings_path="$VSCODE_VENV_TRANSACTION_SETTINGS_PATH"
-  local launch_path="$VSCODE_VENV_TRANSACTION_LAUNCH_PATH"
+  local settings_path="$USE_VENV_TRANSACTION_SETTINGS_PATH"
+  local launch_path="$USE_VENV_TRANSACTION_LAUNCH_PATH"
 
   if [[ -f "$settings_path" ]]; then
-    cp -p "$settings_path" "$VSCODE_VENV_TRANSACTION_DIRECTORY/settings.applied"
-    VSCODE_VENV_TRANSACTION_SETTINGS_APPLIED_EXISTS=true
+    cp -p "$settings_path" "$USE_VENV_TRANSACTION_DIRECTORY/settings.applied"
+    USE_VENV_TRANSACTION_SETTINGS_APPLIED_EXISTS=true
   fi
   if [[ -f "$launch_path" ]]; then
-    cp -p "$launch_path" "$VSCODE_VENV_TRANSACTION_DIRECTORY/launch.applied"
-    VSCODE_VENV_TRANSACTION_LAUNCH_APPLIED_EXISTS=true
+    cp -p "$launch_path" "$USE_VENV_TRANSACTION_DIRECTORY/launch.applied"
+    USE_VENV_TRANSACTION_LAUNCH_APPLIED_EXISTS=true
   fi
-  VSCODE_VENV_TRANSACTION_APPLIED=true
+  USE_VENV_TRANSACTION_APPLIED=true
 }
 
 restore_transaction_file() {
@@ -109,10 +257,10 @@ restore_transaction_file() {
   local target_path="$2"
   local original_exists="$3"
   local applied_exists="$4"
-  local original_path="$VSCODE_VENV_TRANSACTION_DIRECTORY/$label.original"
-  local applied_path="$VSCODE_VENV_TRANSACTION_DIRECTORY/$label.applied"
+  local original_path="$USE_VENV_TRANSACTION_DIRECTORY/$label.original"
+  local applied_path="$USE_VENV_TRANSACTION_DIRECTORY/$label.applied"
 
-  if [[ "$VSCODE_VENV_TRANSACTION_APPLIED" == true ]]; then
+  if [[ "$USE_VENV_TRANSACTION_APPLIED" == true ]]; then
     if [[ "$applied_exists" == true ]]; then
       if [[ ! -f "$target_path" ]] || ! cmp -s "$target_path" "$applied_path"; then
         print -u2 "use-venv: not rolling back $target_path because it changed after the script wrote it"
@@ -134,30 +282,30 @@ restore_transaction_file() {
 rollback_file_transaction() {
   local rollback_status=0
 
-  print -u2 "use-venv: rolling back VS Code configuration changes..."
+  print -u2 "use-venv: rolling back shared editor configuration changes..."
   restore_transaction_file \
     settings \
-    "$VSCODE_VENV_TRANSACTION_SETTINGS_PATH" \
-    "$VSCODE_VENV_TRANSACTION_SETTINGS_ORIGINAL_EXISTS" \
-    "$VSCODE_VENV_TRANSACTION_SETTINGS_APPLIED_EXISTS" || rollback_status=$?
+    "$USE_VENV_TRANSACTION_SETTINGS_PATH" \
+    "$USE_VENV_TRANSACTION_SETTINGS_ORIGINAL_EXISTS" \
+    "$USE_VENV_TRANSACTION_SETTINGS_APPLIED_EXISTS" || rollback_status=$?
   restore_transaction_file \
     launch \
-    "$VSCODE_VENV_TRANSACTION_LAUNCH_PATH" \
-    "$VSCODE_VENV_TRANSACTION_LAUNCH_ORIGINAL_EXISTS" \
-    "$VSCODE_VENV_TRANSACTION_LAUNCH_APPLIED_EXISTS" || rollback_status=$?
+    "$USE_VENV_TRANSACTION_LAUNCH_PATH" \
+    "$USE_VENV_TRANSACTION_LAUNCH_ORIGINAL_EXISTS" \
+    "$USE_VENV_TRANSACTION_LAUNCH_APPLIED_EXISTS" || rollback_status=$?
 
-  if (( rollback_status == 0 )); then
+  if ((rollback_status == 0)); then
     print -u2 "use-venv: rollback completed."
     cleanup_file_transaction
     return 0
   fi
 
-  print -u2 "use-venv: rollback was incomplete; backups remain at $VSCODE_VENV_TRANSACTION_DIRECTORY"
+  print -u2 "use-venv: rollback was incomplete; backups remain at $USE_VENV_TRANSACTION_DIRECTORY"
   return "$rollback_status"
 }
 
 commit_file_transaction() {
-  VSCODE_VENV_TRANSACTION_ACTIVE=false
+  USE_VENV_TRANSACTION_ACTIVE=false
   cleanup_file_transaction
 }
 
@@ -165,16 +313,594 @@ finish_file_transaction_on_exit() {
   local exit_status="$1"
   trap - EXIT
 
-  if [[ "$VSCODE_VENV_TRANSACTION_ACTIVE" == true ]]; then
+  if [[ "$USE_VENV_TRANSACTION_ACTIVE" == true ]]; then
     rollback_file_transaction || exit_status=1
+  fi
+  if ! finish_cursor_repair_transaction; then
+    exit_status=1
+  fi
+  if [[ "$USE_VENV_CURSOR_API_ACTIVE" == true && -d "$USE_VENV_STATE_DIRECTORY/cursor-api-repair" ]]; then
+    if ! run_cursor_automation rollback-cursor-api; then
+      print -u2 "use-venv: Cursor API rollback failed; backup remains in $USE_VENV_STATE_DIRECTORY/cursor-api-repair"
+      exit_status=1
+    fi
   fi
   exit "$exit_status"
 }
 
 trap 'finish_file_transaction_on_exit $?' EXIT
 
+ensure_cursor_environment_tools() {
+  [[ "$(uname -s)" == "Darwin" ]] || {
+    [[ "$repair_cursor_envs" == false ]] || fail "Cursor environment repair requires macOS"
+    return 0
+  }
+  local extension_directory="${USE_VENV_CURSOR_EXTENSION_DIRECTORY:-$HOME/.cursor/extensions}"
+  python3 - "$extension_directory" "$repair_cursor_envs" \
+    "$USE_VENV_WORKSPACE_DIRECTORY" "$USE_VENV_PROJECT_DIRECTORY" \
+    "$USE_VENV_DIRECTORY/bin/python" "${1:-ensure}" \
+    "$USE_VENV_CURSOR_REPAIR_DIRECTORY" <<'CURSOR_PYTHON'
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
+
+ENVS_ID = "ms-python.vscode-python-envs"
+PYTHON_ID = "ms-python.python"
+PET_RELATIVE_PATH = Path("python-env-tools/bin/pet")
+
+
+def run_command(command, timeout=30):
+    """Bound the command and clean up only its own process group."""
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+            if process.returncode:
+                raise RuntimeError(
+                    f"{Path(command[0]).name} failed: {stderr.strip() or stdout.strip()}"
+                )
+            return stdout
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            else:
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+                deadline = time.monotonic() + 1
+                while True:
+                    try:
+                        os.killpg(process.pid, 0)
+                    except ProcessLookupError:
+                        break
+                    if time.monotonic() >= deadline:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        break
+                    time.sleep(0.05)
+
+
+def installed_extensions(root):
+    records = json.loads((root / "extensions.json").read_text())
+    extensions = {}
+    for record in records:
+        identifier = record.get("identifier", {}).get("id", "").lower()
+        location = record.get("relativeLocation")
+        if location:
+            extensions[identifier] = root / location
+    return extensions
+
+
+def selected_pet(extensions):
+    # Match the extension's own lookup order. An existing but broken first
+    # candidate must be repaired rather than masked by the fallback.
+    for identifier in (ENVS_ID, PYTHON_ID):
+        directory = extensions.get(identifier)
+        if directory is not None:
+            executable = directory / PET_RELATIVE_PATH
+            if executable.is_file():
+                return executable
+    raise RuntimeError("Python Environments and Python contain no pet executable")
+
+
+def check_pet(extensions):
+    executable = selected_pet(extensions)
+    run_command([str(executable), "--version"], timeout=10)
+    return executable
+
+
+def verify_discovery(executable, project, interpreter):
+    output = run_command(
+        [
+            str(executable),
+            "find",
+            "--workspace",
+            "--json",
+            str(project),
+            "--environment-directories",
+            str(interpreter.parent.parent),
+        ]
+    )
+    environments = json.loads(output).get("environments", [])
+    if not any(
+        environment.get("executable") == str(interpreter)
+        and not environment.get("error")
+        for environment in environments
+    ):
+        raise RuntimeError(
+            f"pet did not discover the target interpreter: {interpreter}"
+        )
+
+
+def validate_vsix(path, version, target):
+    with zipfile.ZipFile(path) as archive:
+        manifest = json.loads(archive.read("extension/package.json"))
+        identity = ET.fromstring(archive.read("extension.vsixmanifest"))
+        identities = identity.findall(".//{*}Identity")
+        if (
+            manifest.get("publisher") != "ms-python"
+            or manifest.get("name") != "vscode-python-envs"
+            or manifest.get("version") != version
+            or len(identities) != 1
+            or identities[0].get("TargetPlatform") != target
+        ):
+            raise RuntimeError(
+                "VSIX publisher, extension, version, or platform does not match"
+            )
+        if archive.getinfo("extension/" + PET_RELATIVE_PATH.as_posix()).file_size == 0:
+            raise RuntimeError("VSIX contains an empty pet executable")
+
+
+def cached_vsix_candidates(version, target):
+    for editor in ("Cursor", "Code"):
+        yield (
+            Path.home()
+            / "Library/Application Support"
+            / editor
+            / "CachedExtensionVSIXs"
+            / f"{ENVS_ID}-{version}-{target}"
+        )
+
+
+def download_vsix(destination, version, target):
+    url = (
+        "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/"
+        f"ms-python/vsextensions/vscode-python-envs/{version}/vspackage"
+        f"?targetPlatform={target}"
+    )
+    print(f"Downloading: {url}", flush=True)
+    with (
+        urllib.request.urlopen(url, timeout=30) as response,
+        destination.open("wb") as output,
+    ):
+        shutil.copyfileobj(response, output)
+
+
+def cursor_cli():
+    for root in (Path("/Applications"), Path.home() / "Applications"):
+        executable = root / "Cursor.app/Contents/Resources/app/bin/cursor"
+        if executable.is_file():
+            return executable
+    raise RuntimeError(
+        "Cannot locate the Cursor CLI in /Applications or ~/Applications"
+    )
+
+
+def backup_package(directory, transaction, version, target, workspace=None):
+    """Keep a reinstallable copy until the entire switch has succeeded."""
+    manifest = json.loads((directory / "package.json").read_text())
+    original_target = manifest.get("__metadata", {}).get("targetPlatform", "universal")
+    with zipfile.ZipFile(
+        transaction / "original.vsix", "w", zipfile.ZIP_DEFLATED
+    ) as archive:
+        archive.write(directory / ".vsixmanifest", "extension.vsixmanifest")
+        for path in directory.rglob("*"):
+            if path.is_symlink():
+                raise RuntimeError(
+                    "Cannot back up an extension containing symbolic links"
+                )
+            if path.is_file():
+                archive.write(
+                    path, "extension/" + path.relative_to(directory).as_posix()
+                )
+    state = {
+        "version": version,
+        "original_target": original_target,
+        "repair_target": target,
+        "entry_sha256": hashlib.sha256(
+            (directory / "dist/extension.js").read_bytes()
+        ).hexdigest(),
+        "had_pet": (directory / PET_RELATIVE_PATH).is_file(),
+    }
+    if workspace is not None:
+        state["workspace"] = str(workspace)
+    (transaction / "backup.json").write_text(json.dumps(state))
+
+
+def restore_package(root, transaction):
+    state = json.loads((transaction / "backup.json").read_text())
+    current = installed_extensions(root).get(ENVS_ID)
+    if current is not None:
+        manifest = json.loads((current / "package.json").read_text())
+        target = manifest.get("__metadata", {}).get("targetPlatform", "universal")
+        if manifest.get("version") != state["version"] or target not in (
+            state["original_target"],
+            state["repair_target"],
+        ):
+            raise RuntimeError(
+                "Cursor extension changed concurrently; keeping the backup for manual recovery"
+            )
+    run_command(
+        [
+            str(cursor_cli()),
+            "--install-extension",
+            str(transaction / "original.vsix"),
+            "--force",
+            "--do-not-include-pack-dependencies",
+        ],
+        timeout=60,
+    )
+    restored = installed_extensions(root)[ENVS_ID]
+    manifest = json.loads((restored / "package.json").read_text())
+    if (
+        manifest.get("version") != state["version"]
+        or manifest.get("__metadata", {}).get("targetPlatform", "universal")
+        != state["original_target"]
+        or hashlib.sha256((restored / "dist/extension.js").read_bytes()).hexdigest()
+        != state["entry_sha256"]
+        or (restored / PET_RELATIVE_PATH).is_file() != state["had_pet"]
+    ):
+        raise RuntimeError("Cannot verify restoration of the original Cursor extension")
+    print("Restored:    original Cursor Python Environments package", flush=True)
+
+
+def repair_package(root, workspace, extensions, transaction=None):
+    directory = extensions.get(ENVS_ID)
+    if directory is None:
+        raise RuntimeError(
+            "Python Environments is not installed; install it in Cursor first"
+        )
+    manifest = json.loads((directory / "package.json").read_text())
+    version = manifest.get("version", "")
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
+        raise RuntimeError("Cannot determine the installed Python Environments version")
+    target = {"arm64": "darwin-arm64", "x86_64": "darwin-x64"}.get(platform.machine())
+    if target is None:
+        raise RuntimeError(
+            "Unsupported macOS architecture for Cursor environment repair"
+        )
+    cli = cursor_cli()
+    if transaction is None:
+        raise RuntimeError("Package repair requires a rollback transaction directory")
+    temporary_root = transaction.parent
+    if temporary_root.is_symlink() or transaction.is_symlink():
+        raise RuntimeError("The repair temporary directory must not be a symlink")
+    with tempfile.TemporaryDirectory(
+        prefix="cursor-envs-repair-", dir=temporary_root
+    ) as task:
+        package = Path(task) / "python-environments.vsix"
+        for candidate in cached_vsix_candidates(version, target):
+            if not candidate.is_file():
+                continue
+            try:
+                validate_vsix(candidate, version, target)
+            except (
+                RuntimeError,
+                ValueError,
+                KeyError,
+                zipfile.BadZipFile,
+                ET.ParseError,
+            ):
+                continue
+            shutil.copyfile(candidate, package)
+            print(f"Using verified cache: {candidate}", flush=True)
+            break
+        else:
+            download_vsix(package, version, target)
+        validate_vsix(package, version, target)
+        if transaction is None:
+            raise RuntimeError(
+                "Package repair requires a rollback transaction directory"
+            )
+        backup_package(directory, transaction, version, target, workspace)
+        print(f"Repairing: Cursor {ENVS_ID} {version} ({target})", flush=True)
+        run_command(
+            [
+                str(cli),
+                "--install-extension",
+                str(package),
+                "--force",
+                "--do-not-include-pack-dependencies",
+            ],
+            timeout=60,
+        )
+    return installed_extensions(root)
+
+
+def ensure_tools(root, workspace, project, interpreter, repair=False, transaction=None):
+    extensions = installed_extensions(root)
+    try:
+        executable = check_pet(extensions)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        if not repair:
+            raise RuntimeError(
+                f"Cursor environment discovery is unavailable: {error}"
+            ) from error
+        extensions = repair_package(root, workspace, extensions, transaction)
+        executable = check_pet(extensions)
+    verify_discovery(executable, project, interpreter)
+    print(f"Checked:     Cursor pet discovered {interpreter}", flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        transaction = Path(sys.argv[7]) if sys.argv[7] else None
+        if sys.argv[6] == "rollback":
+            restore_package(Path(sys.argv[1]), transaction)
+        else:
+            ensure_tools(
+                Path(sys.argv[1]),
+                Path(sys.argv[3]),
+                Path(sys.argv[4]),
+                Path(sys.argv[5]),
+                repair=sys.argv[2] == "true" and sys.argv[6] != "check",
+                transaction=transaction,
+            )
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        KeyError,
+        subprocess.TimeoutExpired,
+        zipfile.BadZipFile,
+        ET.ParseError,
+    ) as error:
+        print(f"use-venv: {error}", file=sys.stderr)
+        sys.exit(1)
+CURSOR_PYTHON
+}
+
+check_cursor_requirements() {
+  local tools_status=0 api_status=0
+  local tools_message="" api_message=""
+  local repair_blocked=false
+  if tools_message="$(ensure_cursor_environment_tools check 2>&1)"; then
+    print -r -- "$tools_message"
+  else
+    tools_status=$?
+    print -ru2 -- "$tools_message"
+  fi
+  if api_message="$(run_cursor_automation check-cursor-api 2>&1)"; then
+    USE_VENV_CURSOR_API_REQUIRED=false
+    print -r -- "$api_message"
+  else
+    api_status=$?
+    USE_VENV_CURSOR_API_REQUIRED=true
+    print -ru2 -- "$api_message"
+  fi
+  if [[ "${1:-}" == verify ]]; then
+    ((tools_status == 0 && api_status == 0))
+    return
+  fi
+  if ((tools_status != 0)); then
+    if [[ "$repair_cursor_envs" == true ]]; then
+      print -ru2 -- "use-venv: Cursor environment package repair is authorized; it has not started."
+    else
+      print -ru2 -- "use-venv: Rerun the same command with --repair-cursor-envs to allow environment package repair."
+      repair_blocked=true
+    fi
+  fi
+  if ((api_status != 0)); then
+    if [[ "$cursor_api_action" == repair-cursor-api ]]; then
+      print -ru2 -- "use-venv: Cursor API repair is authorized; it has not started."
+    else
+      print -ru2 -- "use-venv: Rerun the same command with --repair-cursor-api to allow API repair."
+      repair_blocked=true
+    fi
+  fi
+  if [[ "$repair_blocked" == true ]]; then
+    print -ru2 -- "use-venv: Stopped before repairs or shared editor configuration changes; authorize all required repairs before retrying."
+    return 1
+  fi
+  return 0
+}
+
+begin_cursor_repair_transaction() {
+  prepare_runtime_state
+  local temporary_root="$USE_VENV_STATE_DIRECTORY"
+  USE_VENV_CURSOR_REPAIR_DIRECTORY="$(mktemp -d "$temporary_root/cursor-envs-transaction.XXXXXXXX")"
+}
+
+cursor_reload_state() {
+  local log_directory="${USE_VENV_CURSOR_LOG_DIRECTORY:-$HOME/Library/Application Support/Cursor/logs}"
+  local before="${2:-}"
+  [[ -n "$before" ]] || before="{}"
+  python3 - "$log_directory" "$1" "$before" \
+    "$USE_VENV_WORKSPACE_DIRECTORY" "$USE_VENV_DIRECTORY/bin/python" \
+    "${3:-discovery}" <<'CURSOR_RELOAD_PYTHON'
+import json
+import re
+import sys
+import time
+from pathlib import Path
+
+
+def log_paths(root):
+    for pattern in (
+        "*/window*/exthost/exthost.log",
+        "*/window*/exthost/ms-python.vscode-python-envs/Python Environments.log",
+    ):
+        yield from root.glob(pattern)
+
+
+def snapshot(root):
+    return {
+        str(path): [path.stat().st_ino, path.stat().st_size] for path in log_paths(root)
+    }
+
+
+def fresh_text(path, before):
+    try:
+        status = path.stat()
+        inode, offset = before.get(str(path), [None, 0])
+        if inode != status.st_ino or status.st_size < offset:
+            offset = 0
+        with path.open("rb") as source:
+            source.seek(offset)
+            return source.read().decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return ""
+
+
+def reload_ready(root, before, workspace, interpreter, discovery=True):
+    for path in root.glob(
+        "*/window*/exthost/ms-python.vscode-python-envs/Python Environments.log"
+    ):
+        text = fresh_text(path, before)
+        configured = False
+        for line in text.splitlines():
+            if "configure: Sending configuration update:" not in line:
+                continue
+            try:
+                config = json.loads(line[line.index("{") :])
+                if isinstance(config, dict):
+                    configured |= str(workspace) in config.get(
+                        "workspaceDirectories", []
+                    )
+            except (ValueError, TypeError):
+                continue
+        if not configured:
+            continue
+        host = fresh_text(path.parents[1] / "exthost.log", before)
+        # Require a new host, not just an older host's live configuration update.
+        starts = list(re.finditer(r"Extension host with pid \d+ started", host))
+        if not starts:
+            continue
+        if (
+            "Extension activated success: ms-python.vscode-python-envs"
+            not in host[starts[0].start() :]
+        ):
+            continue
+        if not discovery or (
+            "Environment discovery complete:" in text
+            and f"Discovered env: {interpreter}\n" in text + "\n"
+        ):
+            return True
+    return False
+
+
+def wait_for_reload(root, before, workspace, interpreter, discovery=True, timeout=30):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if reload_ready(root, before, workspace, interpreter, discovery):
+            return
+        time.sleep(0.25)
+    stage = "target environment discovery" if discovery else "extension activation"
+    raise RuntimeError(f"Cursor reload did not finish {stage} within {timeout} seconds")
+
+
+if __name__ == "__main__":
+    try:
+        root = Path(sys.argv[1])
+        if sys.argv[2] == "snapshot":
+            print(json.dumps(snapshot(root)))
+        else:
+            wait_for_reload(
+                root,
+                json.loads(sys.argv[3]),
+                Path(sys.argv[4]),
+                sys.argv[5],
+                discovery=sys.argv[6] == "discovery",
+            )
+    except (OSError, ValueError, RuntimeError) as error:
+        print(f"use-venv: {error}", file=sys.stderr)
+        sys.exit(1)
+CURSOR_RELOAD_PYTHON
+}
+
+reload_cursor_after_package_change() {
+  local readiness="${1:-discovery}"
+  configure_editor cursor
+  local editor_state=0
+  editor_process_state || editor_state=$?
+  case "$editor_state" in
+    0) ;;
+    1) return 0 ;; # A closed Cursor will load the package when next opened.
+    *)
+      print -u2 "use-venv: cannot determine whether Cursor is running after replacing its extension"
+      return 1
+      ;;
+  esac
+  local before
+  if ! before="$(
+    cursor_reload_state snapshot
+    exit $?
+  )"; then
+    print -u2 "use-venv: cannot snapshot Cursor startup logs"
+    return 1
+  fi
+  reload_editor || return 1
+  print "Waiting:     Cursor extension startup and $readiness..."
+  if ! cursor_reload_state wait "$before" "$readiness"; then
+    print -u2 "use-venv: Cursor was not ready after reloading its window"
+    return 1
+  fi
+  USE_VENV_CURSOR_RELOADED=true
+}
+
+finish_cursor_repair_transaction() {
+  local task_directory="$USE_VENV_CURSOR_REPAIR_DIRECTORY"
+  [[ -n "$task_directory" ]] || return 0
+  if [[ "$USE_VENV_CURSOR_REPAIR_COMMITTED" != true && -f "$task_directory/backup.json" ]]; then
+    print -u2 "use-venv: restoring the original Cursor extension package..."
+    if ! ensure_cursor_environment_tools rollback; then
+      print -u2 "use-venv: extension rollback failed; backup remains at $task_directory"
+      return 1
+    fi
+    # A closed Cursor loads the restored package on its next launch.
+    local editor_state=0
+    configure_editor cursor
+    editor_process_state || editor_state=$?
+    if ((editor_state == 0)); then
+      if ! reload_cursor_after_package_change activation; then
+        print -u2 "use-venv: original package restored on disk, but runtime synchronization failed; backup remains at $task_directory"
+        return 1
+      fi
+    elif ((editor_state != 1)); then
+      print -u2 "use-venv: cannot verify Cursor runtime after rollback; backup remains at $task_directory"
+      return 1
+    fi
+  fi
+  # Only the files created by this invocation are eligible for cleanup.
+  local temporary_root="$USE_VENV_STATE_DIRECTORY"
+  [[ ! -L "$temporary_root" && ! -L "$task_directory" && "${task_directory:A:h}" == "${temporary_root:A}" ]] || return 1
+  rm -f "$task_directory/original.vsix" "$task_directory/backup.json"
+  rmdir "$task_directory" || return 1
+  USE_VENV_CURSOR_REPAIR_DIRECTORY=""
+}
+
 install_command() {
-  local script_path="$VSCODE_VENV_SCRIPT_PATH"
+  local script_path="$USE_VENV_SCRIPT_PATH"
   local install_directory="$HOME/.local/bin"
   local command_path="$install_directory/use-venv"
   local installed_marker=""
@@ -226,7 +952,7 @@ uninstall_command() {
   fi
 
   if [[ -L "$command_path" ]]; then
-    if [[ "${command_path:A}" != "$VSCODE_VENV_SCRIPT_PATH" ]]; then
+    if [[ "${command_path:A}" != "$USE_VENV_SCRIPT_PATH" ]]; then
       fail "$command_path links to another file and will not be removed"
     fi
   elif [[ -f "$command_path" ]]; then
@@ -252,19 +978,19 @@ find_project_and_venv() {
   local requested_directory="$1"
   local search_directory
 
-  search_directory="$(absolute_directory "$requested_directory")" || \
+  search_directory="$(absolute_directory "$requested_directory")" ||
     fail "directory does not exist: $requested_directory"
 
   if [[ -x "$search_directory/bin/python" && -f "$search_directory/bin/activate" ]]; then
-    VSCODE_VENV_DIRECTORY="$search_directory"
-    VSCODE_VENV_PROJECT_DIRECTORY="${search_directory:h}"
+    USE_VENV_DIRECTORY="$search_directory"
+    USE_VENV_PROJECT_DIRECTORY="${search_directory:h}"
     return
   fi
 
   while [[ "$search_directory" != "/" ]]; do
     if [[ -x "$search_directory/.venv/bin/python" ]]; then
-      VSCODE_VENV_PROJECT_DIRECTORY="$search_directory"
-      VSCODE_VENV_DIRECTORY="$search_directory/.venv"
+      USE_VENV_PROJECT_DIRECTORY="$search_directory"
+      USE_VENV_DIRECTORY="$search_directory/.venv"
       return
     fi
     search_directory="${search_directory:h}"
@@ -275,18 +1001,18 @@ find_project_and_venv() {
 
 find_workspace() {
   local requested_workspace="$1"
-  local search_directory="$VSCODE_VENV_PROJECT_DIRECTORY"
+  local search_directory="$USE_VENV_PROJECT_DIRECTORY"
   local git_workspace=""
 
   if [[ -n "$requested_workspace" ]]; then
-    VSCODE_VENV_WORKSPACE_DIRECTORY="$(absolute_directory "$requested_workspace")" || \
+    USE_VENV_WORKSPACE_DIRECTORY="$(absolute_directory "$requested_workspace")" ||
       fail "workspace directory does not exist: $requested_workspace"
     return
   fi
 
   while [[ "$search_directory" != "/" ]]; do
     if [[ -f "$search_directory/.vscode/settings.json" ]]; then
-      VSCODE_VENV_WORKSPACE_DIRECTORY="$search_directory"
+      USE_VENV_WORKSPACE_DIRECTORY="$search_directory"
       return
     fi
     if [[ -z "$git_workspace" && -d "$search_directory/.git" ]]; then
@@ -295,11 +1021,11 @@ find_workspace() {
     search_directory="${search_directory:h}"
   done
 
-  VSCODE_VENV_WORKSPACE_DIRECTORY="${git_workspace:-$VSCODE_VENV_PROJECT_DIRECTORY}"
+  USE_VENV_WORKSPACE_DIRECTORY="${git_workspace:-$USE_VENV_PROJECT_DIRECTORY}"
 }
 
 update_vscode_settings() {
-  local settings_directory="$VSCODE_VENV_WORKSPACE_DIRECTORY/.vscode"
+  local settings_directory="$USE_VENV_WORKSPACE_DIRECTORY/.vscode"
   local settings_path="$settings_directory/settings.json"
   local launch_path="$settings_directory/launch.json"
 
@@ -307,16 +1033,17 @@ update_vscode_settings() {
 
   python3 - \
     "$settings_path" \
-    "$VSCODE_VENV_WORKSPACE_DIRECTORY" \
-    "$VSCODE_VENV_PROJECT_DIRECTORY" \
-    "$VSCODE_VENV_DIRECTORY" \
+    "$USE_VENV_WORKSPACE_DIRECTORY" \
+    "$USE_VENV_PROJECT_DIRECTORY" \
+    "$USE_VENV_DIRECTORY" \
     "$launch_path" <<'PYTHON'
+from __future__ import annotations
+
 import json
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 
 def remove_jsonc_comments(source: str) -> str:
@@ -637,7 +1364,7 @@ def file_matches(path: Path, pattern: str) -> bool:
     return re.search(pattern, source, flags=re.MULTILINE) is not None
 
 
-def detect_test_framework(project: Path) -> Optional[str]:
+def detect_test_framework(project: Path) -> str | None:
     if (project / "pytest.ini").is_file() or (project / "conftest.py").is_file():
         return "pytest"
 
@@ -725,6 +1452,7 @@ updates = {
     "python.terminal.activateEnvironment": True,
     "terminal.integrated.cwd": project_setting,
     "python.analysis.extraPaths": [source_setting],
+    "cursorpyright.analysis.extraPaths": [source_setting],
     "pylint.interpreter": [interpreter_setting],
     "autopep8.interpreter": [interpreter_setting],
     "isort.interpreter": [interpreter_setting],
@@ -868,18 +1596,17 @@ PYTHON
 
   print "Updated:     $settings_path"
   [[ ! -f "$launch_path" ]] || print "Updated:     $launch_path"
-  print "Workspace:   $VSCODE_VENV_WORKSPACE_DIRECTORY"
-  print "Project:     $VSCODE_VENV_PROJECT_DIRECTORY"
-  print "Interpreter: $VSCODE_VENV_DIRECTORY/bin/python"
-  "$VSCODE_VENV_DIRECTORY/bin/python" --version
+  print "Workspace:   $USE_VENV_WORKSPACE_DIRECTORY"
+  print "Project:     $USE_VENV_PROJECT_DIRECTORY"
+  print "Interpreter: $USE_VENV_DIRECTORY/bin/python"
+  "$USE_VENV_DIRECTORY/bin/python" --version
 }
 
-# Reads the environment the Python Environments extension currently selects for
-# this workspace from its private workspace storage. Read-only: this step never
-# writes extension state; if the extension later changes its storage format,
-# the lookup simply returns nothing and the realignment step is skipped.
-vscode_workspace_selected_venv() {
-  python3 - "$VSCODE_VENV_WORKSPACE_DIRECTORY" <<'PYTHON'
+# Reads selection state without writing either extension's private storage.
+# Python Environments is preferred; older Python extensions use a separate key.
+editor_workspace_selected_venv() {
+  local storage_directory="${USE_VENV_EDITOR_STORAGE_DIRECTORY:-$HOME/Library/Application Support/$USE_VENV_EDITOR_STORAGE_NAME/User/workspaceStorage}"
+  python3 - "$USE_VENV_WORKSPACE_DIRECTORY" "$storage_directory" <<'PYTHON'
 import json
 import os
 import sqlite3
@@ -888,14 +1615,7 @@ import urllib.parse
 
 workspace = sys.argv[1]
 folder_uri = "file://" + urllib.parse.quote(workspace)
-storage_base = os.path.join(
-    os.path.expanduser("~"),
-    "Library",
-    "Application Support",
-    "Code",
-    "User",
-    "workspaceStorage",
-)
+storage_base = sys.argv[2]
 if not os.path.isdir(storage_base):
     sys.exit(0)
 
@@ -916,27 +1636,43 @@ for entry_name in os.listdir(storage_base):
     if not os.path.isfile(database_path):
         sys.exit(0)
     try:
-        connection = sqlite3.connect(
-            "file:" + database_path + "?mode=ro", uri=True
-        )
+        connection = sqlite3.connect("file:" + database_path + "?mode=ro", uri=True)
         try:
-            row = connection.execute(
-                "SELECT value FROM ItemTable WHERE key = ?",
-                ("ms-python.vscode-python-envs",),
-            ).fetchone()
+            rows = dict(
+                connection.execute(
+                    "SELECT key, value FROM ItemTable WHERE key IN (?, ?)",
+                    ("ms-python.vscode-python-envs", "ms-python.python"),
+                ).fetchall()
+            )
         finally:
             connection.close()
-        if row is None:
-            sys.exit(0)
-        payload = json.loads(row[0])
+        payload = json.loads(rows.get("ms-python.vscode-python-envs", "{}"))
         selected = payload.get(
             "ms-python.vscode-python-envs:venv:WORKSPACE_SELECTED", {}
         )
-        if not isinstance(selected, dict):
-            sys.exit(0)
-        stored = selected.get(workspace)
+        stored = selected.get(workspace) if isinstance(selected, dict) else None
         if isinstance(stored, str) and stored:
             print(stored)
+            sys.exit(0)
+
+        payload = json.loads(rows.get("ms-python.python", "{}"))
+        selected = payload.get("userSelectedEnvPath", {})
+        if isinstance(selected, str):
+            selected = json.loads(selected)
+        stored = selected.get(folder_uri) if isinstance(selected, dict) else None
+        if isinstance(stored, str) and stored:
+            print(stored)
+            sys.exit(0)
+        for key in (
+            "lastKnownActiveInterpreter:" + workspace,
+            "autoSelectedWorkspacePythonInterpreter-" + workspace,
+        ):
+            interpreter = payload.get(key, {})
+            if isinstance(interpreter, dict):
+                stored = interpreter.get("path")
+                if isinstance(stored, str) and stored:
+                    print(stored)
+                    sys.exit(0)
     except (sqlite3.Error, ValueError):
         sys.exit(0)
     sys.exit(0)
@@ -950,7 +1686,7 @@ workspace_environment_is_target() {
   local attempt
   local stored_interpreter=""
   for attempt in 1 2 3; do
-    stored_interpreter="$(vscode_workspace_selected_venv)" || return 1
+    stored_interpreter="$(editor_workspace_selected_venv)" || return 1
     if [[ "$stored_interpreter" == "$target_interpreter" ]]; then
       return 0
     fi
@@ -959,24 +1695,79 @@ workspace_environment_is_target() {
   return 1
 }
 
-# Reports whether VS Code is running without conflating a missing process with
-# a process-inspection failure. Return 0 when either edition is running, 1 when
-# both are absent, and 2 when pgrep cannot determine the state reliably.
-vscode_process_state() {
-  local code_status=0
-  local insiders_status=0
+# Read bundle IDs from installed applications, then query running applications.
+# Return 1 only for a successful query with no matching running application;
+# return 2 when the query itself fails. This does not launch either editor.
+editor_process_state() {
+  local running_application=""
+  running_application="$(
+    osascript -l JavaScript - "$USE_VENV_EDITOR_APPLICATION" <<'JAVASCRIPT'
+ObjC.import("AppKit");
 
-  pgrep -x "Code" >/dev/null 2>&1 || code_status=$?
-  if (( code_status == 0 )); then
+function bundleIdentifier(path) {
+  const bundle = $.NSBundle.bundleWithPath($(path));
+  const identifier = bundle && ObjC.unwrap(bundle.objectForInfoDictionaryKey("CFBundleIdentifier"));
+  if (typeof identifier !== "string" || !identifier.trim()) {
+    throw new Error("Cannot read CFBundleIdentifier from " + path);
+  }
+  return identifier;
+}
+
+function run(argv) {
+  const primary = argv[0];
+  const candidates = [primary];
+  if (primary === "Visual Studio Code") {
+    candidates.push("Visual Studio Code - Insiders");
+  }
+  const applications = $.NSWorkspace.sharedWorkspace.runningApplications;
+  if (!applications) {
+    throw new Error("Cannot query running macOS applications");
+  }
+  let installed = false;
+  const home = ObjC.unwrap($.NSHomeDirectory());
+  for (const candidate of candidates) {
+    const paths = [];
+    // Prefer the actual running bundle, including apps installed elsewhere.
+    for (let index = 0; index < applications.count; index++) {
+      const application = applications.objectAtIndex(index);
+      const url = application.bundleURL;
+      if (url && ObjC.unwrap(url.lastPathComponent) === candidate + ".app") {
+        paths.push(ObjC.unwrap(url.path));
+      }
+    }
+    paths.push("/Applications/" + candidate + ".app");
+    paths.push(home + "/Applications/" + candidate + ".app");
+    for (const path of paths) {
+      if (!$.NSFileManager.defaultManager.fileExistsAtPath($(path))) {
+        continue;
+      }
+      installed = true;
+      const identifier = bundleIdentifier(path);
+      for (let index = 0; index < applications.count; index++) {
+        const application = applications.objectAtIndex(index);
+        if (ObjC.unwrap(application.bundleIdentifier) === identifier) {
+          return candidate;
+        }
+      }
+    }
+  }
+  if (!installed) {
+    throw new Error("Cannot locate installed application: " + primary);
+  }
+  return "";
+}
+JAVASCRIPT
+  )" || return 2
+
+  if [[ "$running_application" == "$USE_VENV_EDITOR_APPLICATION" ]]; then
     return 0
-  fi
-
-  pgrep -x "Code - Insiders" >/dev/null 2>&1 || insiders_status=$?
-  if (( insiders_status == 0 )); then
+  elif [[ "$USE_VENV_EDITOR_APPLICATION" == "Visual Studio Code" &&
+    "$running_application" == "Visual Studio Code - Insiders" ]]; then
+    USE_VENV_EDITOR_APPLICATION="Visual Studio Code - Insiders"
+    USE_VENV_EDITOR_PROCESS="Code - Insiders"
+    USE_VENV_EDITOR_STORAGE_NAME="Code - Insiders"
     return 0
-  fi
-
-  if (( code_status == 1 && insiders_status == 1 )); then
+  elif [[ -z "$running_application" ]]; then
     return 1
   fi
   return 2
@@ -986,12 +1777,12 @@ vscode_process_state() {
 # it as the environment label. The project directory name can differ (for
 # example, a generic scripts/ directory), so it is not a reliable first filter.
 vscode_environment_filter_text() {
-  local pyproject_path="$VSCODE_VENV_PROJECT_DIRECTORY/pyproject.toml"
+  local pyproject_path="$USE_VENV_PROJECT_DIRECTORY/pyproject.toml"
   local project_name=""
 
   if [[ -f "$pyproject_path" ]]; then
     project_name="$(
-      "$VSCODE_VENV_DIRECTORY/bin/python" - "$pyproject_path" <<'PYTHON'
+      "$USE_VENV_DIRECTORY/bin/python" - "$pyproject_path" <<'PYTHON'
 import re
 import sys
 from pathlib import Path
@@ -1014,9 +1805,7 @@ else:
     name = None
 
 if not isinstance(name, str) or not name:
-    project_section = re.search(
-        r"(?ms)^\[project\]\s*$\n(.*?)(?=^\[|\Z)", source
-    )
+    project_section = re.search(r"(?ms)^\[project\]\s*$\n(.*?)(?=^\[|\Z)", source)
     name_match = (
         re.search(r"(?m)^\s*name\s*=\s*['\"]([^'\"]+)['\"]", project_section.group(1))
         if project_section
@@ -1030,45 +1819,51 @@ PYTHON
     )" || project_name=""
   fi
 
-  print -r -- "${project_name:-${VSCODE_VENV_PROJECT_DIRECTORY:t}}"
+  print -r -- "${project_name:-${USE_VENV_PROJECT_DIRECTORY:t}}"
 }
 
-# Drives the extension's official "Python: Select Interpreter" command through
-# the same guarded UI automation used for --reload, so the realignment does not
-# depend on the extension's private storage format. Selection is verified by
-# read-back afterwards; a mismatch fails the whole run and rolls back.
+# Cursor uses the local helper and Python Environments API. VS Code retains
+# its existing guarded picker workflow. Both paths verify the selected path.
 ensure_workspace_environment() {
-  [[ "$(uname -s)" == "Darwin" ]] || return 0
-  command -v osascript >/dev/null || return 0
-
-  local target_interpreter="$VSCODE_VENV_DIRECTORY/bin/python"
-  local stored_interpreter=""
-  stored_interpreter="$(vscode_workspace_selected_venv)" || return 0
-  [[ -n "$stored_interpreter" ]] || return 0
-  # Compare the stored venv path exactly: different venvs created by the same
-  # uv Python version resolve through symlinks to the same interpreter binary,
-  # so canonicalizing (:A) would falsely treat any two such venvs as equal.
-  if [[ "$stored_interpreter" == "$target_interpreter" ]]; then
-    return 0
+  local target_interpreter="$USE_VENV_DIRECTORY/bin/python"
+  if [[ "$(uname -s)" != "Darwin" ]] || ! command -v osascript >/dev/null; then
+    USE_VENV_SELECTION_PENDING=true
+    print -u2 "Pending: $USE_VENV_EDITOR_LABEL interpreter selection requires macOS automation; select $target_interpreter manually."
+    return
   fi
 
-  local vscode_process_status=0
-  vscode_process_state || vscode_process_status=$?
-  case "$vscode_process_status" in
+  local editor_process_status=0
+  editor_process_state || editor_process_status=$?
+  case "$editor_process_status" in
     0) ;;
     1)
-      print -u2 "use-venv: VS Code is not running, so the Python Environments selection was not realigned; start VS Code and either run use-venv again or run the Python: Select Interpreter command."
+      USE_VENV_SELECTION_PENDING=true
+      print -u2 "Pending: $USE_VENV_EDITOR_LABEL is not running; shared settings were updated, but its interpreter selection was not synchronized. Open the target workspace and rerun use-venv with --editor, or select $target_interpreter manually."
       return 0
       ;;
     *)
-      fail "cannot determine whether VS Code is running because process inspection failed; run use-venv from an environment with process-inspection access"
+      fail "cannot determine whether $USE_VENV_EDITOR_LABEL is running because the macOS application query failed; interpreter selection was not attempted"
       ;;
   esac
 
-  print "Selecting:   $target_interpreter in VS Code..."
-  select_vscode_environment
+  if [[ "$USE_VENV_EDITOR_PROCESS" == "Cursor" ]]; then
+    run_cursor_automation select-environment || fail "Cursor API interpreter selection failed"
+    return
+  fi
+
+  local stored_interpreter=""
+  stored_interpreter="$(editor_workspace_selected_venv)" || true
+  # Different uv virtual environments can share the same resolved executable.
+  # Compare environment paths exactly, without resolving interpreter symlinks.
+  if [[ "$stored_interpreter" == "$target_interpreter" ]]; then
+    print "Selected:    $target_interpreter in $USE_VENV_EDITOR_LABEL (already aligned)"
+    return
+  fi
+
+  print "Selecting:   $target_interpreter in $USE_VENV_EDITOR_LABEL..."
+  select_editor_environment
   if workspace_environment_is_target "$target_interpreter"; then
-    print "Selected:    $target_interpreter"
+    print "Selected:    $target_interpreter in $USE_VENV_EDITOR_LABEL"
     return
   fi
 
@@ -1076,14 +1871,14 @@ ensure_workspace_environment() {
   # select again inside the now-open environment picker.
   finish_environment_selection
   if ! workspace_environment_is_target "$target_interpreter"; then
-    fail "Python Environments still selects ${stored_interpreter}; select $target_interpreter manually and run use-venv again"
+    fail "could not verify $USE_VENV_EDITOR_LABEL interpreter selection; select $target_interpreter manually and run use-venv again"
   fi
-  print "Selected:    $target_interpreter"
+  print "Selected:    $target_interpreter in $USE_VENV_EDITOR_LABEL"
 }
 
-select_vscode_environment() {
+select_editor_environment() {
   local environment_filter_text="$(vscode_environment_filter_text)"
-  local project_filter_text="${VSCODE_VENV_PROJECT_DIRECTORY:t}"
+  local project_filter_text="${USE_VENV_PROJECT_DIRECTORY:t}"
   local -a filter_texts=("$environment_filter_text")
   if [[ "$project_filter_text" != "$environment_filter_text" ]]; then
     filter_texts+=("$project_filter_text")
@@ -1096,16 +1891,33 @@ select_vscode_environment() {
 
   run_environment_selection_automation() {
     local filter_text="$1"
-    osascript - "$filter_text" "${select_commands[@]}" <<'APPLESCRIPT'
+    osascript - "$USE_VENV_EDITOR_APPLICATION" "$USE_VENV_EDITOR_PROCESS" "${USE_VENV_WORKSPACE_DIRECTORY:t}" "$filter_text" "${select_commands[@]}" <<'APPLESCRIPT'
 on run argv
-    set filterText to item 1 of argv as text
+    set applicationName to item 1 of argv as text
+    set processName to item 2 of argv as text
+    set workspaceName to item 3 of argv as text
+    set filterText to item 4 of argv as text
     set previousClipboard to the clipboard
     try
-        tell application "Visual Studio Code" to activate
+        tell application applicationName to activate
         delay 0.3
 
         tell application "System Events"
-            tell process "Code"
+            tell process processName
+                if (count of windows) is 0 then error "Target editor has no workspace window"
+                if processName is "Cursor" then
+                    -- Cursor can expose an auxiliary AXDialog before its IDE window.
+                    set targetWindow to value of attribute "AXMainWindow"
+                    if name of targetWindow does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
+                    perform action "AXRaise" of targetWindow
+                else
+                    if name of front window does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
+                end if
+            end tell
+        end tell
+
+        tell application "System Events"
+            tell process processName
                 -- Locate the menu item by its Cmd-Shift-P shortcut attributes
                 -- so this does not depend on the localized menu label.
                 set commandPaletteItem to missing value
@@ -1117,7 +1929,7 @@ on run argv
                         end if
                     end try
                 end repeat
-                if commandPaletteItem is missing value then error "Cannot find the VS Code Command Palette menu item"
+                if commandPaletteItem is missing value then error "Cannot find the Editor Command Palette menu item"
 
                 click commandPaletteItem
                 delay 0.5
@@ -1136,7 +1948,8 @@ on run argv
                         exit repeat
                     end try
                 end repeat
-                if not commandListFound then error "VS Code Command Palette result list did not receive focus"
+                if processName is "Cursor" and not commandListFound then set commandListFound to my cursorQuickPickHasFocus(processName)
+                if not commandListFound then error "Editor Command Palette result list did not receive focus"
             end tell
 
             -- Run the interpreter selection command, trying each locale with a
@@ -1144,9 +1957,9 @@ on run argv
             -- current VS Code versions, so close and reopen the palette
             -- instead.
             set selectCommandFound to false
-            repeat with commandIndex from 2 to (count of argv)
+            repeat with commandIndex from 5 to (count of argv)
                 set commandText to item commandIndex of argv as text
-                tell process "Code"
+                tell process processName
                     set commandPaletteItem to missing value
                     repeat with candidateItem in menu items of menu "View" of menu bar 1
                         try
@@ -1156,7 +1969,7 @@ on run argv
                             end if
                         end try
                     end repeat
-                    if commandPaletteItem is missing value then error "Cannot find the VS Code Command Palette menu item"
+                    if commandPaletteItem is missing value then error "Cannot find the Editor Command Palette menu item"
                     click commandPaletteItem
                     delay 0.5
                     set currentElement to value of attribute "AXFocusedUIElement"
@@ -1172,14 +1985,15 @@ on run argv
                             exit repeat
                         end try
                     end repeat
-                    if not commandListFound then error "VS Code Command Palette result list did not receive focus"
+                    if processName is "Cursor" and not commandListFound then set commandListFound to my cursorQuickPickHasFocus(processName)
+                    if not commandListFound then error "Editor Command Palette result list did not receive focus"
                 end tell
 
                 set the clipboard to commandText
                 keystroke "v" using {command down}
                 delay 0.6
 
-                tell process "Code"
+                tell process processName
                     set focusedElement to value of attribute "AXFocusedUIElement"
                     try
                         set focusedValue to value of attribute "AXValue" of focusedElement as text
@@ -1197,14 +2011,14 @@ on run argv
                 delay 0.3
             end repeat
 
-            if not selectCommandFound then error "VS Code did not select a supported interpreter selection command"
+            if not selectCommandFound then error "Editor did not select a supported interpreter selection command"
 
             key code 36
             delay 0.6
 
             -- Type the environment filter and confirm the picker matched it.
             set pickerListFound to false
-            tell process "Code"
+            tell process processName
                 set currentElement to value of attribute "AXFocusedUIElement"
                 repeat 8 times
                     try
@@ -1218,13 +2032,14 @@ on run argv
                     end try
                 end repeat
             end tell
-            if not pickerListFound then error "VS Code environment picker did not receive focus"
+            if processName is "Cursor" and not pickerListFound then set pickerListFound to my cursorQuickPickHasFocus(processName)
+            if not pickerListFound then error "Editor environment picker did not receive focus"
 
             set the clipboard to filterText
             keystroke "v" using {command down}
             delay 0.6
 
-            tell process "Code"
+            tell process processName
                 set focusedElement to value of attribute "AXFocusedUIElement"
                 try
                     set focusedRole to value of attribute "AXRole" of focusedElement as text
@@ -1250,6 +2065,27 @@ on run argv
         error errorMessage number errorNumber
     end try
 end run
+
+
+-- Cursor can publish its Quick Pick focus after the initial menu delay.
+-- Keep the original immediate checks for VS Code and retry only for Cursor.
+on cursorQuickPickHasFocus(processName)
+    repeat 200 times
+        delay 0.1
+        tell application "System Events"
+            tell process processName
+                try
+                    set currentElement to value of attribute "AXFocusedUIElement"
+                    repeat 12 times
+                        if value of attribute "AXRole" of currentElement is "AXList" then return true
+                        set currentElement to value of attribute "AXParent" of currentElement
+                    end repeat
+                end try
+            end tell
+        end tell
+    end repeat
+    return false
+end cursorQuickPickHasFocus
 APPLESCRIPT
   }
 
@@ -1264,10 +2100,10 @@ APPLESCRIPT
     fi
   done
 
-  if [[ "$automation_error" != *"not allowed assistive access"* && \
-        "$automation_error" != *"不允许辅助访问"* && \
-        "$automation_error" != *"(-25211)"* ]]; then
-    fail "VS Code environment selection was not performed: $automation_error"
+  if [[ "$automation_error" != *"not allowed assistive access"* &&
+    "$automation_error" != *"不允许辅助访问"* &&
+    "$automation_error" != *"(-25211)"* ]]; then
+    fail "$USE_VENV_EDITOR_LABEL environment selection was not performed: $automation_error"
   fi
 
   if [[ ! -t 0 ]]; then
@@ -1276,11 +2112,11 @@ APPLESCRIPT
 
   print -u2 "macOS denied UI control. Opening Accessibility settings..."
   open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-  print -u2 "Enable Accessibility access for Visual Studio Code, then return here."
+  print -u2 "Enable Accessibility access for the calling terminal/editor, then return here."
   read "?Press Enter to retry the environment selection: "
 
-  run_environment_selection_automation "$filter_text" || \
-    fail "VS Code environment selection was still denied; verify Accessibility access and run use-venv again"
+  run_environment_selection_automation "$filter_text" ||
+    fail "$USE_VENV_EDITOR_LABEL environment selection was still denied; verify Accessibility access and run use-venv again"
 }
 
 # Second selection round for two-step pickers (project first, then
@@ -1290,17 +2126,34 @@ finish_environment_selection() {
   local filter_text="$(vscode_environment_filter_text)"
 
   run_environment_selection_finish() {
-    osascript - "$filter_text" <<'APPLESCRIPT'
+    osascript - "$USE_VENV_EDITOR_APPLICATION" "$USE_VENV_EDITOR_PROCESS" "${USE_VENV_WORKSPACE_DIRECTORY:t}" "$filter_text" <<'APPLESCRIPT'
 on run argv
-    set filterText to item 1 of argv as text
+    set applicationName to item 1 of argv as text
+    set processName to item 2 of argv as text
+    set workspaceName to item 3 of argv as text
+    set filterText to item 4 of argv as text
     set previousClipboard to the clipboard
     try
-        tell application "Visual Studio Code" to activate
+        tell application applicationName to activate
         delay 0.3
 
         tell application "System Events"
+            tell process processName
+                if (count of windows) is 0 then error "Target editor has no workspace window"
+                if processName is "Cursor" then
+                    -- Cursor can expose an auxiliary AXDialog before its IDE window.
+                    set targetWindow to value of attribute "AXMainWindow"
+                    if name of targetWindow does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
+                    perform action "AXRaise" of targetWindow
+                else
+                    if name of front window does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
+                end if
+            end tell
+        end tell
+
+        tell application "System Events"
             set pickerListFound to false
-            tell process "Code"
+            tell process processName
                 set currentElement to value of attribute "AXFocusedUIElement"
                 repeat 8 times
                     try
@@ -1314,13 +2167,14 @@ on run argv
                     end try
                 end repeat
             end tell
-            if not pickerListFound then error "VS Code environment picker is not open"
+            if processName is "Cursor" and not pickerListFound then set pickerListFound to my cursorQuickPickHasFocus(processName)
+            if not pickerListFound then error "Editor environment picker is not open"
 
             set the clipboard to filterText
             keystroke "v" using {command down}
             delay 0.6
 
-            tell process "Code"
+            tell process processName
                 set focusedElement to value of attribute "AXFocusedUIElement"
                 try
                     set focusedRole to value of attribute "AXRole" of focusedElement as text
@@ -1346,6 +2200,27 @@ on run argv
         error errorMessage number errorNumber
     end try
 end run
+
+
+-- Cursor can publish its Quick Pick focus after the initial menu delay.
+-- Keep the original immediate checks for VS Code and retry only for Cursor.
+on cursorQuickPickHasFocus(processName)
+    repeat 200 times
+        delay 0.1
+        tell application "System Events"
+            tell process processName
+                try
+                    set currentElement to value of attribute "AXFocusedUIElement"
+                    repeat 12 times
+                        if value of attribute "AXRole" of currentElement is "AXList" then return true
+                        set currentElement to value of attribute "AXParent" of currentElement
+                    end repeat
+                end try
+            end tell
+        end tell
+    end repeat
+    return false
+end cursorQuickPickHasFocus
 APPLESCRIPT
   }
 
@@ -1354,10 +2229,10 @@ APPLESCRIPT
     return
   fi
 
-  if [[ "$automation_error" != *"not allowed assistive access"* && \
-        "$automation_error" != *"不允许辅助访问"* && \
-        "$automation_error" != *"(-25211)"* ]]; then
-    fail "VS Code environment selection was not completed: $automation_error"
+  if [[ "$automation_error" != *"not allowed assistive access"* &&
+    "$automation_error" != *"不允许辅助访问"* &&
+    "$automation_error" != *"(-25211)"* ]]; then
+    fail "$USE_VENV_EDITOR_LABEL environment selection was not completed: $automation_error"
   fi
 
   if [[ ! -t 0 ]]; then
@@ -1366,17 +2241,28 @@ APPLESCRIPT
 
   print -u2 "macOS denied UI control. Opening Accessibility settings..."
   open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-  print -u2 "Enable Accessibility access for Visual Studio Code, then return here."
+  print -u2 "Enable Accessibility access for the calling terminal/editor, then return here."
   read "?Press Enter to retry the environment selection: "
 
-  run_environment_selection_finish || \
-    fail "VS Code environment selection was still denied; verify Accessibility access and run use-venv again"
+  run_environment_selection_finish ||
+    fail "$USE_VENV_EDITOR_LABEL environment selection was still denied; verify Accessibility access and run use-venv again"
 }
 
-reload_vscode() {
-  [[ "$(uname -s)" == "Darwin" ]] || \
-    fail "automatic VS Code reload is currently supported only on macOS"
-  command -v osascript >/dev/null || fail "osascript is required to reload VS Code"
+reload_editor() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    print -u2 "use-venv: automatic editor reload is currently supported only on macOS"
+    return 1
+  fi
+  if ! command -v osascript >/dev/null; then
+    print -u2 "use-venv: osascript is required to reload the editor"
+    return 1
+  fi
+
+  if [[ "$USE_VENV_EDITOR_PROCESS" == "Cursor" ]]; then
+    print "Reloading Cursor..."
+    run_cursor_automation reload-window
+    return $?
+  fi
 
   local -a reload_commands=(
     "Developer: Reload Window"
@@ -1384,15 +2270,25 @@ reload_vscode() {
   )
 
   run_vscode_reload_automation() {
-    osascript - "${reload_commands[@]}" <<'APPLESCRIPT'
+    osascript - "$USE_VENV_EDITOR_APPLICATION" "$USE_VENV_EDITOR_PROCESS" "${USE_VENV_WORKSPACE_DIRECTORY:t}" "${reload_commands[@]}" <<'APPLESCRIPT'
 on run argv
+    set applicationName to item 1 of argv as text
+    set processName to item 2 of argv as text
+    set workspaceName to item 3 of argv as text
     set previousClipboard to the clipboard
     try
-        tell application "Visual Studio Code" to activate
+        tell application applicationName to activate
         delay 0.3
 
         tell application "System Events"
-            tell process "Code"
+            tell process processName
+                if (count of windows) is 0 then error "Target editor has no workspace window"
+                if name of front window does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
+            end tell
+        end tell
+
+        tell application "System Events"
+            tell process processName
                 -- Locate the menu item by its Cmd-Shift-P shortcut attributes
                 -- so this does not depend on the localized menu label.
                 set commandPaletteItem to missing value
@@ -1404,7 +2300,7 @@ on run argv
                         end if
                     end try
                 end repeat
-                if commandPaletteItem is missing value then error "Cannot find the VS Code Command Palette menu item"
+                if commandPaletteItem is missing value then error "Cannot find the Editor Command Palette menu item"
 
                 click commandPaletteItem
                 delay 0.5
@@ -1424,17 +2320,17 @@ on run argv
                         exit repeat
                     end try
                 end repeat
-                if not commandListFound then error "VS Code Command Palette result list did not receive focus"
+                if not commandListFound then error "Editor Command Palette result list did not receive focus"
             end tell
 
             set reloadCommandFound to false
-            repeat with commandCandidate in argv
-                set commandText to commandCandidate as text
+            repeat with commandIndex from 4 to (count of argv)
+                set commandText to item commandIndex of argv as text
                 set the clipboard to commandText
                 keystroke "v" using {command down}
                 delay 0.5
 
-                tell process "Code"
+                tell process processName
                     set focusedElement to value of attribute "AXFocusedUIElement"
                     try
                         set focusedValue to value of attribute "AXValue" of focusedElement as text
@@ -1454,7 +2350,7 @@ on run argv
                 delay 0.2
             end repeat
 
-            if not reloadCommandFound then error "VS Code did not select a supported Reload Window command"
+            if not reloadCommandFound then error "Editor did not select a supported Reload Window command"
 
             set the clipboard to previousClipboard
             key code 36
@@ -1467,41 +2363,714 @@ on run argv
         error errorMessage number errorNumber
     end try
 end run
+
 APPLESCRIPT
   }
 
-  print "Reloading VS Code..."
+  print "Reloading $USE_VENV_EDITOR_LABEL..."
   local automation_error=""
-  if automation_error="$(run_vscode_reload_automation 2>&1)"; then
+  # zsh command substitutions in EXIT handlers need an explicit exit status.
+  if automation_error="$(
+    run_vscode_reload_automation 2>&1
+    exit $?
+  )"; then
     return
   fi
 
-  if [[ "$automation_error" != *"not allowed assistive access"* && \
-        "$automation_error" != *"不允许辅助访问"* && \
-        "$automation_error" != *"(-25211)"* ]]; then
-    fail "VS Code reload was not performed: $automation_error"
+  if [[ "$automation_error" != *"not allowed assistive access"* &&
+    "$automation_error" != *"不允许辅助访问"* &&
+    "$automation_error" != *"(-25211)"* ]]; then
+    print -u2 "use-venv: $USE_VENV_EDITOR_LABEL reload was not performed: $automation_error"
+    return 1
   fi
 
   if [[ ! -t 0 ]]; then
-    fail "macOS denied UI control; grant Accessibility access to the terminal application and run use-venv again"
+    print -u2 "use-venv: macOS denied UI control; grant Accessibility access to the terminal application and run use-venv again"
+    return 1
   fi
 
   print -u2 "macOS denied UI control. Opening Accessibility settings..."
   open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-  print -u2 "Enable Accessibility access for Visual Studio Code, then return here."
-  read "?Press Enter to retry the VS Code reload: "
+  print -u2 "Enable Accessibility access for the calling terminal/editor, then return here."
+  read "?Press Enter to retry the $USE_VENV_EDITOR_LABEL reload: "
 
-  run_vscode_reload_automation || \
-    fail "VS Code reload was still denied; verify Accessibility access and run use-venv again"
+  if ! run_vscode_reload_automation; then
+    print -u2 "use-venv: $USE_VENV_EDITOR_LABEL reload was still denied; verify Accessibility access and run use-venv again"
+    return 1
+  fi
+}
+
+run_cursor_automation() {
+  [[ "$(uname -s)" == "Darwin" ]] || fail "Cursor automation requires macOS"
+  python3 - "$1" "$USE_VENV_WORKSPACE_DIRECTORY" "$USE_VENV_DIRECTORY/bin/python" <<'CURSOR_API_PYTHON'
+import base64
+import io
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import types
+import zipfile
+from contextlib import contextmanager
+from pathlib import Path
+
+EXTENSION = "ms-python.vscode-python-envs"
+PROPOSAL = "terminalDataWriteEvent"
+
+
+# Generated by scripts/cursor-helper/build.py; edit the helper sources instead.
+HELPER_ARCHIVE_B64 = "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"
+HELPER_ARCHIVE = base64.b64decode(HELPER_ARCHIVE_B64)
+with zipfile.ZipFile(io.BytesIO(HELPER_ARCHIVE)) as helper_archive:
+    helper_manifest = json.loads(helper_archive.read("extension/package.json"))
+    helper_transport = types.ModuleType("use_venv_helper_transport")
+    exec(  # noqa: S102 -- bundled transport source, never external input
+        compile(helper_archive.read("client.py"), "use-venv-helper/client.py", "exec"),
+        helper_transport.__dict__,
+    )
+HELPER_REVISION = helper_manifest["useVenvRevision"]
+
+
+def helper_ready(app, workspace):
+    try:
+        return helper_transport.find(workspace, HELPER_REVISION)
+    except helper_transport.HelperUnavailable:
+        pass
+    extensions = Path(
+        os.environ.get(
+            "USE_VENV_CURSOR_EXTENSION_DIRECTORY",
+            str(Path.home() / ".cursor/extensions"),
+        )
+    )
+    installed = False
+    registry = extensions / "extensions.json"
+    if registry.exists():
+        for entry in json.loads(registry.read_text()):
+            if entry.get("identifier", {}).get("id") == "ai-demo-local.use-venv-helper":
+                manifest = extensions / entry["relativeLocation"] / "package.json"
+                installed = (
+                    json.loads(manifest.read_text()).get("useVenvRevision")
+                    == HELPER_REVISION
+                )
+    if installed:
+        return helper_transport.wait(workspace, HELPER_REVISION)
+    executable = Path(app["path"]) / "Contents/Resources/app/bin/cursor"
+    with tempfile.TemporaryDirectory(
+        prefix="helper-install-", dir=runtime_directory()
+    ) as folder:
+        package = Path(folder) / "use-venv-helper.vsix"
+        package.write_bytes(HELPER_ARCHIVE)
+        run(
+            [
+                str(executable),
+                "--extensions-dir",
+                str(extensions),
+                "--install-extension",
+                str(package),
+                "--force",
+            ],
+            timeout=60,
+            environment=editor_environment(),
+        )
+    try:
+        helper_transport.find(workspace)
+    except helper_transport.HelperUnavailable:
+        external_process(app["pid"])
+        print(
+            "Loading newly installed Cursor helper; restarting Cursor normally...",
+            flush=True,
+        )
+        restart(app, workspace)
+        return helper_transport.wait(workspace, HELPER_REVISION)
+    return helper_transport.reload(workspace, HELPER_REVISION)
+
+
+def runtime_directory():
+    root = Path(
+        os.environ.get(
+            "USE_VENV_STATE_DIRECTORY",
+            str(Path.home() / "Library/Application Support/use-venv/transactions"),
+        )
+    ).expanduser()
+    if not root.is_absolute() or root.is_symlink():
+        raise RuntimeError(
+            "Runtime state directory must be an absolute non-symlink path"
+        )
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return root.resolve()
+
+
+APP_QUERY = r"""
+ObjC.import("AppKit");
+function run() {
+  const apps = $.NSWorkspace.sharedWorkspace.runningApplications;
+  for (let i = 0; i < apps.count; i++) {
+    const app = apps.objectAtIndex(i);
+    if (app.bundleURL && ObjC.unwrap(app.bundleURL.lastPathComponent) === "Cursor.app") {
+      return JSON.stringify({path: ObjC.unwrap(app.bundleURL.path), pid: Number(app.processIdentifier)});
+    }
+  }
+  return "null";
+}
+"""
+
+
+def run(arguments, *, source=None, timeout=30, environment=None):
+    process = subprocess.Popen(
+        arguments,
+        stdin=subprocess.PIPE if source is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(source, timeout=timeout)
+        if process.returncode:
+            raise subprocess.CalledProcessError(
+                process.returncode, arguments, stdout, stderr
+            )
+        return stdout.strip()
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        else:
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                process.poll()
+                try:
+                    os.killpg(process.pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+
+
+def editor_environment():
+    environment = os.environ.copy()
+    # GUI launches should use the desktop's color policy, not an automation
+    # runner's NO_COLOR=1 / TERM=dumb output settings.
+    for key in (
+        "NO_COLOR",
+        "FORCE_COLOR",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+        "TERM",
+        "COLORTERM",
+    ):
+        result = subprocess.run(
+            ["launchctl", "getenv", key],
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.rstrip("\n"):
+            environment[key] = result.stdout.rstrip("\n")
+        elif result.returncode in (0, 1):
+            environment.pop(key, None)
+        else:
+            raise RuntimeError(f"Cannot read desktop environment variable {key}")
+    return environment
+
+
+def app_info():
+    return json.loads(run(["osascript", "-l", "JavaScript", "-"], source=APP_QUERY))
+
+
+def external_process(pid):
+    parent = os.getpid()
+    while parent > 1:
+        if parent == pid:
+            raise RuntimeError("Run this repair from a terminal outside Cursor")
+        parent = int(run(["ps", "-p", str(parent), "-o", "ppid="]))
+
+
+def process_table():
+    processes = {}
+    for line in run(
+        ["ps", "-axo", "pid=,ppid=,state=,lstart=,command="], timeout=5
+    ).splitlines():
+        fields = line.split(None, 8)
+        if len(fields) == 9:
+            processes[int(fields[0])] = {
+                "parent": int(fields[1]),
+                "state": fields[2],
+                "started": tuple(fields[3:8]),
+                "command": fields[8],
+            }
+    return processes
+
+
+def process_cwd(pid):
+    try:
+        output = run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], timeout=5)
+    except subprocess.CalledProcessError as error:
+        if error.returncode == 1:
+            return None  # The process may have exited during the snapshot.
+        raise
+    paths = [
+        Path(line[1:]).resolve() for line in output.splitlines() if line.startswith("n")
+    ]
+    return paths[0] if len(paths) == 1 else None
+
+
+def discovery_snapshot(app, project):
+    processes = process_table()
+    extension_root = Path(
+        os.environ.get(
+            "USE_VENV_CURSOR_EXTENSION_DIRECTORY",
+            str(Path.home() / ".cursor/extensions"),
+        )
+    ).resolve()
+    pattern = re.compile(
+        re.escape(str(extension_root))
+        + r"/ms-python\.python-[^/\n]+/python_files/unittestadapter/discovery\.py\s+--udiscovery(?:\s|$)"
+    )
+    recorded = {}
+    for pid, process in processes.items():
+        if not pattern.search(process["command"]) or process["state"].startswith("Z"):
+            continue
+        ancestors = []
+        parent = process["parent"]
+        while parent in processes and parent != app["pid"] and parent not in ancestors:
+            ancestors.append(parent)
+            parent = processes[parent]["parent"]
+        if parent != app["pid"]:
+            continue
+        owner = next(
+            (
+                ancestor
+                for ancestor in ancestors
+                if app["path"] + "/Contents/" in processes[ancestor]["command"]
+                and "Cursor Helper (Plugin)" in processes[ancestor]["command"]
+            ),
+            None,
+        )
+        if owner is None or process_cwd(pid) != project.resolve():
+            continue
+        recorded[pid] = {
+            **process,
+            "owner": owner,
+            "owner_started": processes[owner]["started"],
+        }
+    return recorded
+
+
+def live_discoveries(recorded, processes):
+    return {
+        pid: processes[pid]
+        for pid, original in recorded.items()
+        if pid in processes
+        and not processes[pid]["state"].startswith("Z")
+        and processes[pid]["started"] == original["started"]
+        and processes[pid]["command"] == original["command"]
+    }
+
+
+def orphan_discovery(pid, original, processes):
+    current = live_discoveries({pid: original}, processes).get(pid)
+    owner = processes.get(original["owner"])
+    return (
+        current is not None
+        and current["parent"] == 1
+        and (owner is None or owner["started"] != original["owner_started"])
+    )
+
+
+def wait_for_discoveries(recorded, timeout=2):
+    deadline = time.monotonic() + timeout
+    while True:
+        processes = process_table()
+        remaining = live_discoveries(recorded, processes)
+        if not remaining or time.monotonic() >= deadline:
+            return processes
+        time.sleep(0.1)
+
+
+def clean_discoveries(recorded):
+    if not recorded:
+        return
+    processes = wait_for_discoveries(recorded)
+    targets = {
+        pid: original
+        for pid, original in recorded.items()
+        if orphan_discovery(pid, original, processes)
+    }
+    if not targets:
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid, original in targets.items():
+            # Re-read identity and ownership immediately before each signal.
+            if orphan_discovery(pid, original, process_table()):
+                try:
+                    os.kill(pid, sig)
+                except ProcessLookupError:
+                    pass
+        processes = wait_for_discoveries(targets)
+        if not live_discoveries(targets, processes):
+            print(
+                f"Cleaned:     {len(targets)} orphan Cursor unittest discovery task(s).",
+                flush=True,
+            )
+            return
+    remaining = live_discoveries(targets, processes)
+    raise RuntimeError(
+        "Cannot confirm exit of Cursor discovery processes: "
+        + ", ".join(map(str, remaining))
+    )
+
+
+@contextmanager
+def discovery_cleanup(app, project):
+    recorded = discovery_snapshot(app, project)
+    failed = False
+    try:
+        yield
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        try:
+            clean_discoveries(recorded)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            if not failed:
+                raise
+            print(f"Cursor discovery cleanup was incomplete: {error}", file=sys.stderr)
+
+
+def patch_product(original):
+    document = json.loads(original)
+    grants = document.get("extensionEnabledApiProposals", {}).get(EXTENSION)
+    if not isinstance(grants, list):
+        raise TypeError("Unexpected Cursor API grant structure; no changes made")
+    if PROPOSAL in grants:
+        return original
+    # Preserve all unrelated bytes, including product.json's original formatting.
+    pattern = re.compile(r'("ms-python\.vscode-python-envs"\s*:\s*)(\[[^\]]*\])')
+    matches = list(pattern.finditer(original.decode()))
+    if len(matches) != 1 or json.loads(matches[0][2]) != grants:
+        raise RuntimeError("Cannot uniquely locate Cursor's API grant list")
+    match = matches[0]
+    changed = (
+        original.decode()[: match.start(2)]
+        + json.dumps([*grants, PROPOSAL])
+        + original.decode()[match.end(2) :]
+    )
+    expected = json.loads(original)
+    expected["extensionEnabledApiProposals"][EXTENSION].append(PROPOSAL)
+    if json.loads(changed) != expected:
+        raise RuntimeError("API patch changed unrelated settings")
+    return changed.encode()
+
+
+def preflight(app):
+    extension_root = Path.home() / ".cursor/extensions"
+    registry = json.loads((extension_root / "extensions.json").read_text())
+    entries = [e for e in registry if e.get("identifier", {}).get("id") == EXTENSION]
+    if len(entries) != 1:
+        raise RuntimeError(
+            "Cannot uniquely identify the installed Python Environments extension"
+        )
+    extension = (extension_root / entries[0]["relativeLocation"]).resolve()
+    if extension_root.resolve() not in extension.parents:
+        raise RuntimeError("Extension path escapes its installation directory")
+    manifest = json.loads((extension / "package.json").read_text())
+    if PROPOSAL not in manifest.get("enabledApiProposals", []):
+        print("Checked:     installed Python Environments does not require this API.")
+        return False
+    host = (
+        Path(app["path"])
+        / "Contents/Resources/app/out/vs/workbench/api/node/extensionHostProcess.js"
+    )
+    if PROPOSAL not in host.read_text():
+        raise RuntimeError("Installed Cursor does not expose the required API")
+    return True
+
+
+def check_api():
+    app = app_info()
+    if app is None:
+        candidates = [
+            Path("/Applications/Cursor.app"),
+            Path.home() / "Applications/Cursor.app",
+        ]
+        bundle = next((path for path in candidates if path.is_dir()), None)
+        if bundle is None:
+            raise RuntimeError("Cannot locate the Cursor application")
+        app = {"path": str(bundle)}
+    if preflight(app) is False:
+        return
+    product = Path(app["path"]) / "Contents/Resources/app/product.json"
+    original = product.read_bytes()
+    if patch_product(original) != original:
+        raise RuntimeError("Cursor is missing the terminalDataWriteEvent grant")
+    print("Checked:     Cursor grants Python Environments terminalDataWriteEvent.")
+
+
+def replace_guarded(product, expected, replacement, transaction):
+    if product.read_bytes() != expected:
+        raise RuntimeError("Cursor product.json changed concurrently; backup retained")
+    # Preserve the application file's inode, permissions and extended attributes.
+    # The original bytes are already backed up before opening it for writing.
+    with product.open("r+b") as stream:
+        if stream.read() != expected:
+            raise RuntimeError(
+                "Cursor product.json changed concurrently; backup retained"
+            )
+        stream.seek(0)
+        stream.write(replacement)
+        stream.truncate()
+        stream.flush()
+        os.fsync(stream.fileno())
+    if product.read_bytes() != replacement:
+        raise RuntimeError("Cursor product.json write could not be verified")
+
+
+def restart(app, workspace, project=None):
+    current = app_info()
+    if current:
+        if current["path"] != app["path"]:
+            raise RuntimeError("A different Cursor installation is now running")
+        with discovery_cleanup(current, project or workspace):
+            run(
+                ["osascript", "-l", "JavaScript", "-", app["path"]],
+                source="function run(argv) { Application(argv[0]).quit(); }",
+            )
+            deadline = time.monotonic() + 30
+            while app_info():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        "Cursor did not quit; check for an unsaved-file dialog"
+                    )
+                time.sleep(0.3)
+    run(["open", "-a", app["path"], str(workspace)], environment=editor_environment())
+    deadline = time.monotonic() + 40
+    while time.monotonic() < deadline:
+        current = app_info()
+        if current and current["path"] == app["path"]:
+            return current
+        time.sleep(0.3)
+    raise RuntimeError("Cursor did not restart within 40 seconds")
+
+
+def reload_window(workspace, project=None):
+    app = app_info()
+    if not app:
+        raise RuntimeError("Open the target Cursor workspace before reloading")
+    with discovery_cleanup(app, project or workspace):
+        reload_workspace_window(app, workspace)
+
+
+def reload_workspace_window(app, workspace):
+    helper_ready(app, workspace)
+    helper_transport.reload(workspace, HELPER_REVISION)
+    print("Confirmed:  Cursor helper reconnected after window reload.", flush=True)
+
+
+def probe_terminal(
+    app, workspace, interpreter, transaction, *, require_activation=True
+):
+    endpoint = helper_ready(app, workspace)
+    return helper_transport.request(
+        endpoint,
+        workspace,
+        "probe",
+        interpreter=str(interpreter),
+        project=str(interpreter.parent.parent.parent),
+        requireActivation=require_activation,
+        timeout=80,
+    )
+
+
+def verify_terminal(app, workspace, interpreter, transaction):
+    data = probe_terminal(app, workspace, interpreter, transaction)
+    print(
+        f"Verified terminal environment: {data['venv']}; python: {data['python']}",
+        flush=True,
+    )
+
+
+def clean(transaction):
+    allowed = {
+        "original.json",
+        "applied.json",
+        "state.json",
+        "staged.json",
+        "terminal.json",
+        "probe.sh",
+    }
+    if any(
+        p.name not in allowed or not p.is_file() or p.is_symlink()
+        for p in transaction.iterdir()
+    ):
+        raise RuntimeError("Unexpected transaction contents; backup retained")
+    for path in transaction.iterdir():
+        path.unlink()
+    transaction.rmdir()
+
+
+def execute(action, workspace, interpreter):
+    if action == "check-cursor-api":
+        check_api()
+        return
+    if action in ("prepare-helper", "select-environment"):
+        app = app_info()
+        if not app:
+            raise RuntimeError(
+                "Open the target Cursor workspace before using the helper"
+            )
+        endpoint = helper_ready(app, workspace)
+        if action == "select-environment":
+            helper_transport.request(
+                endpoint,
+                workspace,
+                "select",
+                interpreter=str(interpreter),
+                project=str(interpreter.parent.parent.parent),
+            )
+            print(f"Selected:    {interpreter} in Cursor (API read-back verified)")
+        return
+    if action == "reload-window":
+        reload_window(workspace, interpreter.parent.parent.parent)
+        return
+    temporary = runtime_directory()
+    transaction = temporary / "cursor-api-repair"
+    if transaction.is_symlink():
+        raise RuntimeError("Repair directory must not be a symlink")
+    app = app_info()
+    if not app:
+        raise RuntimeError("Open the target Cursor workspace before repairing")
+    product = Path(app["path"]) / "Contents/Resources/app/product.json"
+    if action == "commit-cursor-api":
+        state = json.loads((transaction / "state.json").read_text())
+        if (
+            state["product"] != str(product)
+            or product.read_bytes() != (transaction / "applied.json").read_bytes()
+        ):
+            raise RuntimeError(
+                "Cursor product.json changed before commit; backup retained"
+            )
+        clean(transaction)
+        return
+    if action == "rollback-cursor-api":
+        external_process(app["pid"])
+        state = json.loads((transaction / "state.json").read_text())
+        if state["product"] != str(product):
+            raise RuntimeError("Backup belongs to another Cursor installation")
+        original = (transaction / "original.json").read_bytes()
+        if product.read_bytes() != original:
+            replace_guarded(
+                product,
+                (transaction / "applied.json").read_bytes(),
+                original,
+                transaction,
+            )
+        restart(app, workspace, interpreter.parent.parent.parent)
+        clean(transaction)
+        print("Cursor API repair rolled back and Cursor restarted.")
+        return
+    if transaction.exists():
+        raise RuntimeError(
+            f"Unfinished repair at {transaction}; use --rollback-cursor-api first"
+        )
+    if preflight(app) is False:
+        return
+    original = product.read_bytes()
+    applied = patch_product(original)
+    if applied == original:
+        print(
+            "Cursor already grants terminalDataWriteEvent; no patch or restart needed."
+        )
+        return
+    external_process(app["pid"])
+    transaction.mkdir(mode=0o700)
+    (transaction / "original.json").write_bytes(original)
+    (transaction / "applied.json").write_bytes(applied)
+    (transaction / "state.json").write_text(json.dumps({"product": str(product)}))
+    changed = False
+    try:
+        replace_guarded(product, original, applied, transaction)
+        changed = True
+        print("Cursor API grant patched; restarting Cursor...", flush=True)
+        restarted = restart(app, workspace, interpreter.parent.parent.parent)
+        verify_terminal(restarted, workspace, interpreter, transaction)
+    except BaseException:
+        try:
+            if product.read_bytes() != original:
+                replace_guarded(product, applied, original, transaction)
+            if changed:
+                restart(app, workspace, interpreter.parent.parent.parent)
+            clean(transaction)
+            print(
+                "Cursor API repair failed; original configuration restored."
+                + (" Cursor restarted." if changed else " No restart needed."),
+                file=sys.stderr,
+            )
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            subprocess.SubprocessError,
+        ) as rollback_error:
+            print(
+                f"Rollback incomplete; backup retained at {transaction}: {rollback_error}",
+                file=sys.stderr,
+            )
+        raise
+    if action == "repair-cursor-api-staged":
+        print(
+            "Verified:    Cursor API repair; backup retained until the workspace switch commits."
+        )
+        return
+    clean(transaction)
+    print(
+        "Verified: a new Cursor terminal automatically activates the selected virtual environment. Backup removed."
+    )
+
+
+if __name__ == "__main__":
+    try:
+        execute(sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3]))
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        subprocess.SubprocessError,
+    ) as error:
+        detail = (
+            error.stderr
+            if isinstance(error, subprocess.CalledProcessError)
+            else str(error)
+        )
+        operation = (
+            "window reload" if sys.argv[1] == "reload-window" else "API check/repair"
+        )
+        print(f"use-venv: Cursor {operation} failed: {detail}", file=sys.stderr)
+        sys.exit(1)
+CURSOR_API_PYTHON
 }
 
 requested_path="$PWD"
 requested_workspace=""
+requested_editor="vscode"
 should_reload=false
+repair_cursor_envs=false
+cursor_api_action=""
 
-while (( $# > 0 )); do
+while (($# > 0)); do
   case "$1" in
-    -h|--help)
+    -h | --help)
       print_usage
       exit 0
       ;;
@@ -1514,12 +3083,30 @@ while (( $# > 0 )); do
       exit 0
       ;;
     --workspace)
-      (( $# >= 2 )) || fail "--workspace requires a directory"
+      (($# >= 2)) || fail "--workspace requires a directory"
       requested_workspace="$2"
+      shift 2
+      ;;
+    --editor)
+      (($# >= 2)) || fail "--editor requires vscode, cursor, or both"
+      requested_editor="$2"
+      case "$requested_editor" in
+        vscode | cursor | both) ;;
+        *) fail "--editor must be vscode, cursor, or both" ;;
+      esac
       shift 2
       ;;
     --no-reload)
       should_reload=false
+      shift
+      ;;
+    --repair-cursor-envs)
+      repair_cursor_envs=true
+      shift
+      ;;
+    --repair-cursor-api | --rollback-cursor-api)
+      [[ -z "$cursor_api_action" ]] || fail "choose only one Cursor API repair action"
+      cursor_api_action="${1#--}"
       shift
       ;;
     --reload)
@@ -1536,23 +3123,97 @@ while (( $# > 0 )); do
   esac
 done
 
+if [[ "$repair_cursor_envs" == true && "$requested_editor" == "vscode" ]]; then
+  fail "--repair-cursor-envs requires --editor cursor or --editor both"
+fi
+if [[ "$cursor_api_action" == "rollback-cursor-api" ]]; then
+  [[ "$requested_editor" == "cursor" ]] || fail "Cursor API rollback requires --editor cursor"
+  [[ "$repair_cursor_envs" == false && "$should_reload" == false ]] ||
+    fail "run Cursor API rollback separately from package repair and --reload"
+elif [[ "$cursor_api_action" == "repair-cursor-api" && "$requested_editor" == "vscode" ]]; then
+  fail "Cursor API repair requires --editor cursor or --editor both"
+fi
+
 find_project_and_venv "$requested_path"
 find_workspace "$requested_workspace"
 
-case "$VSCODE_VENV_PROJECT_DIRECTORY/" in
-  "$VSCODE_VENV_WORKSPACE_DIRECTORY/"*) ;;
-  *) fail "project must be inside the selected VS Code workspace" ;;
+case "$USE_VENV_PROJECT_DIRECTORY/" in
+  "$USE_VENV_WORKSPACE_DIRECTORY/"*) ;;
+  *) fail "project must be inside the selected workspace" ;;
 esac
+
+if [[ "$requested_editor" == cursor || "$requested_editor" == both ]]; then
+  prepare_runtime_state
+  runtime_state migrate "$USE_VENV_WORKSPACE_DIRECTORY" || exit 1
+fi
+
+if [[ "$cursor_api_action" == "rollback-cursor-api" ]]; then
+  run_cursor_automation "$cursor_api_action" || exit 1
+  exit 0
+fi
+
+if [[ "$requested_editor" == "cursor" || "$requested_editor" == "both" ]]; then
+  [[ ! -e "$USE_VENV_STATE_DIRECTORY/cursor-api-repair" && ! -L "$USE_VENV_STATE_DIRECTORY/cursor-api-repair" ]] ||
+    fail "unfinished Cursor API repair; run with --editor cursor --rollback-cursor-api first"
+  check_cursor_requirements || exit 1
+  configure_editor cursor
+  if editor_process_state; then
+    run_cursor_automation prepare-helper || exit 1
+  fi
+  if [[ "$repair_cursor_envs" == true ]]; then
+    begin_cursor_repair_transaction
+  fi
+  ensure_cursor_environment_tools || exit 1
+fi
 
 begin_file_transaction
 update_vscode_settings
 capture_applied_file_transaction
-ensure_workspace_environment
 
-if [[ "$should_reload" == true ]]; then
-  reload_vscode
-else
-  print "VS Code reload is unnecessary; the Python Environments extension observes these settings live."
+if [[ -n "$USE_VENV_CURSOR_REPAIR_DIRECTORY" && -f "$USE_VENV_CURSOR_REPAIR_DIRECTORY/backup.json" ]]; then
+  reload_cursor_after_package_change discovery || exit 1
 fi
 
+typeset -a editor_targets=("$requested_editor")
+if [[ "$requested_editor" == "both" ]]; then
+  editor_targets=(vscode cursor)
+fi
+for editor_target in "${editor_targets[@]}"; do
+  configure_editor "$editor_target"
+  USE_VENV_SELECTION_PENDING=false
+  ensure_workspace_environment
+  if [[ "$USE_VENV_SELECTION_PENDING" == true ]]; then
+    [[ "$cursor_api_action" != repair-cursor-api || "$USE_VENV_CURSOR_API_REQUIRED" != true || "$editor_target" != cursor ]] ||
+      fail "Cursor selection is pending; API repair cannot be verified"
+    if [[ -n "$USE_VENV_CURSOR_REPAIR_DIRECTORY" && -f "$USE_VENV_CURSOR_REPAIR_DIRECTORY/backup.json" ]]; then
+      fail "$USE_VENV_EDITOR_LABEL selection is pending; restoring the original extension until a switch can be verified"
+    fi
+    if [[ "$should_reload" == true ]]; then
+      print "Skipped:     $USE_VENV_EDITOR_LABEL reload because its selection is pending."
+    fi
+  elif [[ "$should_reload" == true ]]; then
+    if [[ "$editor_target" != "cursor" || "$USE_VENV_CURSOR_RELOADED" != true ]]; then
+      reload_editor || exit 1
+    else
+      print "Skipped:     Cursor was already reloaded after replacing its extension."
+    fi
+  else
+    print "$USE_VENV_EDITOR_LABEL reload is unnecessary; Python Environments observes these settings live."
+  fi
+done
+
+if [[ "$cursor_api_action" == repair-cursor-api && "$USE_VENV_CURSOR_API_REQUIRED" == true ]]; then
+  USE_VENV_CURSOR_API_ACTIVE=true
+  run_cursor_automation repair-cursor-api-staged || exit 1
+fi
+if [[ "$repair_cursor_envs" == true || "$cursor_api_action" == repair-cursor-api ]]; then
+  check_cursor_requirements verify || exit 1
+fi
+if [[ "$USE_VENV_CURSOR_API_ACTIVE" == true ]]; then
+  if [[ -d "$USE_VENV_STATE_DIRECTORY/cursor-api-repair" ]]; then
+    run_cursor_automation commit-cursor-api || exit 1
+  fi
+  USE_VENV_CURSOR_API_ACTIVE=false
+fi
 commit_file_transaction
+USE_VENV_CURSOR_REPAIR_COMMITTED=true
