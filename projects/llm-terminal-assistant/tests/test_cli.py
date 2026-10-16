@@ -15,9 +15,18 @@ from llm_terminal_assistant.adapter.fake_model import (
     CodePointTokenCounter,
     FakeModelRequestEncoder,
 )
-from llm_terminal_assistant.budgeter import Budgeter
-from llm_terminal_assistant.cli import send_conversation_turn, talk
+from llm_terminal_assistant.budgeter import (
+    Budgeter,
+    BudgetRejectedError,
+    BudgetRejectionReason,
+)
+from llm_terminal_assistant.cli import (
+    send_conversation_turn,
+    send_stream_conversation_turn,
+    talk,
+)
 from llm_terminal_assistant.config import ModelConfig
+from llm_terminal_assistant.conversation import ConversationTurn
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     FAKE_MODEL_PROFILE,
@@ -31,6 +40,7 @@ from llm_terminal_assistant.model import (
     ModelUsage,
     OutputTokensDetails,
 )
+from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.factory import create_default_tool_registry
 from llm_terminal_assistant.tools.loop import ToolLoopLimits
@@ -50,6 +60,137 @@ def make_response(text: str, calls: list[ToolCallRequest] | None = None):
         ),
         tool_calls=[] if calls is None else calls,
     )
+
+
+class StreamConversationTurnTests(unittest.TestCase):
+    def setUp(self):
+        self.config = ModelConfig(
+            api_key="",
+            base_url="",
+            model="fake-model",
+            model_profile=FAKE_MODEL_PROFILE,
+        )
+        self.budgeter = Budgeter(
+            token_counter=CodePointTokenCounter(),
+            request_encoder=FakeModelRequestEncoder(),
+            model_limits=ModelLimits(context_window_tokens=100_000),
+            safety_margin_tokens=0,
+        )
+        self.system = Message(role="system", content="You are a helpful assistant.")
+        self.user = Message(role="user", content="question")
+
+    def test_stream_turn_checks_budget_and_displays_each_delta_before_reading_more(
+        self,
+    ):
+        usage = make_response("").usage
+        client = FakeClient(
+            self.config,
+            scripted_events=[
+                TextDeltaEvent(delta="first "),
+                TextDeltaEvent(delta="second\n"),
+                TextDeltaEvent(delta="third"),
+                UsageEvent(usage=usage),
+                EndEvent(
+                    reason=ModelResponseEndReason.COMPLETED_NORMALLY,
+                    error=None,
+                    incomplete_details=None,
+                ),
+            ],
+        )
+        history = [
+            ConversationTurn(
+                items=[Message("user", "previous"), Message("assistant", "answer")]
+            )
+        ]
+        displayed = []
+        upstream_send = client.send_stream
+
+        def observed_stream(request):
+            self.assertEqual(budget_check.call_args.args, (request,))
+            upstream = upstream_send(request)
+            expected_display = []
+            try:
+                for event in upstream:
+                    if isinstance(event, TextDeltaEvent):
+                        expected_display.append(event.delta)
+                    yield event
+                    self.assertEqual(displayed, expected_display)
+            finally:
+                upstream.close()
+
+        with (
+            patch.object(
+                self.budgeter, "check", wraps=self.budgeter.check
+            ) as budget_check,
+            patch.object(
+                client, "send_stream", side_effect=observed_stream
+            ) as send_stream,
+            patch.object(client, "send", wraps=client.send) as send,
+        ):
+            response, trim_result = send_stream_conversation_turn(
+                client=client,
+                budgeter=self.budgeter,
+                system_message=self.system,
+                completed_turns=history,
+                current_user_message=self.user,
+                reserved_output_tokens=128,
+                min_reserved_recent_turns=1,
+                reasoning_effort="none",
+                temperature=0.4,
+                top_p=0.8,
+                display_text=displayed.append,
+            )
+
+        expected_request = ModelRequest(
+            input=[self.system, *history[0].items, self.user],
+            reserved_output_tokens=128,
+            reasoning_effort="none",
+            temperature=0.4,
+            top_p=0.8,
+        )
+        self.assertEqual(trim_result.request, expected_request)
+        budget_check.assert_called_once_with(trim_result.request)
+        send_stream.assert_called_once_with(trim_result.request)
+        send.assert_not_called()
+        self.assertEqual(client.requests, [expected_request])
+        self.assertEqual(trim_result.retained_completed_turns, history)
+        self.assertEqual(trim_result.dropped_completed_turns_count, 0)
+        self.assertEqual(displayed, ["first ", "second\n", "third"])
+        self.assertEqual(response.text, "first second\nthird")
+        self.assertEqual(response.reason, ModelResponseEndReason.COMPLETED_NORMALLY)
+        self.assertIs(response.usage, usage)
+        self.assertEqual(response.tool_calls, [])
+
+    def test_budget_rejection_prevents_stream_creation_and_display(self):
+        self.budgeter.model_limits = ModelLimits(context_window_tokens=1)
+        client = FakeClient(self.config)
+        displayed = Mock()
+
+        with (
+            patch.object(
+                client, "send_stream", wraps=client.send_stream
+            ) as send_stream,
+            patch.object(client, "send", wraps=client.send) as send,
+            self.assertRaises(BudgetRejectedError) as caught,
+        ):
+            send_stream_conversation_turn(
+                client=client,
+                budgeter=self.budgeter,
+                system_message=self.system,
+                completed_turns=[],
+                current_user_message=self.user,
+                reserved_output_tokens=128,
+                min_reserved_recent_turns=1,
+                display_text=displayed,
+            )
+
+        self.assertEqual(
+            caught.exception.reason, BudgetRejectionReason.CONTEXT_WINDOW_EXCEEDED
+        )
+        send_stream.assert_not_called()
+        send.assert_not_called()
+        displayed.assert_not_called()
+        self.assertEqual(client.requests, [])
 
 
 class TalkTests(unittest.TestCase):
@@ -106,6 +247,158 @@ class TalkTests(unittest.TestCase):
         for request in client.requests:
             self.assertEqual(request.tools, self.registry.get_tool_list())
         return client, output.getvalue()
+
+    def run_stream_talk(self, events, prompts):
+        config = replace(self.config, stream_output_enabled=True)
+        client = FakeClient(config, scripted_events=events)
+        output = StringIO()
+        upstream_send = client.send_stream
+
+        def observed_stream(request):
+            self.assertTrue(output.getvalue().endswith("Model Response: \n"))
+            upstream = upstream_send(request)
+            try:
+                for event in upstream:
+                    before = output.getvalue()
+                    yield event
+                    if isinstance(event, TextDeltaEvent):
+                        self.assertEqual(output.getvalue(), before + event.delta)
+                    elif isinstance(event, UsageEvent):
+                        self.assertEqual(output.getvalue(), before)
+            finally:
+                upstream.close()
+
+        with (
+            patch("llm_terminal_assistant.cli.prompt", side_effect=[*prompts, "exit"]),
+            patch(
+                "llm_terminal_assistant.cli.create_default_tool_registry",
+                return_value=self.registry,
+            ),
+            patch.object(
+                client, "send_stream", side_effect=observed_stream
+            ) as send_stream,
+            patch.object(client, "send", wraps=client.send) as send,
+            redirect_stdout(output),
+        ):
+            talk(client, config, self.budgeter)
+
+        self.assertEqual(send_stream.call_count, len(prompts))
+        send.assert_not_called()
+        self.clock.assert_not_called()
+        self.assertEqual(
+            [call.args[0] for call in self.encoder.encode_request.call_args_list],
+            client.requests,
+        )
+        for request in client.requests:
+            self.assertEqual(request.tools, [])
+        return client, output.getvalue()
+
+    def test_streaming_displays_deltas_once_and_replays_assembled_history(self):
+        completed = EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None)
+        client, output = self.run_stream_talk(
+            [
+                TextDeltaEvent(""),
+                UsageEvent(make_response("").usage),
+                TextDeltaEvent("first "),
+                TextDeltaEvent("second\n"),
+                TextDeltaEvent("third"),
+                completed,
+                TextDeltaEvent("next answer"),
+                completed,
+            ],
+            ["First question", "Next question"],
+        )
+
+        self.assertEqual(
+            output,
+            "Please enter your prompt (type 'exit' to quit):\n\n"
+            "Model Response: \nfirst second\nthird\n"
+            "Model Response: \nnext answer\nExiting...\n",
+        )
+        self.assertEqual(
+            client.requests[1].input,
+            [
+                Message("system", "You are a helpful assistant."),
+                Message("user", "First question"),
+                Message("assistant", "first second\nthird"),
+                Message("user", "Next question"),
+            ],
+        )
+
+    def test_streaming_preserves_model_newlines_and_always_adds_ui_separator(self):
+        for text in ("", "answer", "answer\n", "answer\n\n"):
+            with self.subTest(text=text):
+                self.encoder.reset_mock()
+                _, output = self.run_stream_talk(
+                    [
+                        TextDeltaEvent(text),
+                        EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None),
+                    ],
+                    ["question"],
+                )
+
+                self.assertEqual(
+                    output,
+                    "Please enter your prompt (type 'exit' to quit):\n\n"
+                    "Model Response: \n" + text + "\nExiting...\n",
+                )
+
+    def test_streaming_keeps_partial_text_and_displays_terminal_status_on_new_line(
+        self,
+    ):
+        cases = [
+            (
+                EndEvent(
+                    ModelResponseEndReason.REQUEST_FAILED,
+                    ModelResponseError("server_error", "Generation failed."),
+                    None,
+                ),
+                "Request was failed: [server_error] Generation failed.",
+            ),
+            (
+                EndEvent(ModelResponseEndReason.REQUEST_CANCELLED, None, None),
+                "Request was cancelled.",
+            ),
+            (
+                EndEvent(
+                    ModelResponseEndReason.REQUEST_INCOMPLETE,
+                    None,
+                    ModelResponseIncompleteDetails("max_output_tokens"),
+                ),
+                "Request was incomplete: max_output_tokens",
+            ),
+            (
+                None,
+                "Streaming response ended without a terminal event. "
+                "The answer may be incomplete.",
+            ),
+        ]
+        for terminal, notice in cases:
+            with self.subTest(terminal=terminal):
+                self.encoder.reset_mock()
+                events = [TextDeltaEvent("partial answer")]
+                if terminal is not None:
+                    events.append(terminal)
+                _, output = self.run_stream_talk(events, ["question"])
+
+                self.assertEqual(
+                    output,
+                    "Please enter your prompt (type 'exit' to quit):\n\n"
+                    f"Model Response: \npartial answer\n{notice}\nExiting...\n",
+                )
+
+    def test_disabled_streaming_keeps_full_response_output_and_tool_definitions(self):
+        self.config = replace(self.config, stream_output_enabled=False)
+        with patch.object(FakeClient, "send_stream") as send_stream:
+            client, output = self.run_talk(["question"], [make_response("Full answer")])
+
+        send_stream.assert_not_called()
+        self.assertEqual(client.requests[0].tools, self.registry.get_tool_list())
+        self.assertEqual(
+            output,
+            "Please enter your prompt (type 'exit' to quit):\n\n"
+            "Model Response: \nFull answer\nExiting...\n",
+        )
 
     def test_bracketed_multiline_paste_is_sent_once_and_exit_still_works(self):
         for trailing_newline in ("", "\n"):

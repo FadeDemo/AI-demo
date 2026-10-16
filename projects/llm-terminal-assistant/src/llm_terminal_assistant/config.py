@@ -30,6 +30,7 @@ class ModelConfig:
     temperature: float | None = None
     top_p: float | None = None
     tool_loop_limits: ToolLoopLimits = field(default_factory=ToolLoopLimits)
+    stream_output_enabled: bool = False
 
 
 def read_positive_int_env(name: str) -> int | None:
@@ -60,6 +61,7 @@ def load_model_config() -> ModelConfig:
         raise ValueError(f"Model profile for {model} not found.")
     temperature = os.getenv("TEMPERATURE")
     top_p = os.getenv("TOP_P")
+    stream_output_enabled = os.getenv("STREAM_OUTPUT_ENABLED", "false")
     if temperature is not None:
         temperature = float(temperature)
         if not (
@@ -87,6 +89,13 @@ def load_model_config() -> ModelConfig:
         value = read_positive_int_env(env_name)
         if value is not None:
             tool_loop_limits[field_name] = value
+    if stream_output_enabled is not None:
+        stream_output_enabled = stream_output_enabled.strip().lower()
+        if stream_output_enabled not in ("true", "false"):
+            raise ValueError(
+                f"STREAM_OUTPUT_ENABLED must be a boolean, got {stream_output_enabled}."
+            )
+        stream_output_enabled = stream_output_enabled == "true"
     return ModelConfig(
         api_key=api_key,
         base_url=base_url,
@@ -97,4 +106,5 @@ def load_model_config() -> ModelConfig:
         top_p=top_p,
         model_profile=model_profile,
         tool_loop_limits=ToolLoopLimits(**tool_loop_limits),
+        stream_output_enabled=stream_output_enabled,
     )

@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 
 from prompt_toolkit import prompt
 
@@ -24,6 +25,7 @@ from llm_terminal_assistant.model import (
     ModelResponse,
     ModelResponseEndReason,
 )
+from llm_terminal_assistant.stream.consumer import consume_stream
 from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.executor import ToolExecutor
@@ -41,16 +43,27 @@ logging.basicConfig(
 DEFAULT_TOOL_LOOP_LIMITS = ToolLoopLimits()
 
 
-def output_model_response(response: ModelResponse):
-    print("Model Response: ")
+def output_response_status(response: ModelResponse) -> None:
     if response.reason == ModelResponseEndReason.COMPLETED_NORMALLY:
-        print(response.text)
+        pass
     elif response.reason == ModelResponseEndReason.REQUEST_FAILED:
         print(f"Request was failed: [{response.error.code}] {response.error.message}")
     elif response.reason == ModelResponseEndReason.REQUEST_CANCELLED:
         print("Request was cancelled.")
     elif response.reason == ModelResponseEndReason.REQUEST_INCOMPLETE:
         print(f"Request was incomplete: {response.incomplete_details.reason}")
+    elif response.reason == ModelResponseEndReason.MISSING_END_EVENT:
+        print(
+            "Streaming response ended without a terminal event. "
+            "The answer may be incomplete."
+        )
+
+
+def output_model_response(response: ModelResponse):
+    print("Model Response: ")
+    if response.reason == ModelResponseEndReason.COMPLETED_NORMALLY:
+        print(response.text)
+    output_response_status(response)
 
 
 def model_response_to_assistant_message(response: ModelResponse) -> Message:
@@ -66,6 +79,42 @@ def log_model_request_summary(request: ModelRequest) -> None:
         sum(isinstance(item, ToolCallResult) for item in request.input),
         len(request.tools),
     )
+
+
+def _prepare_conversation_request(
+    system_message: Message,
+    history: list[ConversationTurn],
+    turn_input: list[ModelInputItem],
+    reserved_output_tokens: int,
+    min_reserved_recent_turns: int,
+    budgeter: Budgeter,
+    reasoning_effort: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    tools: list[ToolDefinition] | None = None,
+) -> HistoryTrimResult:
+    trim_result = trim_history(
+        system_message=system_message,
+        completed_turns=history,
+        current_turn_input=turn_input,
+        reserved_output_tokens=reserved_output_tokens,
+        reasoning_effort=reasoning_effort,
+        min_reserved_recent_turns=min_reserved_recent_turns,
+        budgeter=budgeter,
+        temperature=temperature,
+        top_p=top_p,
+        tools=tools,
+    )
+    budget_result = trim_result.budget_result
+    logger.info(
+        "Budget check passed: estimated_input_tokens=%d reserved_output_tokens=%d safety_margin_tokens=%d remaining_tokens=%d",
+        budget_result.estimated_input_tokens,
+        budget_result.reserved_output_tokens,
+        budget_result.safety_margin_tokens,
+        budget_result.remaining_tokens,
+    )
+    log_model_request_summary(trim_result.request)
+    return trim_result
 
 
 def send_conversation_turn(
@@ -87,27 +136,18 @@ def send_conversation_turn(
         turn_input: list[ModelInputItem],
         history: list[ConversationTurn],
     ) -> tuple[ModelResponse, HistoryTrimResult]:
-        trim_result = trim_history(
-            system_message=system_message,
-            completed_turns=history,
-            current_turn_input=turn_input,
-            reserved_output_tokens=reserved_output_tokens,
-            reasoning_effort=reasoning_effort,
-            min_reserved_recent_turns=min_reserved_recent_turns,
-            budgeter=budgeter,
-            temperature=temperature,
-            top_p=top_p,
-            tools=tools,
+        trim_result = _prepare_conversation_request(
+            system_message,
+            history,
+            turn_input,
+            reserved_output_tokens,
+            min_reserved_recent_turns,
+            budgeter,
+            reasoning_effort,
+            temperature,
+            top_p,
+            tools,
         )
-        budget_result = trim_result.budget_result
-        logger.info(
-            "Budget check passed: estimated_input_tokens=%d reserved_output_tokens=%d safety_margin_tokens=%d remaining_tokens=%d",
-            budget_result.estimated_input_tokens,
-            budget_result.reserved_output_tokens,
-            budget_result.safety_margin_tokens,
-            budget_result.remaining_tokens,
-        )
-        log_model_request_summary(trim_result.request)
         return client.send(trim_result.request), trim_result
 
     current_turn_input = [current_user_message]
@@ -154,6 +194,41 @@ def send_conversation_turn(
     return model_response, trim_result
 
 
+def send_stream_conversation_turn(
+    client: ModelClient,
+    budgeter: Budgeter,
+    system_message: Message,
+    completed_turns: list[ConversationTurn],
+    current_user_message: Message,
+    reserved_output_tokens: int,
+    min_reserved_recent_turns: int,
+    reasoning_effort: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    *,
+    display_text: Callable[[str], None],
+) -> tuple[ModelResponse, HistoryTrimResult]:
+    current_turn_input = [current_user_message]
+    trim_result = _prepare_conversation_request(
+        system_message,
+        completed_turns,
+        current_turn_input,
+        reserved_output_tokens,
+        min_reserved_recent_turns,
+        budgeter,
+        reasoning_effort,
+        temperature,
+        top_p,
+    )
+    stream = client.send_stream(trim_result.request)
+    model_response = consume_stream(stream, display_text)
+    return model_response, trim_result
+
+
+def print_text_delta(delta: str) -> None:
+    print(delta, end="", flush=True)
+
+
 def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
     completed_turns: list[ConversationTurn] = []
     registry: ToolRegistry = create_default_tool_registry()
@@ -168,21 +243,37 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
         system_msg = Message(role="system", content="You are a helpful assistant.")
         user_msg = Message(role="user", content=user_input)
         try:
-            model_response, trim_result = send_conversation_turn(
-                client=client,
-                budgeter=budgeter,
-                system_message=system_msg,
-                completed_turns=completed_turns,
-                current_user_message=user_msg,
-                reserved_output_tokens=reserved_output_tokens,
-                min_reserved_recent_turns=config.min_reserved_recent_turns,
-                reasoning_effort=config.reasoning_effort,
-                temperature=config.temperature,
-                top_p=config.top_p,
-                tools=registry.get_tool_list(),
-                executor=tool_executor,
-                tool_loop_limits=config.tool_loop_limits,
-            )
+            if config.stream_output_enabled:
+                print("Model Response: ")
+                model_response, trim_result = send_stream_conversation_turn(
+                    client=client,
+                    budgeter=budgeter,
+                    system_message=system_msg,
+                    completed_turns=completed_turns,
+                    current_user_message=user_msg,
+                    reserved_output_tokens=reserved_output_tokens,
+                    min_reserved_recent_turns=config.min_reserved_recent_turns,
+                    reasoning_effort=config.reasoning_effort,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    display_text=print_text_delta,
+                )
+            else:
+                model_response, trim_result = send_conversation_turn(
+                    client=client,
+                    budgeter=budgeter,
+                    system_message=system_msg,
+                    completed_turns=completed_turns,
+                    current_user_message=user_msg,
+                    reserved_output_tokens=reserved_output_tokens,
+                    min_reserved_recent_turns=config.min_reserved_recent_turns,
+                    reasoning_effort=config.reasoning_effort,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    tools=registry.get_tool_list(),
+                    executor=tool_executor,
+                    tool_loop_limits=config.tool_loop_limits,
+                )
         except BudgetRejectedError as error:
             logger.error(error.reason)
             if error.reason in (
@@ -210,7 +301,11 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
         completed_turns.append(
             ConversationTurn(items=[*current_turn_input, assistant_msg])
         )
-        output_model_response(model_response)
+        if config.stream_output_enabled:
+            print()
+            output_response_status(model_response)
+        else:
+            output_model_response(model_response)
 
 
 def main():

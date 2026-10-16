@@ -7,7 +7,7 @@ from llm_terminal_assistant.model import FAKE_MODEL_ID
 from llm_terminal_assistant.tools.loop import ToolLoopLimits
 
 
-class ToolLoopConfigTests(unittest.TestCase):
+class ModelConfigTests(unittest.TestCase):
     def load_config(self, overrides: dict[str, str] | None = None) -> ModelConfig:
         environment = {
             "MODEL": FAKE_MODEL_ID,
@@ -21,6 +21,34 @@ class ToolLoopConfigTests(unittest.TestCase):
             patch("llm_terminal_assistant.config.load_dotenv"),
         ):
             return load_model_config()
+
+    def test_missing_stream_output_setting_defaults_to_false(self):
+        config = self.load_config()
+
+        self.assertIs(config.stream_output_enabled, False)
+
+    def test_stream_output_setting_parses_booleans_ignoring_case_and_whitespace(self):
+        cases = (
+            ("true", True),
+            ("false", False),
+            ("TRUE", True),
+            ("FALSE", False),
+            (" TrUe \t", True),
+            ("\t FaLsE ", False),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                config = self.load_config({"STREAM_OUTPUT_ENABLED": value})
+
+                self.assertIs(config.stream_output_enabled, expected)
+
+    def test_invalid_stream_output_setting_identifies_the_configuration_item(self):
+        for value in ("", " ", "invalid", "1", "0", "yes", "no", "true false"):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "STREAM_OUTPUT_ENABLED"),
+            ):
+                self.load_config({"STREAM_OUTPUT_ENABLED": value})
 
     def test_missing_limits_use_defaults(self):
         config = self.load_config()
