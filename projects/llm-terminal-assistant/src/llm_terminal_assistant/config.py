@@ -1,3 +1,4 @@
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,34 @@ ENV_FILE = PROJECT_ROOT / ".env"
 
 
 @dataclass
+class RequestTimeoutConfig:
+    connect_seconds: float
+    first_event_seconds: float
+    stream_idle_seconds: float
+    request_deadline_seconds: float
+
+    def __post_init__(self):
+        if self.connect_seconds <= 0 or not math.isfinite(self.connect_seconds):
+            raise ValueError(
+                f"CONNECT_SECONDS must be a positive finite number, got {self.connect_seconds}."
+            )
+        if self.first_event_seconds <= 0 or not math.isfinite(self.first_event_seconds):
+            raise ValueError(
+                f"FIRST_EVENT_SECONDS must be a positive finite number, got {self.first_event_seconds}."
+            )
+        if self.stream_idle_seconds <= 0 or not math.isfinite(self.stream_idle_seconds):
+            raise ValueError(
+                f"STREAM_IDLE_SECONDS must be a positive finite number, got {self.stream_idle_seconds}."
+            )
+        if self.request_deadline_seconds <= 0 or not math.isfinite(
+            self.request_deadline_seconds
+        ):
+            raise ValueError(
+                f"REQUEST_DEADLINE_SECONDS must be a positive finite number, got {self.request_deadline_seconds}."
+            )
+
+
+@dataclass
 class ModelConfig:
     api_key: str
     base_url: str
@@ -31,6 +60,7 @@ class ModelConfig:
     top_p: float | None = None
     tool_loop_limits: ToolLoopLimits = field(default_factory=ToolLoopLimits)
     stream_output_enabled: bool = False
+    request_timeout_config: RequestTimeoutConfig | None = None
 
 
 def read_positive_int_env(name: str) -> int | None:

@@ -38,6 +38,10 @@ class ModelResponseEndReason(StrEnum):
     REQUEST_INCOMPLETE = "request_incomplete"
     MISSING_END_EVENT = "missing_end_event"
     STREAM_READ_FAILED = "stream_read_failed"
+    CONNECTION_TIMEOUT = "connection_timeout"
+    FIRST_EVENT_TIMEOUT = "first_event_timeout"
+    STREAM_IDLE_TIMEOUT = "stream_idle_timeout"
+    REQUEST_DEADLINE_EXCEEDED = "request_deadline_exceeded"
 
 
 @dataclass

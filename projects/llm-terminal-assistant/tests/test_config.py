@@ -2,9 +2,38 @@ import os
 import unittest
 from unittest.mock import patch
 
-from llm_terminal_assistant.config import ModelConfig, load_model_config
+from llm_terminal_assistant.config import (
+    ModelConfig,
+    RequestTimeoutConfig,
+    load_model_config,
+)
 from llm_terminal_assistant.model import FAKE_MODEL_ID
 from llm_terminal_assistant.tools.loop import ToolLoopLimits
+
+
+class RequestTimeoutConfigTests(unittest.TestCase):
+    def test_accepts_independent_finite_positive_durations(self):
+        config = RequestTimeoutConfig(0.25, 2.5, 10.0, 1.0)
+
+        self.assertEqual(config.connect_seconds, 0.25)
+        self.assertEqual(config.first_event_seconds, 2.5)
+        self.assertEqual(config.stream_idle_seconds, 10.0)
+        self.assertEqual(config.request_deadline_seconds, 1.0)
+
+    def test_rejects_invalid_duration_in_each_field(self):
+        valid = {
+            "connect_seconds": 1.0,
+            "first_event_seconds": 2.0,
+            "stream_idle_seconds": 3.0,
+            "request_deadline_seconds": 4.0,
+        }
+        for name in valid:
+            for value in (0.0, -1.0, float("nan"), float("inf"), -float("inf")):
+                with (
+                    self.subTest(field=name, value=value),
+                    self.assertRaisesRegex(ValueError, name.upper()),
+                ):
+                    RequestTimeoutConfig(**{**valid, name: value})
 
 
 class ModelConfigTests(unittest.TestCase):
