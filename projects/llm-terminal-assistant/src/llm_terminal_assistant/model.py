@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Literal
 
 from llm_terminal_assistant.message import Message
+from llm_terminal_assistant.stream.timing import StreamResponseTiming
 from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
@@ -36,6 +37,7 @@ class ModelResponseEndReason(StrEnum):
     REQUEST_CANCELLED = "request_cancelled"
     REQUEST_INCOMPLETE = "request_incomplete"
     MISSING_END_EVENT = "missing_end_event"
+    STREAM_READ_FAILED = "stream_read_failed"
 
 
 @dataclass
@@ -57,6 +59,7 @@ class ModelResponse:
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     error: ModelResponseError | None = None
     incomplete_details: ModelResponseIncompleteDetails | None = None
+    timing: StreamResponseTiming | None = None
 
 
 @dataclass

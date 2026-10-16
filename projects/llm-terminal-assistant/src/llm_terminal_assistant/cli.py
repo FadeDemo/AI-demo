@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable
+from time import monotonic
 
 from prompt_toolkit import prompt
 
@@ -57,6 +58,8 @@ def output_response_status(response: ModelResponse) -> None:
             "Streaming response ended without a terminal event. "
             "The answer may be incomplete."
         )
+    elif response.reason == ModelResponseEndReason.STREAM_READ_FAILED:
+        print("Streaming response could not be read. The answer may be incomplete.")
 
 
 def output_model_response(response: ModelResponse):
@@ -207,7 +210,9 @@ def send_stream_conversation_turn(
     top_p: float | None = None,
     *,
     display_text: Callable[[str], None],
+    clock: Callable[[], float] = monotonic,
 ) -> tuple[ModelResponse, HistoryTrimResult]:
+    start_at = clock()
     current_turn_input = [current_user_message]
     trim_result = _prepare_conversation_request(
         system_message,
@@ -221,7 +226,7 @@ def send_stream_conversation_turn(
         top_p,
     )
     stream = client.send_stream(trim_result.request)
-    model_response = consume_stream(stream, display_text)
+    model_response = consume_stream(stream, display_text, start_at, clock)
     return model_response, trim_result
 
 

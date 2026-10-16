@@ -1,4 +1,5 @@
 import unittest
+from functools import partial
 
 from llm_terminal_assistant.adapter.fake_client import FakeClient
 from llm_terminal_assistant.config import ModelConfig
@@ -28,6 +29,7 @@ def recording_stream(events, reads, closures):
 
 class StreamConsumerTests(unittest.TestCase):
     def setUp(self):
+        self.consume_stream = partial(consume_stream, start_at=10.0, clock=lambda: 12.0)
         self.usage = ModelUsage(
             input_tokens=23,
             input_tokens_details=InputTokensDetails(
@@ -42,6 +44,30 @@ class StreamConsumerTests(unittest.TestCase):
             error=None,
             incomplete_details=None,
         )
+
+    def test_zero_ttft_is_preserved_and_measured_before_display(self):
+        now = [10.0]
+        reads, closures, displayed = [], [], []
+
+        def display(delta):
+            displayed.append(delta)
+            now[0] += 2.0
+
+        result = consume_stream(
+            recording_stream(
+                [TextDeltaEvent("first"), TextDeltaEvent("second"), self.completed],
+                reads,
+                closures,
+            ),
+            display,
+            start_at=10.0,
+            clock=lambda: now[0],
+        )
+
+        self.assertEqual(result.timing.ttft_seconds, 0.0)
+        self.assertEqual(result.timing.total_seconds, 4.0)
+        self.assertEqual(displayed, ["first", "second"])
+        self.assertEqual(closures, [True])
 
     def test_displays_fake_stream_incrementally_and_returns_assembled_response(self):
         client = FakeClient(
@@ -78,7 +104,7 @@ class StreamConsumerTests(unittest.TestCase):
             finally:
                 upstream.close()
 
-        result = consume_stream(observed_stream(), displayed.append)
+        result = self.consume_stream(observed_stream(), displayed.append)
 
         self.assertEqual(displayed, ["", "first ", "second\n", "third"])
         self.assertEqual(result.text, "first second\nthird")
@@ -101,7 +127,7 @@ class StreamConsumerTests(unittest.TestCase):
         ]
         reads, closures, displayed = [], [], []
 
-        result = consume_stream(
+        result = self.consume_stream(
             recording_stream(events, reads, closures), displayed.append
         )
 
@@ -135,7 +161,7 @@ class StreamConsumerTests(unittest.TestCase):
                 events = [TextDeltaEvent(delta="partial"), terminal]
                 reads, closures, displayed = [], [], []
 
-                result = consume_stream(
+                result = self.consume_stream(
                     recording_stream(events, reads, closures), displayed.append
                 )
 
@@ -162,7 +188,7 @@ class StreamConsumerTests(unittest.TestCase):
             with self.subTest(events=events):
                 reads, closures, displayed = [], [], []
 
-                result = consume_stream(
+                result = self.consume_stream(
                     recording_stream(events, reads, closures), displayed.append
                 )
 
@@ -177,21 +203,57 @@ class StreamConsumerTests(unittest.TestCase):
                 self.assertEqual(reads, events)
                 self.assertEqual(closures, [True])
 
-    def test_read_exception_propagates_after_display_and_closes(self):
-        failure = RuntimeError("read failed")
-        closures, displayed = [], []
+    def test_read_exception_returns_failure_preserves_progress_and_closes(self):
+        cases = [
+            ([], "", None),
+            ([TextDeltaEvent(delta="partial")], "partial", None),
+            (
+                [TextDeltaEvent(delta="partial"), UsageEvent(usage=self.usage)],
+                "partial",
+                self.usage,
+            ),
+        ]
+        for events, text, usage in cases:
+            with self.subTest(events=events):
+                closures, displayed = [], []
 
-        def failing_stream():
+                def failing_stream(events, closures):
+                    try:
+                        yield from events
+                        raise RuntimeError("private upstream error details")
+                    finally:
+                        closures.append(True)
+
+                result = self.consume_stream(
+                    failing_stream(events, closures), displayed.append
+                )
+
+                self.assertEqual(
+                    result.reason, ModelResponseEndReason.STREAM_READ_FAILED
+                )
+                self.assertEqual(result.text, text)
+                self.assertEqual("".join(displayed), text)
+                self.assertIs(result.usage, usage)
+                self.assertEqual(result.error.code, "stream_read_failed")
+                self.assertIn("incomplete", result.error.message)
+                self.assertNotIn("private upstream error details", result.error.message)
+                self.assertIsNone(result.incomplete_details)
+                self.assertEqual(closures, [True])
+
+    def test_keyboard_interrupt_propagates_and_closes(self):
+        closures = []
+
+        def interrupted_stream():
             try:
                 yield TextDeltaEvent(delta="partial")
-                raise failure
+                raise KeyboardInterrupt
             finally:
                 closures.append(True)
 
-        with self.assertRaises(RuntimeError) as caught:
-            consume_stream(failing_stream(), displayed.append)
+        displayed = []
+        with self.assertRaises(KeyboardInterrupt):
+            self.consume_stream(interrupted_stream(), displayed.append)
 
-        self.assertIs(caught.exception, failure)
         self.assertEqual(displayed, ["partial"])
         self.assertEqual(closures, [True])
 
@@ -204,7 +266,9 @@ class StreamConsumerTests(unittest.TestCase):
             raise failure
 
         with self.assertRaises(RuntimeError) as caught:
-            consume_stream(recording_stream(events, reads, closures), failing_display)
+            self.consume_stream(
+                recording_stream(events, reads, closures), failing_display
+            )
 
         self.assertIs(caught.exception, failure)
         self.assertEqual(reads, events[:1])

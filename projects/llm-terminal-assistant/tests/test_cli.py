@@ -161,6 +161,76 @@ class StreamConversationTurnTests(unittest.TestCase):
         self.assertIs(response.usage, usage)
         self.assertEqual(response.tool_calls, [])
 
+    def test_total_timing_includes_preparation_reading_and_cleanup(self):
+        def exercise(expected_reason, first_text):
+            now = [100.0]
+            closed = []
+            client = FakeClient(self.config)
+            encode = self.budgeter.request_encoder.encode_request
+
+            def timed_encode(request):
+                now[0] += 2.0
+                return encode(request)
+
+            def timed_stream(request):
+                try:
+                    now[0] += 1.0
+                    yield TextDeltaEvent("")
+                    now[0] += 1.0
+                    yield UsageEvent(make_response("").usage)
+                    now[0] += 1.0
+                    if first_text is not None:
+                        yield TextDeltaEvent(first_text)
+                    now[0] += 2.0
+                    if first_text is not None:
+                        yield TextDeltaEvent("later")
+                    if expected_reason == ModelResponseEndReason.STREAM_READ_FAILED:
+                        raise RuntimeError("read failed")
+                    if expected_reason == ModelResponseEndReason.COMPLETED_NORMALLY:
+                        yield EndEvent(expected_reason, None, None)
+                finally:
+                    now[0] += 4.0
+                    closed.append(True)
+
+            with (
+                patch.object(
+                    self.budgeter.request_encoder,
+                    "encode_request",
+                    side_effect=timed_encode,
+                ),
+                patch.object(client, "send_stream", side_effect=timed_stream),
+            ):
+                response, _ = send_stream_conversation_turn(
+                    client=client,
+                    budgeter=self.budgeter,
+                    system_message=self.system,
+                    completed_turns=[],
+                    current_user_message=self.user,
+                    reserved_output_tokens=128,
+                    min_reserved_recent_turns=1,
+                    display_text=lambda delta: None,
+                    clock=lambda: now[0],
+                )
+
+            self.assertEqual(response.reason, expected_reason)
+            self.assertEqual(
+                response.text, "" if first_text is None else first_text + "later"
+            )
+            self.assertEqual(closed, [True])
+            self.assertEqual(response.timing.total_seconds, 11.0)
+            self.assertEqual(
+                response.timing.ttft_seconds, None if first_text is None else 5.0
+            )
+
+        for reason in (
+            ModelResponseEndReason.COMPLETED_NORMALLY,
+            ModelResponseEndReason.STREAM_READ_FAILED,
+            ModelResponseEndReason.MISSING_END_EVENT,
+        ):
+            for first_text in ("partial", " \n", None):
+                with self.subTest(reason=reason, first_text=first_text):
+                    exercise(reason, first_text)
+
     def test_budget_rejection_prevents_stream_creation_and_display(self):
         self.budgeter.model_limits = ModelLimits(context_window_tokens=1)
         client = FakeClient(self.config)
@@ -386,6 +456,43 @@ class TalkTests(unittest.TestCase):
                     "Please enter your prompt (type 'exit' to quit):\n\n"
                     f"Model Response: \npartial answer\n{notice}\nExiting...\n",
                 )
+
+    def test_stream_read_failure_keeps_partial_text_and_displays_notice(self):
+        config = replace(self.config, stream_output_enabled=True)
+        client = FakeClient(config)
+        output = StringIO()
+        closures = []
+
+        def failing_stream(request):
+            try:
+                yield TextDeltaEvent("partial answer")
+                self.assertTrue(output.getvalue().endswith("partial answer"))
+                raise RuntimeError("private upstream error details")
+            finally:
+                closures.append(True)
+
+        with (
+            patch(
+                "llm_terminal_assistant.cli.prompt", side_effect=["question", "exit"]
+            ),
+            patch(
+                "llm_terminal_assistant.cli.create_default_tool_registry",
+                return_value=self.registry,
+            ),
+            patch.object(client, "send_stream", side_effect=failing_stream) as send,
+            redirect_stdout(output),
+        ):
+            talk(client, config, self.budgeter)
+
+        send.assert_called_once()
+        self.assertEqual(closures, [True])
+        self.assertEqual(
+            output.getvalue(),
+            "Please enter your prompt (type 'exit' to quit):\n\n"
+            "Model Response: \npartial answer\n"
+            "Streaming response could not be read. The answer may be incomplete.\n"
+            "Exiting...\n",
+        )
 
     def test_disabled_streaming_keeps_full_response_output_and_tool_definitions(self):
         self.config = replace(self.config, stream_output_enabled=False)

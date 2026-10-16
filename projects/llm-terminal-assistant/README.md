@@ -11,6 +11,8 @@
 - 每轮发送前记录输入项、消息、工具调用、工具结果和工具定义的数量，不把消息正文写入日志。
 - 每次生成调用前执行请求级 Token 预算检查；上下文窗口或最大输入超限时，按完整问答轮次从旧到新裁剪历史，直到请求通过或达到强制保留边界。
 - 将 OpenAI Responses API 的正文、结束状态、usage 和工具请求转换为项目自己的 `ModelResponse`。
+- 支持回答正文的流式展示，将 SDK 事件转换为应用的文本增量、用量和终止事件；保留部分正文并提示截断、读取失败或缺少终止事件。
+- 使用可注入的单调时钟测量首个可展示内容延迟（TTFT）和总耗时，随流式响应返回计时结果。
 - 通过注册表和参数 Schema 校验工具请求，执行只读 `get_current_time` 工具，并在同一用户轮次内连续回传结果；未注册工具返回稳定的拒绝结果。
 - 为每轮工具流程设置工具回传轮数、模型请求次数和实际工具执行次数的独立上限，触发保护时记录停止原因并允许继续提问。
 - 将应用请求中的 temperature 和 top-p 映射到 OpenAI Responses API 的 `temperature` 和 `top_p` 请求选项，并提供单变量批量实验入口。
@@ -19,7 +21,7 @@
 - 使用固定 revision 的 DeepSeek-V4.1-Flash tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
 
-当前课程阶段尚未将学习卡片生成和验证接入终端对话或远程模型请求，也没有实现旧历史摘要、流式响应或重试。连接失败和超时等 SDK 异常目前会从 `OpenAIClient.send()` 原样抛出；将其转换为项目自有错误的逻辑留待后续可靠性课程实现。
+当前课程阶段尚未将学习卡片生成和验证接入终端对话或远程模型请求，也没有实现旧历史摘要、应用级超时控制、等待中的主动取消或有限退避重试。非流式调用的连接失败和超时等 SDK 异常目前会从 `OpenAIClient.send()` 原样抛出；流式消费者已将读取事件时的普通异常转换为独立失败状态，但尚未进一步区分网络错误类别或实现恢复策略。
 
 ## 项目结构
 
@@ -44,6 +46,10 @@ src/llm_terminal_assistant/
 ├── model.py
 ├── prompt_experiment.py
 ├── sampling_experiment.py
+├── stream/
+│   ├── consumer.py
+│   ├── events.py
+│   └── timing.py
 ├── structured_output/
 │   ├── business_rules.py
 │   ├── errors.py
@@ -75,6 +81,7 @@ tests/
 - `message.py`、`model.py`：服务商无关的消息、请求、响应、usage 和工具请求结构。
 - `prompt_experiment.py`：组合零样本或少样本 Prompt 与固定评测集，执行独立请求并保存待人工评判的实验记录。
 - `sampling_experiment.py`：用固定输入重复执行彼此独立的单变量请求，并逐条保存实验记录。
+- `stream/`：应用流事件协议、增量消费与流关闭，以及流式响应的计时数据。
 - `structured_output/`：学习卡片的四步验证流水线、稳定错误类别、安全日志和项目类型。
 - `token_counter.py`：Token 计数器协议。
 - `token_count_cli.py`：读取四类固定样本并输出字符数、Token 数和计数环境元数据。
@@ -107,18 +114,19 @@ uv sync --extra token-counting
 
 程序从项目根目录的 `.env` 或当前进程环境读取以下变量：
 
-| 变量                  | 含义                                                   |
-| --------------------- | ------------------------------------------------------ |
-| `PROVIDER`            | 客户端类型：`faked` 或 `openai`                        |
-| `API_KEY`             | 远程模型服务凭据；fake 模式不会使用                    |
-| `BASE_URL`            | OpenAI Responses API 或兼容服务的基础 URL              |
-| `MODEL`               | 请求使用的模型标识或显式的 `fake-model`                |
-| `REASONING_EFFORT`    | OpenAI Responses API 的 reasoning effort；省略时不发送 |
-| `TEMPERATURE`         | OpenAI Responses API 的 `temperature`；省略时不发送    |
-| `TOP_P`               | OpenAI Responses API 的 `top_p`；省略时不发送          |
-| `MAX_TOOL_ROUNDS`     | 每轮最大工具回传轮数；默认 3                           |
-| `MAX_MODEL_REQUESTS`  | 每轮最大模型请求次数，包含首次请求；默认 4             |
-| `MAX_TOOL_EXECUTIONS` | 每轮最大实际工具执行次数；默认 8                       |
+| 变量                    | 含义                                                   |
+| ----------------------- | ------------------------------------------------------ |
+| `PROVIDER`              | 客户端类型：`faked` 或 `openai`                        |
+| `API_KEY`               | 远程模型服务凭据；fake 模式不会使用                    |
+| `BASE_URL`              | OpenAI Responses API 或兼容服务的基础 URL              |
+| `MODEL`                 | 请求使用的模型标识或显式的 `fake-model`                |
+| `REASONING_EFFORT`      | OpenAI Responses API 的 reasoning effort；省略时不发送 |
+| `TEMPERATURE`           | OpenAI Responses API 的 `temperature`；省略时不发送    |
+| `TOP_P`                 | OpenAI Responses API 的 `top_p`；省略时不发送          |
+| `MAX_TOOL_ROUNDS`       | 每轮最大工具回传轮数；默认 3                           |
+| `MAX_MODEL_REQUESTS`    | 每轮最大模型请求次数，包含首次请求；默认 4             |
+| `MAX_TOOL_EXECUTIONS`   | 每轮最大实际工具执行次数；默认 8                       |
+| `STREAM_OUTPUT_ENABLED` | 回答正文流式展示开关；默认 `false`，设为 `true` 开启   |
 
 本地 `.env` 不应提交。示例值必须使用占位符：
 
@@ -304,6 +312,28 @@ HF_HUB_OFFLINE=1 MODEL=deepseek-flash \
 
 离线命令在指定 revision 的 tokenizer 文件尚未缓存时会失败。Hugging Face Hub 的[缓存说明](https://huggingface.co/docs/huggingface_hub/main/guides/manage-cache)和[环境变量参考](https://huggingface.co/docs/huggingface_hub/main/package_reference/environment_variables)描述了缓存位置与离线开关。本次样本计数结果和观察结论记录在 [Token 与上下文窗口练习回答](../../notes/llm/answers/tokens-and-context.md)中。该记录中的计数由 DeepSeek-V4-Flash-0731 的 tokenizer 产生；上述入口现在加载 DeepSeek-V4.1-Flash 的 tokenizer，因此重新计数得到的数值未必与记录一致。
 
+## 回答正文的流式展示
+
+本节对应[流式输出与可靠性任务 1](../../notes/llm/streaming-and-reliability.md#任务-1接入回答正文的流式展示必须)。`STREAM_OUTPUT_ENABLED` 是应用自己的配置项，接受 `true` 或 `false`，忽略大小写和两端空白，其他值会报配置错误。在项目目录执行：
+
+```shell
+PROVIDER=faked MODEL=fake-model STREAM_OUTPUT_ENABLED=true \
+  uv run llm-terminal-assistant
+```
+
+终端入口 `talk()` 根据开关选择发送流程：开启时调用 `send_stream_conversation_turn()`，先准备请求、裁剪历史并检查预算，再调用客户端的 `send_stream()`，交给 `consume_stream()` 逐段展示正文；关闭时使用既有的 `send_conversation_turn()` 工具调用流程。流式请求不携带工具定义，工具调用和结构化生成继续使用完整响应处理流程。
+
+正文增量原样展示一次，回答结束后界面固定补一个换行，再输出必要的状态提示。用量和终止信息不作为正文打印。消费者收到终止事件后停止读取并关闭流；输出截断、读取异常或没有终止事件就耗尽时，保留已收到的正文，并提示回答不完整。读取异常返回 `STREAM_READ_FAILED`，自然耗尽但没有终止事件返回 `MISSING_END_EVENT`，两者均不视为正常完成。未收到应用用量事件时，响应的 `usage` 为 `None`，表示未知。
+
+单轮入口返回的 `ModelResponse.timing` 保存以下应用侧计时，单位为秒，目前不打印到终端：
+
+- `ttft_seconds`：从进入单轮处理函数、开始准备请求之前，到首次将非空正文交给展示回调之前。空字符串和用量事件不触发计时，空格和换行属于正文；没有非空正文时为 `None`。
+- `total_seconds`：从同一起点到消费者关闭流之后，包含请求准备、预算检查、读取、展示回调和流关闭所用的时间。
+
+两项测量共用 `time.monotonic` 时钟及起点；测试可以注入可控时钟，无需真实等待。这一 TTFT 口径不代表服务端生成首个 Token 的内部耗时。计时数据类型位于 `stream/timing.py`，非流式响应默认不携带计时数据。
+
+默认 fake 正常响应只产生一个正文增量，因此上述命令用于确认入口、开关和输出，不能单独证明多片段展示时机。预设多个增量、用量、正常终止、截断、读取异常和无终止事件的路径，由下列离线测试验证。
+
 ## 验证
 
 默认自动化测试完全离线，使用确定性的 fake Token 计数器和记录调用次数的 fake 客户端，不加载 Hugging Face tokenizer、访问网络、要求 API Key 或产生模型费用：
@@ -311,6 +341,18 @@ HF_HUB_OFFLINE=1 MODEL=deepseek-flash \
 ```shell
 uv run python -m unittest discover -s tests -v
 ```
+
+流式相关测试可以分别执行：
+
+```shell
+uv run python -m unittest discover -s tests -p 'test_stream_consumer.py' -v
+uv run python -m unittest discover -s tests -p 'test_cli.py' -v
+uv run python -m unittest discover -s tests -p 'test_openai_client.py' -v
+uv run python -m unittest discover -s tests -p 'test_fake_client.py' -v
+uv run python -m unittest discover -s tests -p 'test_config.py' -v
+```
+
+消费者测试检查增量、最终状态、用量保留和关闭行为；单轮入口与终端测试检查预算、增量展示时机、失败提示、历史复用以及开关。可控时钟验证空正文和用量不触发 TTFT、首个非空正文只记录一次、无正文时保持未知，以及总耗时包含请求准备和流关闭。适配器使用 SDK 替身验证映射与关闭，不访问真实服务；这些测试不代表已验证远程服务端到端可用。适配范围遵循[项目流式用量验收边界](AGENTS.md#流式用量适配的验收边界)。
 
 学习卡片 Schema 位于 `schemas/study-card.schema.json`。Schema 测试使用 Python `jsonschema` 库的 Draft 2020-12 验证器验收结构约束；流水线测试覆盖合法对象、坏 JSON、截断 JSON、缺失字段、错误类型、无效来源、字段路径和安全错误日志。可以分别执行：
 
@@ -326,10 +368,10 @@ uv run ruff format --check src tests
 uv run ruff check src tests
 ```
 
-离线手动验收：
+非流式离线手动验收（流式入口见上节）：
 
 ```shell
-PROVIDER=faked MODEL=fake-model uv run llm-terminal-assistant
+PROVIDER=faked MODEL=fake-model STREAM_OUTPUT_ENABLED=false uv run llm-terminal-assistant
 ```
 
 依次输入至少两轮不同问题，确认：
