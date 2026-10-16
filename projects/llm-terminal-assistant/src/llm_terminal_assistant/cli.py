@@ -27,6 +27,7 @@ from llm_terminal_assistant.model import (
     ModelResponseEndReason,
 )
 from llm_terminal_assistant.stream.consumer import consume_stream
+from llm_terminal_assistant.terminal_output import TerminalLogHandler, TerminalOutput
 from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.executor import ToolExecutor
@@ -37,9 +38,7 @@ from llm_terminal_assistant.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
-)
+terminal_output = TerminalOutput()
 
 DEFAULT_TOOL_LOOP_LIMITS = ToolLoopLimits()
 
@@ -48,24 +47,30 @@ def output_response_status(response: ModelResponse) -> None:
     if response.reason == ModelResponseEndReason.COMPLETED_NORMALLY:
         pass
     elif response.reason == ModelResponseEndReason.REQUEST_FAILED:
-        print(f"Request was failed: [{response.error.code}] {response.error.message}")
+        terminal_output.write_line(
+            f"Request was failed: [{response.error.code}] {response.error.message}"
+        )
     elif response.reason == ModelResponseEndReason.REQUEST_CANCELLED:
-        print("Request was cancelled.")
+        terminal_output.write_line("Request was cancelled.")
     elif response.reason == ModelResponseEndReason.REQUEST_INCOMPLETE:
-        print(f"Request was incomplete: {response.incomplete_details.reason}")
+        terminal_output.write_line(
+            f"Request was incomplete: {response.incomplete_details.reason}"
+        )
     elif response.reason == ModelResponseEndReason.MISSING_END_EVENT:
-        print(
+        terminal_output.write_line(
             "Streaming response ended without a terminal event. "
             "The answer may be incomplete."
         )
     elif response.reason == ModelResponseEndReason.STREAM_READ_FAILED:
-        print("Streaming response could not be read. The answer may be incomplete.")
+        terminal_output.write_line(
+            "Streaming response could not be read. The answer may be incomplete."
+        )
 
 
 def output_model_response(response: ModelResponse):
-    print("Model Response: ")
+    terminal_output.write_line("Model Response: ")
     if response.reason == ModelResponseEndReason.COMPLETED_NORMALLY:
-        print(response.text)
+        terminal_output.write_line(response.text)
     output_response_status(response)
 
 
@@ -231,25 +236,25 @@ def send_stream_conversation_turn(
 
 
 def print_text_delta(delta: str) -> None:
-    print(delta, end="", flush=True)
+    terminal_output.write_text(delta)
 
 
 def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
     completed_turns: list[ConversationTurn] = []
     registry: ToolRegistry = create_default_tool_registry()
     tool_executor = ToolExecutor(tool_registry=registry)
-    print("Please enter your prompt (type 'exit' to quit):\n")
+    terminal_output.write_line("Please enter your prompt (type 'exit' to quit):\n")
     while True:
         user_input = prompt("> ", multiline=False)
         if user_input.strip().lower() == "exit":
-            print("Exiting...")
+            terminal_output.write_line("Exiting...")
             return
         reserved_output_tokens = config.default_reserved_output_tokens
         system_msg = Message(role="system", content="You are a helpful assistant.")
         user_msg = Message(role="user", content=user_input)
         try:
             if config.stream_output_enabled:
-                print("Model Response: ")
+                terminal_output.write_line("Model Response: ")
                 model_response, trim_result = send_stream_conversation_turn(
                     client=client,
                     budgeter=budgeter,
@@ -297,7 +302,9 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
             model_response.reason == ModelResponseEndReason.COMPLETED_NORMALLY
             and model_response.tool_calls
         ):
-            print("No final answer was produced. Additional tool calls remain pending.")
+            terminal_output.write_line(
+                "No final answer was produced. Additional tool calls remain pending."
+            )
             continue
         completed_turns = trim_result.retained_completed_turns
         current_turn_start = 1 + sum(len(turn.items) for turn in completed_turns)
@@ -307,13 +314,18 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
             ConversationTurn(items=[*current_turn_input, assistant_msg])
         )
         if config.stream_output_enabled:
-            print()
+            terminal_output.write_line()
             output_response_status(model_response)
         else:
             output_model_response(model_response)
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[TerminalLogHandler(terminal_output)],
+    )
     try:
         config = load_model_config()
     except ValueError:

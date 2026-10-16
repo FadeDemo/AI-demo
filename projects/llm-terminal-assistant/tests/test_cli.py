@@ -1,4 +1,5 @@
 import json
+import logging
 import unittest
 from contextlib import redirect_stdout
 from dataclasses import replace
@@ -21,6 +22,7 @@ from llm_terminal_assistant.budgeter import (
     BudgetRejectionReason,
 )
 from llm_terminal_assistant.cli import (
+    main,
     send_conversation_turn,
     send_stream_conversation_turn,
     talk,
@@ -492,6 +494,65 @@ class TalkTests(unittest.TestCase):
             "Model Response: \npartial answer\n"
             "Streaming response could not be read. The answer may be incomplete.\n"
             "Exiting...\n",
+        )
+
+    def test_main_interleaves_logs_without_changing_response_or_history(self):
+        config = replace(self.config, stream_output_enabled=True)
+        client = FakeClient(config)
+        output = StringIO()
+        responses = []
+        root = logging.getLogger()
+
+        def logged_stream(request):
+            client.requests.append(request)
+            yield TextDeltaEvent("你好")
+            logging.getLogger("llm_terminal_assistant.adapter.openai_client").warning(
+                "example event"
+            )
+            yield TextDeltaEvent("继续")
+            yield EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None)
+
+        def observed_turn(*args, **kwargs):
+            result = send_stream_conversation_turn(*args, **kwargs)
+            responses.append(result[0])
+            return result
+
+        with (
+            patch.object(root, "handlers", []),
+            patch.object(root, "level", logging.WARNING),
+            patch("llm_terminal_assistant.cli.load_model_config", return_value=config),
+            patch(
+                "llm_terminal_assistant.cli.create_model_client", return_value=client
+            ),
+            patch(
+                "llm_terminal_assistant.cli.create_budgeter", return_value=self.budgeter
+            ),
+            patch(
+                "llm_terminal_assistant.cli.create_default_tool_registry",
+                return_value=self.registry,
+            ),
+            patch(
+                "llm_terminal_assistant.cli.prompt",
+                side_effect=["first", "second", "exit"],
+            ),
+            patch(
+                "llm_terminal_assistant.cli.send_stream_conversation_turn",
+                side_effect=observed_turn,
+            ),
+            patch.object(client, "send_stream", side_effect=logged_stream),
+            redirect_stdout(output),
+        ):
+            try:
+                main()
+            finally:
+                for handler in root.handlers:
+                    handler.close()
+
+        self.assertEqual([response.text for response in responses], ["你好继续"] * 2)
+        self.assertIn(Message("assistant", "你好继续"), client.requests[1].input)
+        self.assertEqual(output.getvalue().count("[WARNING] example event"), 2)
+        self.assertRegex(
+            output.getvalue(), r"你好\n[^\n]*\[WARNING\] example event\n继续\n"
         )
 
     def test_disabled_streaming_keeps_full_response_output_and_tool_definitions(self):
