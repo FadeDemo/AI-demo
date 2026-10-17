@@ -145,6 +145,16 @@ use-venv projects/llm-terminal-assistant --editor cursor --rollback-cursor-api
 
 Cursor 的自动化由仓库维护的 `ai-demo-local.use-venv-helper` 辅助扩展执行。它不是微软官方扩展，也不需要上架市场；扩展包随独立脚本内嵌，脚本在两项检查允许继续后按需安装或更新。首次安装而当前窗口尚未加载扩展时，需要从 Cursor 外部终端运行，脚本会正常退出并重新打开 Cursor；遇到保存确认或退出超时会停止，不强制退出。已有辅助扩展可响应时，更新通过窗口重载加载。如果扩展已安装却无法连接，脚本会限时等待并报错，不退回界面自动化。
 
+辅助扩展会在 Cursor 启动、现有 `pylint.interpreter` 配置变化以及显式切换环境时，同步 Python 扩展的工作区解释器，并回读语言服务所使用的接口确认结果。它复用脚本已维护的解释器路径，不增加 `python.pythonPath` 配置；工作区解释器选择保存在 Cursor 的扩展状态中。扩展只在 Cursor 宿主中启动。更新后首次使用仍需通过脚本安装新版辅助扩展。
+
+需要强制重新安装内嵌的辅助扩展并使其生效时，先打开目标 Cursor 工作区，再运行：
+
+```shell
+use-venv projects/llm-terminal-assistant --editor cursor --reinstall-cursor-helper
+```
+
+此选项跳过版本匹配的快捷路径，强制安装并等待重载后的新实例握手。它也适用于已安装但无法连接的辅助扩展；这种情况下需要从 Cursor 外部终端运行，脚本会正常重启 Cursor。此选项支持 `cursor` 或 `both`，不能与 API 回滚同时使用。
+
 辅助扩展只监听本机回环地址，使用保存在用户私有目录中的随机令牌验证请求，并核对完整工作区路径；同一工作区存在多个可响应窗口时拒绝操作。连接信息和终端探测文件位于 `~/Library/Application Support/use-venv/helper/`。重载完成以新实例握手为准，不依赖窗口标题或前台焦点。源码位于 `scripts/cursor-helper/`；修改后运行 `python3 scripts/cursor-helper/build.py` 更新脚本中的内嵌包，再重新安装全局命令。
 
 通常无需主动重新加载。显式追加 `--reload` 时，Cursor 通过辅助扩展重载目标工作区；VS Code 保持通过 View 菜单打开命令面板、匹配中英文重载命令的原有流程。修复流程已经重载过 Cursor 时，不重复重载。未运行的编辑器仍报告待同步，不因 `--reload` 启动。`--no-reload` 作为兼容参数保留。已有终端不会被追溯切换，配置生效后需新建终端。不再需要全局命令时，可以卸载；本地辅助扩展可另用 `cursor --uninstall-extension ai-demo-local.use-venv-helper` 卸载：

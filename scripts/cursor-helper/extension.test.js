@@ -9,6 +9,7 @@ function fixture({
   selected = "/workspace/project/.venv/bin/python",
   venv = "/workspace/project/.venv",
   closeTerminal = true,
+  analysisMatches = true,
 } = {}) {
   const commands = [];
   const sent = [];
@@ -31,11 +32,30 @@ function fixture({
     setEnvironment: async () => {},
     getEnvironment: async () => ({ execInfo: { run: { executable: selected } } }),
   };
+  let analysisInterpreter;
+  const analysisUpdates = [];
+  const pythonApi = {
+    environments: {
+      updateActiveEnvironmentPath: async (interpreter, scope) => {
+        analysisUpdates.push({ interpreter, scope });
+        if (analysisMatches) analysisInterpreter = interpreter;
+      },
+    },
+    settings: { getExecutionDetails: () => ({ execCommand: [analysisInterpreter] }) },
+  };
   const vscode = {
-    workspace: { workspaceFolders: [{ uri: { fsPath: "/workspace" } }] },
+    workspace: {
+      workspaceFolders: [{ uri: { fsPath: "/workspace" } }],
+      getConfiguration: () => ({ get: () => ["${workspaceFolder}/project/.venv/bin/python"] }),
+    },
+    env: { appName: "Visual Studio Code" },
     Uri: { file: (value) => value },
     commands: { executeCommand: async (value) => commands.push(value) },
-    extensions: { getExtension: () => ({ activate: async () => api }) },
+    extensions: {
+      getExtension: (id) => ({
+        activate: async () => (id === "ms-python.python" ? pythonApi : api),
+      }),
+    },
     window: {
       createTerminal: (options) => {
         assert.equal(options.env, undefined);
@@ -49,6 +69,7 @@ function fixture({
   };
   const fakeFs = {
     realpathSync: (value) => value,
+    existsSync: () => true,
     mkdtempSync: () => "/private/probe",
     readFileSync: () => JSON.stringify(result),
     rmSync() {},
@@ -74,13 +95,16 @@ function fixture({
   });
   vm.runInContext(
     fs.readFileSync(path.join(__dirname, "extension.js"), "utf8") +
-      "\nmodule.exports.dispatch = dispatch;",
+      "\nmodule.exports.dispatch = dispatch; module.exports.sync = synchronizeConfiguredAnalysis;",
     context,
   );
   return {
     dispatch: context.module.exports.dispatch,
+    sync: context.module.exports.sync,
+    activate: context.module.exports.activate,
     api,
     commands,
+    analysisUpdates,
     sent,
     disposed: () => disposed,
   };
@@ -134,4 +158,33 @@ test("cleanup failure preserves the activation failure", async () => {
     value.dispatch({ ...request, action: "probe" }),
     /did not automatically activate.*cleanup failed:.*disposal was not confirmed/,
   );
+});
+
+test("selection also synchronizes the workspace language-service interpreter", async () => {
+  const value = fixture();
+  await value.dispatch({ ...request, action: "select" });
+  assert.deepEqual(value.analysisUpdates, [
+    { interpreter: request.interpreter, scope: request.workspace },
+  ]);
+});
+
+test("successful project selection cannot hide a stale analysis interpreter", async () => {
+  await assert.rejects(
+    fixture({ analysisMatches: false }).dispatch({ ...request, action: "select" }),
+    /Language service interpreter read-back/,
+  );
+});
+
+test("automatic synchronization resolves existing workspace configuration", async () => {
+  const value = fixture();
+  await value.sync();
+  assert.deepEqual(value.analysisUpdates, [
+    { interpreter: request.interpreter, scope: request.workspace },
+  ]);
+});
+
+test("activation in VS Code has no side effects", () => {
+  const value = fixture();
+  value.activate({ subscriptions: [] });
+  assert.deepEqual(value.analysisUpdates, []);
 });

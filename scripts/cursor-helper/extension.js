@@ -49,6 +49,7 @@ async function dispatch(request) {
       const selected = await api.getEnvironment(scope);
       if (selected?.execInfo?.run?.executable !== request.interpreter)
         throw new Error("Interpreter selection read-back did not match the requested path");
+      await synchronizeAnalysis(request.workspace, request.interpreter);
       return { interpreter: selected.execInfo.run.executable };
     }
     case "probe":
@@ -144,7 +145,55 @@ async function probeTerminal(request) {
   return result;
 }
 
+// Serialize automatic and explicitly requested updates to the legacy Python API.
+let analysisQueue = Promise.resolve();
+function synchronizeAnalysis(workspace, interpreter) {
+  const operation = analysisQueue
+    .catch(() => {})
+    .then(async () => {
+      const extension = vscode.extensions.getExtension("ms-python.python");
+      if (!extension) throw new Error("Python extension is not installed");
+      const api = await extension.activate();
+      if (!api?.environments?.updateActiveEnvironmentPath || !api?.settings?.getExecutionDetails)
+        throw new Error("Python extension does not expose interpreter synchronization APIs");
+      const scope = vscode.Uri.file(workspace);
+      await api.environments.updateActiveEnvironmentPath(interpreter, scope);
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const details = await api.settings.getExecutionDetails(scope);
+        if (details.execCommand?.[0] === interpreter) return;
+        await sleep(100);
+      }
+      throw new Error("Language service interpreter read-back did not match the requested path");
+    });
+  analysisQueue = operation;
+  return operation;
+}
+
+async function synchronizeConfiguredAnalysis() {
+  for (const folder of vscode.workspace.workspaceFolders || []) {
+    // use-venv already maintains this exact executable for every editor.
+    const configured = vscode.workspace.getConfiguration("pylint", folder.uri).get("interpreter");
+    if (!Array.isArray(configured) || configured.length !== 1 || typeof configured[0] !== "string")
+      continue;
+    const interpreter = configured[0].replaceAll("${workspaceFolder}", folder.uri.fsPath);
+    if (!path.isAbsolute(interpreter) || !fs.existsSync(interpreter)) continue;
+    await synchronizeAnalysis(folder.uri.fsPath, interpreter);
+  }
+}
+
 function activate(context) {
+  if (!/cursor/i.test(vscode.env.appName)) return;
+  const sync = () => {
+    synchronizeConfiguredAnalysis().catch((error) => {
+      vscode.window.showWarningMessage(`use-venv: ${error.message}`);
+    });
+  };
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("pylint.interpreter")) sync();
+    }),
+  );
+  sync();
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   if (fs.lstatSync(root).isSymbolicLink())
     throw new Error("Helper state directory must not be a symlink");

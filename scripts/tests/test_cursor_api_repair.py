@@ -57,6 +57,23 @@ class CursorApiRepairTests(unittest.TestCase):
         self.verify = mock.patch.object(self.helper, "verify_terminal").start()
         mock.patch.object(self.helper, "discovery_snapshot", return_value={}).start()
 
+    def test_force_helper_reinstall_bypasses_live_matching_instance(self):
+        with (
+            mock.patch.object(
+                self.helper.helper_transport, "find", return_value={"session": "old"}
+            ) as find,
+            mock.patch.object(
+                self.helper.helper_transport, "reload", return_value={"session": "new"}
+            ) as reload,
+            mock.patch.object(self.helper, "run") as run,
+        ):
+            result = self.helper.helper_ready(self.app, self.root, force=True)
+        self.assertEqual(result["session"], "new")
+        self.assertEqual(find.call_count, 1)
+        self.assertIn("--install-extension", run.call_args.args[0])
+        self.assertIn("--force", run.call_args.args[0])
+        reload.assert_called_once_with(self.root, self.helper.HELPER_REVISION)
+
     def execute(self, action="repair-cursor-api"):
         self.helper.execute(action, self.root, self.interpreter)
 
