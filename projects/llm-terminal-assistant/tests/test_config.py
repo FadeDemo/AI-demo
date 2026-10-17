@@ -56,6 +56,40 @@ class ModelConfigTests(unittest.TestCase):
 
         self.assertIs(config.stream_output_enabled, False)
 
+    def test_missing_timeout_settings_use_defaults(self):
+        config = self.load_config()
+
+        self.assertEqual(
+            config.request_timeout_config, RequestTimeoutConfig(10.0, 30.0, 30.0, 120.0)
+        )
+
+    def test_each_timeout_setting_can_override_its_default(self):
+        cases = (
+            ("CONNECT_SECONDS", RequestTimeoutConfig(0.25, 30.0, 30.0, 120.0)),
+            ("FIRST_EVENT_SECONDS", RequestTimeoutConfig(10.0, 0.25, 30.0, 120.0)),
+            ("STREAM_IDLE_SECONDS", RequestTimeoutConfig(10.0, 30.0, 0.25, 120.0)),
+            ("REQUEST_DEADLINE_SECONDS", RequestTimeoutConfig(10.0, 30.0, 30.0, 0.25)),
+        )
+        for name, expected in cases:
+            with self.subTest(name=name):
+                config = self.load_config({name: "0.25"})
+
+                self.assertEqual(config.request_timeout_config, expected)
+
+    def test_invalid_timeout_settings_identify_the_configuration_item(self):
+        for name in (
+            "CONNECT_SECONDS",
+            "FIRST_EVENT_SECONDS",
+            "STREAM_IDLE_SECONDS",
+            "REQUEST_DEADLINE_SECONDS",
+        ):
+            for value in ("", " ", "invalid", "0", "-1", "nan", "inf", "-inf"):
+                with (
+                    self.subTest(name=name, value=value),
+                    self.assertRaisesRegex(ValueError, name),
+                ):
+                    self.load_config({name: value})
+
     def test_deepseek_api_id_resolves_to_1017_profile(self):
         config = self.load_config({"MODEL": "deepseek-flash", "PROVIDER": "openai"})
 

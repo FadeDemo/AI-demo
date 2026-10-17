@@ -76,6 +76,16 @@ def read_positive_int_env(name: str) -> int | None:
     return value
 
 
+def read_float_env(name: str, default: float) -> float:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a float, got {raw_value}.") from error
+
+
 def load_model_config() -> ModelConfig:
     load_dotenv(ENV_FILE, override=False)
     api_key = os.getenv("API_KEY")
@@ -92,6 +102,10 @@ def load_model_config() -> ModelConfig:
     temperature = os.getenv("TEMPERATURE")
     top_p = os.getenv("TOP_P")
     stream_output_enabled = os.getenv("STREAM_OUTPUT_ENABLED", "false")
+    connect_seconds = read_float_env("CONNECT_SECONDS", 10.0)
+    first_event_seconds = read_float_env("FIRST_EVENT_SECONDS", 30.0)
+    stream_idle_seconds = read_float_env("STREAM_IDLE_SECONDS", 30.0)
+    request_deadline_seconds = read_float_env("REQUEST_DEADLINE_SECONDS", 120.0)
     if temperature is not None:
         temperature = float(temperature)
         if not (
@@ -137,4 +151,10 @@ def load_model_config() -> ModelConfig:
         model_profile=model_profile,
         tool_loop_limits=ToolLoopLimits(**tool_loop_limits),
         stream_output_enabled=stream_output_enabled,
+        request_timeout_config=RequestTimeoutConfig(
+            connect_seconds=connect_seconds,
+            first_event_seconds=first_event_seconds,
+            stream_idle_seconds=stream_idle_seconds,
+            request_deadline_seconds=request_deadline_seconds,
+        ),
     )
