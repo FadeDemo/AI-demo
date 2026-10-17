@@ -18,7 +18,7 @@
 - 将应用请求中的 temperature 和 top-p 映射到 OpenAI Responses API 的 `temperature` 和 `top_p` 请求选项，并提供单变量批量实验入口。
 - 提供基于 JSON Schema Draft 2020-12 的学习卡片数据契约，并用真实 Schema 验证器完成默认离线测试。
 - 提供学习卡片的 JSON 解析、Schema 校验、来源业务规则校验和项目类型转换流水线；失败日志只包含错误类别、字段路径和请求 ID。
-- 使用固定 revision 的 DeepSeek-V4.1-Flash tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
+- 使用固定 revision 的 DeepSeek-V4.1-Flash-1017 tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
 
 当前课程阶段尚未将学习卡片生成和验证接入终端对话或远程模型请求，也没有实现旧历史摘要、应用级超时控制、等待中的主动取消或有限退避重试。非流式调用的连接失败和超时等 SDK 异常目前会从 `OpenAIClient.send()` 原样抛出；流式消费者已将读取事件时的普通异常转换为独立失败状态，但尚未进一步区分网络错误类别或实现恢复策略。
@@ -141,6 +141,12 @@ MODEL=<model-id>
 
 历史裁剪使用应用配置 `min_reserved_recent_turns` 声明至少保留的最近完整轮次数，当前默认值为 1。该值属于应用策略，不发送给模型服务，也不通过环境变量覆盖。
 
+### 当前 DeepSeek 模型档案
+
+`MODEL=deepseek-flash` 是发送给 DeepSeek Responses API 的模型 ID；项目将其解析为 `DEEPSEEK_V41_FLASH_1017`，档案 ID 为 `deepseek-v4.1-flash-1017`。本地 tokenizer 来自 [DeepSeek-V4.1-Flash-1017 官方仓库](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017)，固定 revision 为 `1bae0e1088993b9b82de08f59de5be5a34e42170`；预算编码使用同一 revision 的官方编码器，通过 `PromptFormat.DEEPSEEK_V41_1017` 独立分派，来源与哈希见[编码器来源记录](src/llm_terminal_assistant/_vendor/deepseek_ai/deepseek_v41_1017/UPSTREAM.md)。本地固定版本用于明确计数依据，不能锁定浮动 API 模型 ID 背后的服务端版本。
+
+旧 V4 和 V4.1 档案及其编码器仍保留，分别描述原有版本；当前模型映射不再指向它们。DeepSeek Responses API 的 `reasoning.effort` 可通过 `REASONING_EFFORT` 配置，新档案允许 `minimal/low/medium/high/xhigh/max/ultra`，`none` 由客户端单独放行以关闭思考。预算编码将 `ultra` 按 `max` 编码，发送给 API 的值仍为 `ultra`。历史兼容依据与参数边界见[项目 Agent 规则](AGENTS.md#deepseek-模型档案与推理强度的兼容边界)。
+
 ## 运行
 
 终端输入由 `prompt_toolkit` 接收。在支持 bracketed paste（带粘贴边界标记）的终端中，粘贴整段文本不会自动发送，即使文本末尾带换行也会等待你按 Enter；按 Enter 后，整段作为一条用户消息提交，无需额外命令。单独输入 `exit` 后按 Enter 退出，退出命令忽略大小写和首尾空白。
@@ -164,7 +170,7 @@ Model request: input_item_count=4 message_count=4 tool_call_count=0 tool_result_
 
 默认 fake 响应不提出工具调用，因此两轮都只有普通消息；请求仍携带注册表中的工具定义。日志不应出现消息正文。
 
-如果只让生成客户端使用 fake 响应，同时仍按 DeepSeek-V4.1-Flash 的真实消息格式和 tokenizer 检查预算，则执行：
+如果只让生成客户端使用 fake 响应，同时仍按 DeepSeek-V4.1-Flash-1017 的真实消息格式和 tokenizer 检查预算，则执行：
 
 ```shell
 PROVIDER=faked MODEL=deepseek-flash \
@@ -263,7 +269,7 @@ REASONING_EFFORT=high \
 
 这条命令会发出 60 次真实模型请求，可能产生费用并受到速率限制。`--output` 必须指向尚不存在的文件，脚本不会覆盖已有结果；每完成一次请求就立即追加并刷新一条 JSONL 记录，因此中途失败时已完成的结果仍会保留。只要有请求失败，脚本会继续记录剩余请求，并最终返回非零退出码。
 
-示例中的 16384 是本项目针对 `deepseek-v4-flash` 且 OpenAI Responses API 的 `reasoning.effort` 为 `high` 时采用的实验上限，不是所有模型和任务的通用默认值。较早使用 512 和 1024 的实验都观察到 reasoning tokens 在产生正文前耗尽输出预算；16384 的正式实验中 60 条请求均正常完成。这些结论是在 DeepSeek-V4-Flash-0731 上测得的。该模型已下线：旧模型名 `deepseek-v4-flash` 仍可调用，但请求现在由 DeepSeek-V4.1-Flash 提供服务，因此这个上限对当前被服务的模型是否同样适用，尚未验证。本节已保存的结果（`sampling-results/` 下的 JSONL）同样由该模型产生，与改用 `deepseek-flash` 重新运行所得的结果不属于同一个模型，不宜合并比较。`max_output_tokens` 只声明请求允许使用的上限，不要求每条响应消耗完该额度；实际用量仍以服务返回的 usage 为准。
+示例中的 16384 是本项目针对 `deepseek-v4-flash` 且 OpenAI Responses API 的 `reasoning.effort` 为 `high` 时采用的实验上限，不是所有模型和任务的通用默认值。较早使用 512 和 1024 的实验都观察到 reasoning tokens 在产生正文前耗尽输出预算；16384 的正式实验中 60 条请求均正常完成。这些结论是在 DeepSeek-V4-Flash-0731 上测得的。该模型已下线：旧模型名 `deepseek-v4-flash` 仍可调用，但请求现在由 DeepSeek-V4.1-Flash-1017 提供服务，因此这个上限对当前被服务的模型是否同样适用，尚未验证。本节已保存的结果（`sampling-results/` 下的 JSONL）同样由该模型产生，与改用 `deepseek-flash` 重新运行所得的结果不属于同一个模型，不宜合并比较。`max_output_tokens` 只声明请求允许使用的上限，不要求每条响应消耗完该额度；实际用量仍以服务返回的 usage 为准。
 
 每条记录包含输入编号、输入正文、模型、运行序号、所选变量、完整采样设置、输出预算、输出、结束原因、usage 和错误状态。另一个采样参数从环境配置读取；如果省略对应环境变量，它在所有请求中都保持省略，并在记录中保存为 `null`。
 
@@ -295,7 +301,7 @@ TEMPERATURE=0.2 \
 
 ### Token 计数
 
-计数入口使用项目模型标识 `deepseek-flash` 查找模型配置，再通过 Hugging Face Transformers 的 `AutoTokenizer.from_pretrained()` 加载 DeepSeek 官方 `deepseek-ai/DeepSeek-V4.1-Flash` 仓库中固定 revision 的 tokenizer。它读取 `samples/token-counting/` 下的中文、英文、JSON 和 Python 文件原始文本，输出样本路径、原文、Python `len()` 字符数、Token 数、模型标识、仓库、revision 及计数工具版本。
+计数入口使用项目模型标识 `deepseek-flash` 查找模型配置，再通过 Hugging Face Transformers 的 `AutoTokenizer.from_pretrained()` 加载 DeepSeek 官方 `deepseek-ai/DeepSeek-V4.1-Flash-1017` 仓库中固定 revision 的 tokenizer。它读取 `samples/token-counting/` 下的中文、英文、JSON 和 Python 文件原始文本，输出样本路径、原文、Python `len()` 字符数、Token 数、模型标识、仓库、revision 及计数工具版本。
 
 在项目目录执行：
 
@@ -310,7 +316,7 @@ HF_HUB_OFFLINE=1 MODEL=deepseek-flash \
   uv run --extra token-counting token-count
 ```
 
-离线命令在指定 revision 的 tokenizer 文件尚未缓存时会失败。Hugging Face Hub 的[缓存说明](https://huggingface.co/docs/huggingface_hub/main/guides/manage-cache)和[环境变量参考](https://huggingface.co/docs/huggingface_hub/main/package_reference/environment_variables)描述了缓存位置与离线开关。本次样本计数结果和观察结论记录在 [Token 与上下文窗口练习回答](../../notes/llm/answers/tokens-and-context.md)中。该记录中的计数由 DeepSeek-V4-Flash-0731 的 tokenizer 产生；上述入口现在加载 DeepSeek-V4.1-Flash 的 tokenizer，因此重新计数得到的数值未必与记录一致。
+离线命令在指定 revision 的 tokenizer 文件尚未缓存时会失败。Hugging Face Hub 的[缓存说明](https://huggingface.co/docs/huggingface_hub/main/guides/manage-cache)和[环境变量参考](https://huggingface.co/docs/huggingface_hub/main/package_reference/environment_variables)描述了缓存位置与离线开关。本次样本计数结果和观察结论记录在 [Token 与上下文窗口练习回答](../../notes/llm/answers/tokens-and-context.md)中。该记录中的计数由 DeepSeek-V4-Flash-0731 的 tokenizer 产生；上述入口现在加载 DeepSeek-V4.1-Flash-1017 的 tokenizer，因此重新计数得到的数值未必与记录一致。
 
 ## 回答正文的流式展示
 

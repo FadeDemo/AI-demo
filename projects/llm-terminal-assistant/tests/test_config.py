@@ -7,7 +7,7 @@ from llm_terminal_assistant.config import (
     RequestTimeoutConfig,
     load_model_config,
 )
-from llm_terminal_assistant.model import FAKE_MODEL_ID
+from llm_terminal_assistant.model import DEEPSEEK_V41_FLASH_1017, FAKE_MODEL_ID
 from llm_terminal_assistant.tools.loop import ToolLoopLimits
 
 
@@ -55,6 +55,12 @@ class ModelConfigTests(unittest.TestCase):
         config = self.load_config()
 
         self.assertIs(config.stream_output_enabled, False)
+
+    def test_deepseek_api_id_resolves_to_1017_profile(self):
+        config = self.load_config({"MODEL": "deepseek-flash", "PROVIDER": "openai"})
+
+        self.assertEqual(config.model, "deepseek-flash")
+        self.assertIs(config.model_profile, DEEPSEEK_V41_FLASH_1017)
 
     def test_stream_output_setting_parses_booleans_ignoring_case_and_whitespace(self):
         cases = (

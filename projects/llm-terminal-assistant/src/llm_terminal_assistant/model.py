@@ -104,6 +104,7 @@ class PromptFormat(StrEnum):
     FAKE = "fake"
     DEEPSEEK_V4 = "deepseek-v4"
     DEEPSEEK_V41 = "deepseek-v4.1"
+    DEEPSEEK_V41_1017 = "deepseek-v4.1-1017"
 
 
 @dataclass(frozen=True)
@@ -200,13 +201,45 @@ DEEPSEEK_V41_FLASH = ModelProfile(
     prompt_format=PromptFormat.DEEPSEEK_V41,
 )
 
+# https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017
+# API limits: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+# Responses API accepted ultra in the 2026-10-17 probe; see project AGENTS.md.
+DEEPSEEK_V41_FLASH_1017 = ModelProfile(
+    profile_id="deepseek-v4.1-flash-1017",
+    repository="deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    revision="1bae0e1088993b9b82de08f59de5be5a34e42170",
+    limit=ModelLimits(context_window_tokens=1_000_000, max_output_tokens=384_000),
+    allowed_reasoning_efforts=(
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra",
+    ),
+    default_reasoning_effort="high",
+    temperature_config=TemperatureConfig(
+        default_temperature=1.0,
+        min_temperature=0.0,
+        max_temperature=2.0,
+    ),
+    top_p_config=TopPConfig(
+        default_top_p=1.0,
+        min_top_p=0.0,
+        max_top_p=1.0,
+    ),
+    prompt_format=PromptFormat.DEEPSEEK_V41_1017,
+)
+
 MODEL_PROFILES = {
     DEEPSEEK_V4_FLASH.profile_id: DEEPSEEK_V4_FLASH,
     DEEPSEEK_V41_FLASH.profile_id: DEEPSEEK_V41_FLASH,
+    DEEPSEEK_V41_FLASH_1017.profile_id: DEEPSEEK_V41_FLASH_1017,
     FAKE_MODEL_PROFILE.profile_id: FAKE_MODEL_PROFILE,
 }
 
 CURRENT_PROFILE_BY_API_MODEL_ID = {
-    "deepseek-flash": DEEPSEEK_V41_FLASH.profile_id,
+    "deepseek-flash": DEEPSEEK_V41_FLASH_1017.profile_id,
     "fake-model": FAKE_MODEL_PROFILE.profile_id,
 }

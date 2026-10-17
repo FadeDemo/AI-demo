@@ -13,6 +13,8 @@ _REASONING_EFFORT_MAPPING = {
     "high": "high",
     "xhigh": "high",
     "max": "max",
+    # DeepSeek thinking-mode guide: ultra maps to max. Profiles gate acceptance.
+    "ultra": "max",
 }
 
 
@@ -93,6 +95,10 @@ def create_deepseek_request_encoder(
             )
         case PromptFormat.DEEPSEEK_V41:
             from llm_terminal_assistant._vendor.deepseek_ai.deepseek_v41 import (
+                encode_messages,
+            )
+        case PromptFormat.DEEPSEEK_V41_1017:
+            from llm_terminal_assistant._vendor.deepseek_ai.deepseek_v41_1017 import (
                 encode_messages,
             )
         case _:

@@ -99,10 +99,12 @@ DeepSeek 托管 Responses API 明确支持 `function_call_output`，但没有明
 - 转换不修改原始请求、消息或工具定义。除上述调用归并外，保留输入项的顺序和正文，调用与结果通过各自 ID 对应。
 - `Budgeter.check()` 在编码和计数前拒绝空输入列表，抛出 `ValueError`；包含空正文消息的非空列表仍然有效。`to_deepseek_messages` 对空列表返回空列表，不单独补入工具定义。
 - 工具参数 Schema 属于工具定义，应参与编码。约束最终响应的结构化输出 Schema 属于另一条链路，保持 [AGENTS.md 中的编码边界](AGENTS.md#结构化输出与工具参数-schema-的编码边界)。
-- DeepSeek V4 与 V4.1 共用项目消息映射，各自的官方编码器负责对应版本的 Prompt 标记差异。两者都应验证工具定义、调用与结果进入编码文本。
+- DeepSeek V4、V4.1 与 V4.1-Flash-1017 共用项目消息映射，并分别使用固定版本的官方编码器。1017 档案通过 `PromptFormat.DEEPSEEK_V41_1017` 选择独立实现，旧档案继续使用原实现。三个版本都应验证工具定义、调用与结果进入编码文本。
 - 本地预算依据内置编码器及 Token 计数器计算；官方公开格式可以作为实现依据，但不能保证本地编码文本和 Token 数与托管服务完全相同。
 
 ## 官方依据
+
+- [DeepSeek V4.1-Flash-1017 官方编码说明（当前档案固定版本）](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/encoding/README.md)：当前预算编码使用的消息格式与工具编码；本地副本的 revision、哈希及许可证见[来源记录](src/llm_terminal_assistant/_vendor/deepseek_ai/deepseek_v41_1017/UPSTREAM.md)。
 
 - [DeepSeek V4 官方编码说明（项目固定版本）](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731/blob/7872f01b1d1fe23eabc4c98b48bffcef5a386062/encoding/README.md)：消息级工具定义、assistant 工具调用与工具结果的编码规则。
 - [DeepSeek V4.1 官方编码说明（项目固定版本）](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/dba1be0a40aa45a94ad051997016db3960a90277/encoding/README.md)：对应版本的消息格式和工具编码。

@@ -12,6 +12,7 @@ from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     DEEPSEEK_V4_FLASH,
     DEEPSEEK_V41_FLASH,
+    DEEPSEEK_V41_FLASH_1017,
     ModelLimits,
     ModelRequest,
 )
@@ -76,6 +77,48 @@ def make_budgeter(
 
 
 class BudgeterTests(unittest.TestCase):
+    def test_1017_ultra_budget_encoding_matches_max(self):
+        counter = FixedTokenCounter(10)
+        budgeter = Budgeter(
+            token_counter=counter,
+            request_encoder=create_deepseek_request_encoder(DEEPSEEK_V41_FLASH_1017),
+            model_limits=DEEPSEEK_V41_FLASH_1017.limit,
+            safety_margin_tokens=0,
+        )
+        requests = [
+            ModelRequest(
+                input=[Message("user", "QUESTION_SENTINEL")],
+                reserved_output_tokens=20,
+                reasoning_effort=effort,
+            )
+            for effort in ("ultra", "max")
+        ]
+
+        for request in requests:
+            result = budgeter.check(request)
+            self.assertEqual(result.estimated_input_tokens, 10)
+
+        self.assertEqual(len(counter.received_texts), 2)
+        self.assertEqual(counter.received_texts[0], counter.received_texts[1])
+        self.assertIn("Reasoning Effort: 100", counter.received_texts[0])
+        self.assertIn("QUESTION_SENTINEL", counter.received_texts[0])
+        self.assertEqual(requests[0].reasoning_effort, "ultra")
+
+    def test_v41_profiles_keep_separate_encoder_versions(self):
+        from llm_terminal_assistant._vendor.deepseek_ai.deepseek_v41 import (
+            encode_messages as old_encode,
+        )
+        from llm_terminal_assistant._vendor.deepseek_ai.deepseek_v41_1017 import (
+            encode_messages as new_encode,
+        )
+
+        old_encoder = create_deepseek_request_encoder(DEEPSEEK_V41_FLASH)
+        new_encoder = create_deepseek_request_encoder(DEEPSEEK_V41_FLASH_1017)
+
+        self.assertIs(old_encoder.deepseek_message_encoder, old_encode)
+        self.assertIs(new_encoder.deepseek_message_encoder, new_encode)
+        self.assertIsNot(old_encode, new_encode)
+
     def test_empty_input_is_rejected_before_encoding_or_counting(self):
         for tools in ([], [ToolDefinition("clock", "Read clock", {"type": "object"})]):
             with self.subTest(tools=tools):
@@ -130,7 +173,11 @@ class BudgeterTests(unittest.TestCase):
                 )
             ],
         )
-        for profile in (DEEPSEEK_V4_FLASH, DEEPSEEK_V41_FLASH):
+        for profile in (
+            DEEPSEEK_V4_FLASH,
+            DEEPSEEK_V41_FLASH,
+            DEEPSEEK_V41_FLASH_1017,
+        ):
             with self.subTest(profile=profile.profile_id):
                 counter = FixedTokenCounter(10)
                 budgeter = Budgeter(
@@ -283,7 +330,11 @@ class BudgeterTests(unittest.TestCase):
         estimated_input_tokens = 10
         separator = "\N{FULLWIDTH VERTICAL LINE}"
 
-        for profile in (DEEPSEEK_V4_FLASH, DEEPSEEK_V41_FLASH):
+        for profile in (
+            DEEPSEEK_V4_FLASH,
+            DEEPSEEK_V41_FLASH,
+            DEEPSEEK_V41_FLASH_1017,
+        ):
             with self.subTest(profile=profile.profile_id):
                 counter = FixedTokenCounter(estimated_input_tokens)
                 budgeter = Budgeter(

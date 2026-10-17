@@ -5,6 +5,9 @@ from unittest.mock import Mock
 from llm_terminal_assistant.adapter.openai_client import OpenAIClient
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
+    DEEPSEEK_V4_FLASH,
+    DEEPSEEK_V41_FLASH,
+    DEEPSEEK_V41_FLASH_1017,
     ModelOutputFormat,
     ModelRequest,
     ModelResponseEndReason,
@@ -63,6 +66,33 @@ class RecordingResponses:
 
 
 class OpenAIClientTests(unittest.TestCase):
+    def test_ultra_is_allowed_only_by_1017_profile_and_sent_unchanged(self):
+        client = OpenAIClient.__new__(OpenAIClient)
+        client.model = "deepseek-flash"
+        responses = RecordingResponses()
+        client.client = SimpleNamespace(responses=responses)
+
+        for profile in (DEEPSEEK_V4_FLASH, DEEPSEEK_V41_FLASH):
+            with (
+                self.subTest(profile=profile.profile_id),
+                self.assertRaisesRegex(ValueError, "not supported"),
+            ):
+                client.validate_reasoning_effort(
+                    "ultra", profile.allowed_reasoning_efforts
+                )
+
+        client.validate_reasoning_effort(
+            "ultra", DEEPSEEK_V41_FLASH_1017.allowed_reasoning_efforts
+        )
+        client.send(
+            ModelRequest(
+                input=[Message("user", "question")],
+                reserved_output_tokens=20,
+                reasoning_effort="ultra",
+            )
+        )
+        self.assertEqual(responses.create_kwargs["reasoning"], {"effort": "ultra"})
+
     def test_streaming_preserves_request_options_without_affecting_later_send(self):
         requests = [
             ModelRequest(

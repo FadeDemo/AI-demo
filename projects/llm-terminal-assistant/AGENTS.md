@@ -10,6 +10,62 @@
 - 必须区分官方公开格式、托管 API 的明确说明和项目选择的归并策略；不得把项目
   策略描述成已经确认的托管服务器内部行为。
 
+## DeepSeek 模型档案与推理强度的兼容边界
+
+- 区分历史模型档案与浮动 API 模型名当前指向的服务能力。不得仅因 API 模型名
+  相同就覆盖历史档案，也不得用当前服务端的支持情况追溯认定历史档案存在缺陷。
+- `DEEPSEEK_V41_FLASH`（`profile_id="deepseek-v4.1-flash"`）不含 `ultra`
+  有真实请求依据：2026-09-13 接入该档案时，DeepSeek 的思考模式指南已列出
+  `ultra → max`，但 Responses API 参数参考未列出该值。向官方
+  `https://api.deepseek.com` 的 `deepseek-flash` 发送 Responses API 请求，
+  `low`、`minimal`、`max` 均成功，`reasoning.effort="ultra"` 返回 HTTP 400：
+  报错指出 `ultra` 是未知枚举值，允许值为 `none/minimal/low/medium/high/xhigh/max`。
+  因此按用户决定删除 V4.1 档案及本地编码映射中的 `ultra`，保留 `minimal`；
+  旧 V4 档案保持原样。这次实测不能证明更早版本或其他接口也拒绝 `ultra`。
+- 历史证据来自 Claude Code 会话 `4fb9264b-596a-40e4-bb5f-f22704b7cd29`：
+  2026-09-13 北京时间 20:11 的工具结果及 20:13 的用户决定
+  “那先删掉ultra吧，只留minimal，本来gpt评审的时候也只给了minimal”。
+  核查时应结合该实测记录理解官方[思考模式指南](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode)
+  和 [Responses API 参数参考](https://api-docs.deepseek.com/zh-cn/api/create-response)，
+  不得仅凭通用指南中的映射表断定该接口在所有时期都接受 `ultra`。
+- 2026-10-17 已获得新的服务端证据：绕过本地档案校验，使用 OpenAI SDK 的
+  `client.responses.create()` 请求同一官方服务的 `deepseek-flash`，
+  `ultra` 与 `max` 对照均成功，响应 `status` 均为 `completed`，
+  `usage.output_tokens` 分别为 11 和 18。两条请求均为非流式，使用
+  `input="Reply only OK."`、`max_output_tokens=128`、40 秒超时且禁用自动重试。
+  响应 `model` 仅为 `deepseek-flash`，没有具体版本指纹；该实验只能确认当前
+  路由接受 `ultra`，不能独立确认后端模型快照或内部是否映射为 `max`。
+- 新的接受结果允许重新评估后续版本的兼容范围，但不自动修改历史档案。
+  为新版本增加 `ultra` 时，应同时核对档案允许值与本地预算编码映射的依据，
+  并区分服务端已接受与应用已接入。上述 2026-10-17 实测仅记录结果，未修改
+  档案或编码逻辑，不能据此声称应用入口已经支持 `ultra`。
+- 验收示例：发现旧 V4.1 档案未列 `ultra`，不得直接报告为遗漏；为新版本
+  扩展时，应报告对应接口的新证据及需要同步的实现，不得覆盖旧档案来抹去历史差异。
+
+## DeepSeek top_p 校验范围的共识
+
+- 当前 DeepSeek 档案使用 `TopPConfig` 的 `min_top_p=0.0`、`max_top_p=1.0`
+  和 `default_top_p=1.0`。其中 0–1 表达项目允许输入的校验范围，不表示模型在
+  整个区间内都会产生不同的有效采样行为。保持这一已采用的策略，不得仅因官方
+  有效范围为 0.95–1.0，就将下限改成 0.95 或把现有配置报告为缺陷。
+- 历史依据：2026-09-13 Claude Code 会话
+  `4fb9264b-596a-40e4-bb5f-f22704b7cd29` 在北京时间 20:08 核查 DeepSeek
+  Responses API 文档后，明确记录“文档只给上限，下限未定义；0.0 只是拦截用户
+  输入的自然底”，并保留该配置。这是项目校验判断，不能改述成当时已通过真实
+  请求确认 `top_p=0`；截至 2026-10-17 的历史核查未找到这种边界实测记录。
+- 2026-10-17 核查的 [OpenAI Responses API 参数参考](https://developers.openai.com/api/reference/resources/responses/methods/create)
+  明确将 `top_p` 定义为最小值 0、最大值 1，可作为项目采用该范围的参考。
+  DeepSeek 兼容 OpenAI 接口不等于所有参数边界完全相同，不得把 OpenAI 的
+  范围说明当成 DeepSeek 服务端接受零值的直接证据。
+- 同日核查的 [DeepSeek Responses API 参数参考](https://api-docs.deepseek.com/zh-cn/api/create-response)
+  给出 `top_p` 默认值 1、上限 1，未明确标出接受值下限；对于 `deepseek-flash`，
+  思考模式的有效范围是 0.95–1.0，低于 0.95 按 0.95 处理，非思考模式固定为
+  1.0 并忽略传入值。新版 [Hugging Face 模型卡](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/1bae0e1088993b9b82de08f59de5be5a34e42170/README.md)
+  推荐 `top_p=1.0`，未声明允许范围。必须区分这些说明的适用范围与证据强度。
+- 只有用户要求调整策略，或获得目标接口明确的边界说明、可复现的真实请求证据时，
+  才重新评估这一范围。验收示例：本地允许 `top_p=0.5` 而服务端将其按 0.95
+  处理，不构成本地范围配置错误；但不得把传入 0.5 描述为服务端实际以 0.5 采样。
+
 ## 终端响应与历史保存的验收边界
 
 - 当前允许沿用终端对话的历史保存策略：对已经返回的 `ModelResponse`，失败、取消
