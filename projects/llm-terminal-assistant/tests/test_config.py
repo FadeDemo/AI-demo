@@ -56,14 +56,12 @@ class ModelConfigTests(unittest.TestCase):
 
         self.assertIs(config.stream_output_enabled, False)
 
-    def test_missing_timeout_settings_use_defaults(self):
+    def test_missing_timeout_settings_leave_timeout_config_unset(self):
         config = self.load_config()
 
-        self.assertEqual(
-            config.request_timeout_config, RequestTimeoutConfig(10.0, 30.0, 30.0, 120.0)
-        )
+        self.assertIsNone(config.request_timeout_config)
 
-    def test_each_timeout_setting_can_override_its_default(self):
+    def test_each_timeout_setting_enables_config_with_defaults_for_missing_fields(self):
         cases = (
             ("CONNECT_SECONDS", RequestTimeoutConfig(0.25, 30.0, 30.0, 120.0)),
             ("FIRST_EVENT_SECONDS", RequestTimeoutConfig(10.0, 0.25, 30.0, 120.0)),

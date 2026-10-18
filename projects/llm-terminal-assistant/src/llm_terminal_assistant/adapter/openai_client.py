@@ -2,6 +2,8 @@ import logging
 from collections.abc import Generator
 from typing import TYPE_CHECKING
 
+from httpx import Timeout
+
 from llm_terminal_assistant.adapter.protocol_mapping import (
     to_openai_responses_input_item,
 )
@@ -36,7 +38,17 @@ class OpenAIClient(ModelClient):
         from openai import OpenAI
 
         super().__init__(config)
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        constructor_kwargs = {
+            "api_key": self.api_key,
+            "base_url": self.base_url,
+        }
+        if config.request_timeout_config is not None:
+            from openai import DEFAULT_TIMEOUT
+
+            timeout = Timeout(DEFAULT_TIMEOUT)
+            timeout.connect = config.request_timeout_config.connect_seconds
+            constructor_kwargs["timeout"] = timeout
+        self.client = OpenAI(**constructor_kwargs)
 
     def _build_request_options(self, request: ModelRequest) -> dict[str, object]:
         request_options: dict[str, object] = {
@@ -145,10 +157,14 @@ class OpenAIClient(ModelClient):
             )
 
     def send_stream(self, request: ModelRequest) -> Generator[StreamEvent]:
+        from httpx import ConnectTimeout
+        from openai import APITimeoutError
+
         request_options = self._build_request_options(request)
         request_options["stream"] = True
-        events = self.client.responses.create(**request_options)
+        events = None
         try:
+            events = self.client.responses.create(**request_options)
             for event in events:
                 if event.type == "response.output_text.delta":
                     yield TextDeltaEvent(
@@ -193,5 +209,18 @@ class OpenAIClient(ModelClient):
                     )
                 else:
                     logger.warning("Event type %s not supported", event.type)
+        except APITimeoutError as e:
+            if isinstance(e.__cause__, ConnectTimeout):
+                yield EndEvent(
+                    reason=ModelResponseEndReason.CONNECTION_TIMEOUT,
+                    error=ModelResponseError(
+                        code=ModelResponseEndReason.CONNECTION_TIMEOUT,
+                        message=e.message,
+                    ),
+                    incomplete_details=None,
+                )
+            else:
+                raise
         finally:
-            events.close()
+            if events is not None:
+                events.close()

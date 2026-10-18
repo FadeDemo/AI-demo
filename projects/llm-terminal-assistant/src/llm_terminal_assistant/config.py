@@ -102,10 +102,22 @@ def load_model_config() -> ModelConfig:
     temperature = os.getenv("TEMPERATURE")
     top_p = os.getenv("TOP_P")
     stream_output_enabled = os.getenv("STREAM_OUTPUT_ENABLED", "false")
-    connect_seconds = read_float_env("CONNECT_SECONDS", 10.0)
-    first_event_seconds = read_float_env("FIRST_EVENT_SECONDS", 30.0)
-    stream_idle_seconds = read_float_env("STREAM_IDLE_SECONDS", 30.0)
-    request_deadline_seconds = read_float_env("REQUEST_DEADLINE_SECONDS", 120.0)
+    request_timeout_config = None
+    if any(
+        os.getenv(name) is not None
+        for name in (
+            "CONNECT_SECONDS",
+            "FIRST_EVENT_SECONDS",
+            "STREAM_IDLE_SECONDS",
+            "REQUEST_DEADLINE_SECONDS",
+        )
+    ):
+        request_timeout_config = RequestTimeoutConfig(
+            connect_seconds=read_float_env("CONNECT_SECONDS", 10.0),
+            first_event_seconds=read_float_env("FIRST_EVENT_SECONDS", 30.0),
+            stream_idle_seconds=read_float_env("STREAM_IDLE_SECONDS", 30.0),
+            request_deadline_seconds=read_float_env("REQUEST_DEADLINE_SECONDS", 120.0),
+        )
     if temperature is not None:
         temperature = float(temperature)
         if not (
@@ -151,10 +163,5 @@ def load_model_config() -> ModelConfig:
         model_profile=model_profile,
         tool_loop_limits=ToolLoopLimits(**tool_loop_limits),
         stream_output_enabled=stream_output_enabled,
-        request_timeout_config=RequestTimeoutConfig(
-            connect_seconds=connect_seconds,
-            first_event_seconds=first_event_seconds,
-            stream_idle_seconds=stream_idle_seconds,
-            request_deadline_seconds=request_deadline_seconds,
-        ),
+        request_timeout_config=request_timeout_config,
     )

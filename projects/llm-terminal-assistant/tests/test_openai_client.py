@@ -1,8 +1,9 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from llm_terminal_assistant.adapter.openai_client import OpenAIClient
+from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     DEEPSEEK_V4_FLASH,
@@ -14,6 +15,7 @@ from llm_terminal_assistant.model import (
     ModelResponseError,
     ModelResponseIncompleteDetails,
 )
+from llm_terminal_assistant.stream.consumer import consume_stream
 from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
@@ -66,6 +68,100 @@ class RecordingResponses:
 
 
 class OpenAIClientTests(unittest.TestCase):
+    def test_connection_timeout_during_creation_reaches_consumer_as_end_reason(self):
+        from httpx import ConnectTimeout, Request
+        from openai import APITimeoutError
+
+        error = APITimeoutError(request=Request("POST", "https://example.invalid"))
+        error.__cause__ = ConnectTimeout("connection timed out")
+        client = object.__new__(OpenAIClient)
+        client.model = "deepseek-flash"
+        client.client = SimpleNamespace(
+            responses=SimpleNamespace(create=Mock(side_effect=error))
+        )
+        consumer = Mock()
+
+        response = consume_stream(
+            client.send_stream(ModelRequest(input=[], reserved_output_tokens=20)),
+            consumer,
+            start_at=0.0,
+            clock=lambda: 1.0,
+        )
+
+        self.assertEqual(response.reason, ModelResponseEndReason.CONNECTION_TIMEOUT)
+        self.assertEqual(response.error.code, ModelResponseEndReason.CONNECTION_TIMEOUT)
+        self.assertEqual(response.error.message, error.message)
+        self.assertEqual(response.text, "")
+        consumer.assert_not_called()
+        client.client.responses.create.assert_called_once()
+
+    def test_other_creation_errors_propagate_without_cleanup_masking_them(self):
+        from httpx import ReadTimeout, Request
+        from openai import APITimeoutError
+
+        request = Request("POST", "https://example.invalid")
+        read_error = APITimeoutError(request=request)
+        read_error.__cause__ = ReadTimeout("read timed out")
+        for error in (
+            read_error,
+            APITimeoutError(request=request),
+            RuntimeError("creation failed"),
+        ):
+            with self.subTest(error=error):
+                client = object.__new__(OpenAIClient)
+                client.model = "deepseek-flash"
+                client.client = SimpleNamespace(
+                    responses=SimpleNamespace(create=Mock(side_effect=error))
+                )
+
+                with self.assertRaises(type(error)) as caught:
+                    list(
+                        client.send_stream(
+                            ModelRequest(input=[], reserved_output_tokens=20)
+                        )
+                    )
+
+                self.assertIs(caught.exception, error)
+
+    def test_missing_timeout_config_omits_sdk_timeout_argument(self):
+        config = ModelConfig(
+            api_key="test-key",
+            base_url="https://example.invalid",
+            model="deepseek-flash",
+            model_profile=DEEPSEEK_V41_FLASH_1017,
+            provider="openai",
+        )
+
+        with patch("openai.OpenAI") as constructor:
+            client = OpenAIClient(config)
+
+        constructor.assert_called_once_with(
+            api_key=config.api_key, base_url=config.base_url
+        )
+        self.assertIs(client.client, constructor.return_value)
+
+    def test_timeout_config_overrides_only_connect_without_mutating_sdk_defaults(self):
+        from openai import DEFAULT_TIMEOUT
+
+        original_defaults = DEFAULT_TIMEOUT.as_dict()
+        config = ModelConfig(
+            api_key="test-key",
+            base_url="https://example.invalid",
+            model="deepseek-flash",
+            model_profile=DEEPSEEK_V41_FLASH_1017,
+            provider="openai",
+            request_timeout_config=RequestTimeoutConfig(0.25, 2.0, 3.0, 4.0),
+        )
+
+        with patch("openai.OpenAI") as constructor:
+            OpenAIClient(config)
+
+        constructor.assert_called_once()
+        timeout = constructor.call_args.kwargs["timeout"]
+        self.assertIsNot(timeout, DEFAULT_TIMEOUT)
+        self.assertEqual(timeout.as_dict(), {**original_defaults, "connect": 0.25})
+        self.assertEqual(DEFAULT_TIMEOUT.as_dict(), original_defaults)
+
     def test_ultra_is_allowed_only_by_1017_profile_and_sent_unchanged(self):
         client = OpenAIClient.__new__(OpenAIClient)
         client.model = "deepseek-flash"
