@@ -18,5 +18,13 @@
     "untrustedWorkspaces": {
       "supported": false
     }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "use-venv.restoreTerminalActivation",
+        "title": "use-venv: Restore Python Terminal Activation"
+      }
+    ]
   }
 }

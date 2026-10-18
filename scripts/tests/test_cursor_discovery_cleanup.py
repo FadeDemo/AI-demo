@@ -8,8 +8,8 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 SCRIPT = REPOSITORY / "scripts/use-venv.zsh"
 SOURCE = (
     SCRIPT.read_text()
-    .split("<<'CURSOR_API_PYTHON'\n", 1)[1]
-    .split("\nCURSOR_API_PYTHON", 1)[0]
+    .split("<<'CURSOR_AUTOMATION_PYTHON'\n", 1)[1]
+    .split("\nCURSOR_AUTOMATION_PYTHON", 1)[0]
 )
 
 

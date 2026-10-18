@@ -52,6 +52,19 @@ async function dispatch(request) {
       await synchronizeAnalysis(request.workspace, request.interpreter);
       return { interpreter: selected.execInfo.run.executable };
     }
+    case "terminal-status":
+      return vscode.window.terminals.map((terminal) => ({
+        name: terminal.name,
+        cwd: terminal.shellIntegration?.cwd?.fsPath,
+        options: {
+          cwd: terminal.creationOptions.cwd,
+          shellPath: terminal.creationOptions.shellPath,
+          hideFromUser: terminal.creationOptions.hideFromUser,
+          pty: "pty" in terminal.creationOptions,
+        },
+        integration: !!terminal.shellIntegration,
+        task: vscode.tasks.taskExecutions.some((task) => task.terminal === terminal),
+      }));
     case "probe":
       return probeTerminal(request);
     default:
@@ -75,11 +88,20 @@ async function probeTerminal(request) {
   const project = checkedProject(request);
   const directory = fs.mkdtempSync(path.join(root, "probe-"));
   const resultPath = path.join(directory, "result.json");
-  const terminal = vscode.window.createTerminal({
-    name: `use-venv check ${session}`,
-    cwd: project,
-    isTransient: true,
-  });
+  let terminal;
+  if (request.userEntry) {
+    const before = new Set(vscode.window.terminals);
+    await vscode.commands.executeCommand("workbench.action.terminal.new");
+    terminal = vscode.window.activeTerminal;
+    if (!terminal || before.has(terminal))
+      throw new Error("New terminal command did not return a new active terminal");
+  } else {
+    terminal = vscode.window.createTerminal({
+      name: `use-venv check ${session}`,
+      cwd: project,
+      isTransient: true,
+    });
+  }
   let closed = false;
   const listener = vscode.window.onDidCloseTerminal((value) => {
     if (value === terminal) closed = true;
@@ -181,8 +203,139 @@ async function synchronizeConfiguredAnalysis() {
   }
 }
 
-function activate(context) {
+// The takeover uses only stable terminal APIs; no terminal output subscription.
+const activationStateKey = "terminalActivationTakeover";
+function createTerminalActivation(context) {
+  let enabled = false;
+  const pending = new Map();
+  const completed = new WeakSet();
+  const configuration = () => vscode.workspace.getConfiguration("python-envs");
+  const warn = (message) => vscode.window.showWarningMessage(`use-venv: ${message}`);
+  function target(terminal) {
+    const options = terminal.creationOptions;
+    if (!options || "pty" in options || options.hideFromUser || terminal.exitStatus) return;
+    if (vscode.tasks.taskExecutions.some((task) => task.terminal === terminal)) return;
+    const cwd = terminal.shellIntegration?.cwd?.fsPath || options.cwd?.fsPath || options.cwd;
+    if (typeof cwd !== "string") return;
+    for (const folder of vscode.workspace.workspaceFolders || []) {
+      const config = vscode.workspace.getConfiguration("pylint", folder.uri).get("interpreter");
+      if (!Array.isArray(config) || config.length !== 1 || typeof config[0] !== "string") continue;
+      const interpreter = config[0].replaceAll("${workspaceFolder}", folder.uri.fsPath);
+      if (!path.isAbsolute(interpreter)) continue;
+      const project = path.dirname(path.dirname(path.dirname(interpreter)));
+      if (project !== folder.uri.fsPath && !project.startsWith(folder.uri.fsPath + path.sep))
+        continue;
+      if (cwd !== project && !cwd.startsWith(project + path.sep)) continue;
+      const script = path.join(path.dirname(interpreter), "activate");
+      if (fs.existsSync(interpreter) && fs.existsSync(script)) return script;
+    }
+  }
+  function clear(terminal) {
+    clearTimeout(pending.get(terminal));
+    pending.delete(terminal);
+  }
+  function ready(terminal) {
+    if (!enabled || !pending.has(terminal) || !terminal.shellIntegration) return;
+    // Shell integration may exist before it has reported the initial cwd.
+    const cwd =
+      terminal.shellIntegration.cwd?.fsPath ||
+      terminal.creationOptions.cwd?.fsPath ||
+      terminal.creationOptions.cwd;
+    if (typeof cwd !== "string") return;
+    const script = target(terminal);
+    clear(terminal);
+    if (!script || completed.has(terminal)) return;
+    const shell = path.basename(terminal.creationOptions.shellPath || process.env.SHELL || "");
+    if (!["zsh", "bash"].includes(shell)) {
+      warn("Automatic activation currently supports zsh and bash only.");
+      return;
+    }
+    completed.add(terminal);
+    terminal.sendText(`source ${quote(script)}`, true);
+  }
+  function opened(terminal) {
+    if (!enabled || completed.has(terminal) || pending.has(terminal)) return;
+    if (
+      !terminal.creationOptions ||
+      "pty" in terminal.creationOptions ||
+      terminal.creationOptions.hideFromUser
+    )
+      return;
+    let attempts = 0;
+    const poll = () => {
+      if (!enabled || !pending.has(terminal)) return;
+      ready(terminal);
+      if (!pending.has(terminal)) return;
+      if (++attempts >= 100) {
+        clear(terminal);
+        warn(
+          "Terminal shell integration or working directory was not ready within 10 seconds; activation was skipped.",
+        );
+        return;
+      }
+      pending.set(terminal, setTimeout(poll, 100));
+    };
+    pending.set(terminal, undefined);
+    poll();
+  }
+
+  async function enable() {
+    if (context.globalState.get(activationStateKey)?.disabled) return;
+    const folders = vscode.workspace.workspaceFolders || [];
+    if (folders.length !== 1 || vscode.env.remoteName || process.platform === "win32") return;
+    const config = vscode.workspace.getConfiguration("pylint", folders[0].uri).get("interpreter");
+    if (!Array.isArray(config) || typeof config[0] !== "string") return;
+    const interpreter = config[0].replaceAll("${workspaceFolder}", folders[0].uri.fsPath);
+    if (
+      !path.isAbsolute(interpreter) ||
+      !fs.existsSync(path.join(path.dirname(interpreter), "activate"))
+    )
+      return;
+    if (!context.globalState.get(activationStateKey)) {
+      const original = configuration().inspect("terminal.autoActivationType")?.globalValue;
+      await context.globalState.update(activationStateKey, { original: original ?? null });
+    }
+    await configuration().update(
+      "terminal.autoActivationType",
+      "off",
+      vscode.ConfigurationTarget.Global,
+    );
+    enabled = true;
+  }
+  async function restore() {
+    enabled = false;
+    for (const terminal of pending.keys()) clear(terminal);
+    const state = context.globalState.get(activationStateKey);
+    if (!state) return;
+    // Persist the opt-out before restoring, so a reload cannot re-enable takeover.
+    await context.globalState.update(activationStateKey, { ...state, disabled: true });
+    if (configuration().inspect("terminal.autoActivationType")?.globalValue === "off") {
+      await configuration().update(
+        "terminal.autoActivationType",
+        state.original ?? undefined,
+        vscode.ConfigurationTarget.Global,
+      );
+    }
+  }
+  context.subscriptions.push(
+    vscode.window.onDidOpenTerminal(opened),
+    vscode.window.onDidChangeTerminalShellIntegration((event) => ready(event.terminal)),
+    vscode.window.onDidCloseTerminal(clear),
+    vscode.commands.registerCommand("use-venv.restoreTerminalActivation", restore),
+    {
+      dispose() {
+        enabled = false;
+        for (const terminal of pending.keys()) clear(terminal);
+      },
+    },
+  );
+  return { enable, restore };
+}
+
+async function activate(context) {
   if (!/cursor/i.test(vscode.env.appName)) return;
+  const activation = createTerminalActivation(context);
+  await activation.enable();
   const sync = () => {
     synchronizeConfiguredAnalysis().catch((error) => {
       vscode.window.showWarningMessage(`use-venv: ${error.message}`);
@@ -190,7 +343,12 @@ function activate(context) {
   };
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("pylint.interpreter")) sync();
+      if (event.affectsConfiguration("pylint.interpreter")) {
+        sync();
+        activation
+          .enable()
+          .catch((error) => vscode.window.showWarningMessage(`use-venv: ${error.message}`));
+      }
     }),
   );
   sync();

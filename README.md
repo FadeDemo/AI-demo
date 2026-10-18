@@ -91,9 +91,7 @@ use-venv
 
 脚本不会写入 `python.defaultInterpreterPath`（该设置只在工作区从未选择过解释器时生效）。`python-envs.pythonProjects` 与 `python-envs.workspaceSearchPaths` 中只保留目标项目与目标 `.venv`，使 Python Environments 扩展重新发现目标环境；`python.analysis.extraPaths` 与 `cursorpyright.analysis.extraPaths` 同步指向目标源码目录。`python.terminal.activateEnvironment` 会让随后新建的终端自动激活所选环境，已有终端不会被追溯修改。VS Code 保留读取选择状态和调用选择命令的流程；Cursor 通过 Python Environments 的环境 API 选择目标并回读结果。不能仅因没有找到选择状态就认定成功。
 
-选择 Cursor 或 `both` 时，脚本始终先做两项只读检查，不要求传入修复选项。一项检查 Python 环境扫描工具 `pet` 能否运行并发现目标解释器，按扩展的实际顺序查找 Python Environments 自带的工具及 Python 扩展中的备用工具；另一项检查扩展请求的 `terminalDataWriteEvent` API 在 Cursor 中是否可用、是否已获授权。扩展未请求该 API 时，授权检查不作为阻塞条件。两项检查都会执行并报告结果。
-
-修复选项只授权修改对应问题。未授权修复的问题仍然存在时，脚本在安装扩展或修改配置前停止，即使已经授权修复另一项也一样。两项都有问题时，需要同时传入两个修复选项。只需授权扩展包修复时，命令如下：
+选择 Cursor 或 `both` 时，脚本先检查 Python 环境扫描工具 `pet` 能否运行并发现目标解释器。新终端由辅助扩展使用稳定的终端接口激活，普通切换不再检查或补写 `terminalDataWriteEvent` 授权，因此 Cursor 更新覆盖应用文件不会清除这条激活路径。扫描工具有问题时，仍须显式授权扩展包修复：
 
 ```shell
 use-venv projects/llm-terminal-assistant --editor cursor --repair-cursor-envs
@@ -105,47 +103,29 @@ use-venv projects/llm-terminal-assistant --editor cursor --repair-cursor-envs
 
 替换前，脚本在 `~/Library/Application Support/use-venv/transactions/` 中保存可重新安装的原扩展包。修复或后续切换失败时，除了回滚共享配置，还会重新安装原包、核对版本、平台及入口文件，并再次完整重载运行中的 Cursor 窗口；恢复原包时只等待扩展激活，不要求原包具备修复后的扫描工具。若恢复失败或检测到其他程序更新了扩展，会保留备份并报告路径。全部切换成功并验证后，脚本删除自己创建的备份。Cursor 未运行而无法验证切换时，也不会保留尚未验证的替换。Cursor 扩展目录中的旧版本由 Cursor 自己管理。脚本不改变扩展自动更新策略；将来更新若再次导致工具缺失，可以重新运行带修复选项的命令。VS Code 单独切换不执行这些检查或修复。
 
-如果 API 检查发现扩展缺少 `terminalDataWriteEvent` 授权，而扫描工具检查已通过，可以授权应用兼容修复。先打开目标 Cursor 工作区，再从 **Cursor 以外的终端** 运行：
-
-```shell
-use-venv projects/llm-terminal-assistant --editor cursor --repair-cursor-api
-```
-
-此选项允许修复检查发现的授权缺失。只有确实缺少授权时，才备份并局部修改 Cursor 的 `product.json`，随后完整退出、重新启动 Cursor；窗口重载不能替代此次重启。已有授权时不重复修改或重启。此操作只支持 macOS；需要执行 API 修复时，应从 Cursor 以外的终端运行，因为脚本会重启 Cursor。
-
-两项检查都发现问题时，可以同时授权修复：
-
-```shell
-use-venv projects/llm-terminal-assistant --editor cursor --repair-cursor-envs --repair-cursor-api
-```
-
-脚本先检查，再修复扫描工具、更新工作区并选择环境，最后在需要时修复 API 授权及验证新终端。两项修复共用本次切换的成功边界。后续步骤失败时，共享配置、本次替换的扩展包和本次新增的 API 授权都会尝试回滚；已有的正常状态不会因另一项失败而撤销。只有全部步骤通过后才清理本次修复备份。
-
-验证新终端时，辅助扩展通过终端 API 创建专用终端，向这个终端对象发送只读探测命令，检查 shell PID、`VIRTUAL_ENV` 和 `python` 搜索路径。它不主动执行环境激活命令，也不向终端注入虚拟环境变量；只有实际环境和解释器路径符合预期才判定成功。成功或失败后都会关闭专用终端，并确认关闭事件。终端操作有超时限制；无法确认关闭时会保留探测文件并报告错误。这个过程不使用菜单、命令面板、模拟按键或临时编辑器预览页。
+验证新终端时，辅助扩展通过终端 API 创建专用终端，向这个终端对象发送只读探测命令，检查 shell PID、`VIRTUAL_ENV` 和 `python` 搜索路径。探测命令本身不执行激活，也不注入虚拟环境变量；新终端经过与用户终端相同的自动激活处理，只有实际环境和解释器路径符合预期才判定成功。成功或失败后都会关闭专用终端，并确认关闭事件。终端操作有超时限制；无法确认关闭时会保留探测文件并报告错误。这个过程不使用菜单、命令面板、模拟按键或临时编辑器预览页。
 
 在脚本触发的 Cursor 窗口重载或完整重启前，脚本会记录目标项目的旧 `unittest` 测试发现进程，包括 PID、启动时间、命令及其 Cursor 扩展宿主。操作成功或失败后均执行退出检查：先等待任务自行结束，仅在原宿主已退出且旧任务成为孤儿进程时，才向仍与记录匹配的 PID 发送终止信号；等待后仍未退出才强制结束，并再次验证。三个等待阶段分别最多 2 秒，每次进程查询也有独立超时。新启动的发现任务、其他项目或编辑器的任务、宿主仍存活的任务，以及身份已变化的 PID 均保留。无法确认退出时报告具体 PID；已有操作错误时保留该错误，同时报告清理问题。此机制针对脚本自身的重载和重启，不持续监控手动关闭或扩展崩溃，也不修改自动测试发现设置。
 
 启动 Cursor 和调用其命令行时，颜色控制变量遵循桌面环境设置，避免继承自动化工具用于自身输出的 `NO_COLOR=1`、`TERM=dumb` 等值，影响编辑器及新终端的显示。未配置的桌面变量不会作为空字符串传入。
 
-如果 macOS 拒绝写入应用文件，需要为运行命令的应用授予“隐私与安全性 → App 管理”权限。验证失败时，脚本恢复原文件并再次重启 Cursor；恢复失败或文件被其他进程修改时，会保留 `~/Library/Application Support/use-venv/transactions/cursor-api-repair/` 备份。中断后可以从外部终端运行以下命令恢复尚未完成的事务：
+旧的 API 授权修复及其回滚入口已移除；终端激活由辅助扩展接管，不再修改 Cursor 的 `product.json`。
 
-```shell
-use-venv projects/llm-terminal-assistant --editor cursor --rollback-cursor-api
-```
-
-成功修复后备份已删除，该回滚选项不再适用。Cursor 更新可能替换应用配置；再次出现同一 API 授权错误时，可以重新运行检查和修复。此选项不修改 VS Code，也不保证修复其他原因造成的终端激活失败。
-
-脚本的全局状态变量统一使用 `USE_VENV_` 前缀，Cursor 专属变量使用 `USE_VENV_CURSOR_`。共享配置备份、扩展包备份和 API 修复状态由脚本管理，默认放在 `~/Library/Application Support/use-venv/transactions/`；新建状态根目录使用仅当前用户可访问的权限。共享配置事务还记录工作区及配置文件路径，便于识别保留下来的恢复数据。可通过 `USE_VENV_STATE_DIRECTORY` 指定绝对路径，用于测试或隔离运行状态，不需要修改仓库配置。
+脚本的全局状态变量统一使用 `USE_VENV_` 前缀，Cursor 专属变量使用 `USE_VENV_CURSOR_`。共享配置备份和扩展包备份由脚本管理，默认放在 `~/Library/Application Support/use-venv/transactions/`；新建状态根目录使用仅当前用户可访问的权限。共享配置事务还记录工作区及配置文件路径，便于识别保留下来的恢复数据。可通过 `USE_VENV_STATE_DIRECTORY` 指定绝对路径，用于测试或隔离运行状态，不需要修改仓库配置。
 
 脚本仍兼容旧的 `VSCODE_VENV_CURSOR_EXTENSION_DIRECTORY`、`VSCODE_VENV_CURSOR_LOG_DIRECTORY` 和 `VSCODE_VENV_EDITOR_STORAGE_DIRECTORY` 环境变量；对应新名称分别为 `USE_VENV_CURSOR_EXTENSION_DIRECTORY`、`USE_VENV_CURSOR_LOG_DIRECTORY` 和 `USE_VENV_EDITOR_STORAGE_DIRECTORY`。新旧名称同时设置时，新名称优先。
 
-处理 Cursor 前，脚本会检查当前工作区旧 `.agent-tmp/` 中的 `cursor-api-repair/` 和 `cursor-envs-transaction.*` 修复记录，将可识别的完整记录迁入新的状态根目录；不会迁移其他 Agent 临时文件。旧 API 恢复记录迁移后仍可使用 `--rollback-cursor-api`。迁移目标已经存在、数据不完整或包含符号链接时，会停止并保留相关数据供处理，不覆盖现存备份。用户正常运行脚本不再向 `.agent-tmp/` 写入事务或探测文件。
+处理 Cursor 前，脚本会检查当前工作区旧 `.agent-tmp/` 中的 `cursor-envs-transaction.*` 修复记录，将可识别的完整记录迁入新的状态根目录；不会迁移其他 Agent 临时文件。迁移目标已经存在、数据不完整或包含符号链接时，会停止并保留相关数据供处理，不覆盖现存备份。用户正常运行脚本不再向 `.agent-tmp/` 写入事务或探测文件。
 
 脚本主体位于 `scripts/use-venv.zsh`，其中负责配置更新的 Python 代码只对需要变更的 JSONC 配置值进行局部编辑，保留其他配置、注释和原有排版；已有 `launch.json` 中的 Python/debugpy 配置会同步更新 `python`、`cwd` 及已经存在的相关环境变量，其他类型的调试配置保持不变。两个配置文件按事务处理：后续步骤失败时会恢复脚本执行前的原始内容；若文件在脚本写入后又被其他程序修改，则不会强行覆盖，而会保留事务备份并报告路径。配置文件回滚不会撤销编辑器中已经完成的解释器选择；使用 `both` 时，若第二个编辑器失败，应按错误提示核对两边的状态。
 
-Cursor 的自动化由仓库维护的 `ai-demo-local.use-venv-helper` 辅助扩展执行。它不是微软官方扩展，也不需要上架市场；扩展包随独立脚本内嵌，脚本在两项检查允许继续后按需安装或更新。首次安装而当前窗口尚未加载扩展时，需要从 Cursor 外部终端运行，脚本会正常退出并重新打开 Cursor；遇到保存确认或退出超时会停止，不强制退出。已有辅助扩展可响应时，更新通过窗口重载加载。如果扩展已安装却无法连接，脚本会限时等待并报错，不退回界面自动化。
+Cursor 的自动化由仓库维护的 `ai-demo-local.use-venv-helper` 辅助扩展执行。它不是微软官方扩展，也不需要上架市场；扩展包随独立脚本内嵌，脚本在扫描工具检查允许继续后按需安装或更新。首次安装而当前窗口尚未加载扩展时，需要从 Cursor 外部终端运行，脚本会正常退出并重新打开 Cursor；遇到保存确认或退出超时会停止，不强制退出。已有辅助扩展可响应时，更新通过窗口重载加载。如果扩展已安装却无法连接，脚本会限时等待并报错，不退回界面自动化。
 
 辅助扩展会在 Cursor 启动、现有 `pylint.interpreter` 配置变化以及显式切换环境时，同步 Python 扩展的工作区解释器，并回读语言服务所使用的接口确认结果。它复用脚本已维护的解释器路径，不增加 `python.pythonPath` 配置；工作区解释器选择保存在 Cursor 的扩展状态中。扩展只在 Cursor 宿主中启动。更新后首次使用仍需通过脚本安装新版辅助扩展。
+
+辅助扩展在本地、单工作区且已配置有效虚拟环境时自动接管终端激活：先保存 Cursor 用户级 `python-envs.terminal.autoActivationType` 原值，再将其设为 `off`，避免 Python Environments 重复激活。此设置不写入仓库共享配置，也不修改 VS Code 用户设置。对新建的 zsh/bash 交互终端，扩展等待 Shell Integration 就绪，核对终端目录属于目标项目后执行激活；任务终端、其他项目和已有终端不处理，等待超过 10 秒时不盲目发送命令。此方案目前按单工作区使用，不承诺其他 Cursor 工作区也自动激活。
+
+如需退出接管，在 Cursor 命令面板运行 `use-venv: Restore Python Terminal Activation`。命令停止接管并恢复保存的用户设置；原来没有该设置时删除这一项。如果用户已将其改为其他值，则保留用户的新值。退出状态会持久保存，重载不会自动再次接管。卸载辅助扩展前应先执行此恢复命令。
 
 需要强制重新安装内嵌的辅助扩展并使其生效时，先打开目标 Cursor 工作区，再运行：
 
@@ -153,7 +133,7 @@ Cursor 的自动化由仓库维护的 `ai-demo-local.use-venv-helper` 辅助扩�
 use-venv projects/llm-terminal-assistant --editor cursor --reinstall-cursor-helper
 ```
 
-此选项跳过版本匹配的快捷路径，强制安装并等待重载后的新实例握手。它也适用于已安装但无法连接的辅助扩展；这种情况下需要从 Cursor 外部终端运行，脚本会正常重启 Cursor。此选项支持 `cursor` 或 `both`，不能与 API 回滚同时使用。
+此选项跳过版本匹配的快捷路径，强制安装并等待重载后的新实例握手。它也适用于已安装但无法连接的辅助扩展；这种情况下需要从 Cursor 外部终端运行，脚本会正常重启 Cursor。此选项支持 `cursor` 或 `both`。
 
 辅助扩展只监听本机回环地址，使用保存在用户私有目录中的随机令牌验证请求，并核对完整工作区路径；同一工作区存在多个可响应窗口时拒绝操作。连接信息和终端探测文件位于 `~/Library/Application Support/use-venv/helper/`。重载完成以新实例握手为准，不依赖窗口标题或前台焦点。源码位于 `scripts/cursor-helper/`；修改后运行 `python3 scripts/cursor-helper/build.py` 更新脚本中的内嵌包，再重新安装全局命令。
 

@@ -95,13 +95,15 @@ function fixture({
   });
   vm.runInContext(
     fs.readFileSync(path.join(__dirname, "extension.js"), "utf8") +
-      "\nmodule.exports.dispatch = dispatch; module.exports.sync = synchronizeConfiguredAnalysis;",
+      "\nmodule.exports.dispatch = dispatch; module.exports.sync = synchronizeConfiguredAnalysis; module.exports.createActivation = createTerminalActivation;",
     context,
   );
   return {
     dispatch: context.module.exports.dispatch,
     sync: context.module.exports.sync,
     activate: context.module.exports.activate,
+    createActivation: context.module.exports.createActivation,
+    vscode,
     api,
     commands,
     analysisUpdates,
@@ -187,4 +189,127 @@ test("activation in VS Code has no side effects", () => {
   const value = fixture();
   value.activate({ subscriptions: [] });
   assert.deepEqual(value.analysisUpdates, []);
+});
+
+function activationFixture() {
+  const value = fixture();
+  const events = {};
+  let setting;
+  let saved;
+  const disposed = [];
+  const target = "/workspace/project/.venv/bin/python";
+  value.vscode.ConfigurationTarget = { Global: 1 };
+  value.vscode.tasks = { taskExecutions: [] };
+  value.vscode.workspace.getConfiguration = (section) =>
+    section === "pylint"
+      ? { get: () => [target] }
+      : {
+          inspect: () => ({ globalValue: setting }),
+          update: async (key, next, scope) => {
+            assert.equal(scope, 1);
+            setting = next;
+          },
+        };
+  for (const name of [
+    "onDidOpenTerminal",
+    "onDidChangeTerminalShellIntegration",
+    "onDidCloseTerminal",
+  ]) {
+    value.vscode.window[name] = (fn) => {
+      events[name] = fn;
+      return { dispose() {} };
+    };
+  }
+  value.vscode.window.showWarningMessage = () => {};
+  value.vscode.commands.registerCommand = () => ({ dispose() {} });
+  const controller = value.createActivation({
+    globalState: {
+      get: () => saved,
+      update: async (key, next) => {
+        saved = next;
+      },
+    },
+    subscriptions: disposed,
+  });
+  const sent = [];
+  const terminal = {
+    creationOptions: { cwd: "/workspace/project", shellPath: "/bin/zsh" },
+    sendText: (command) => sent.push(command),
+  };
+  return {
+    controller,
+    events,
+    terminal,
+    sent,
+    value,
+    setting: () => setting,
+    saved: () => saved,
+  };
+}
+
+test("takeover waits for stable shell integration and activates only once", async () => {
+  const f = activationFixture();
+  await f.controller.enable();
+  assert.equal(f.setting(), "off");
+  f.events.onDidOpenTerminal(f.terminal);
+  assert.deepEqual(f.sent, []);
+  f.terminal.shellIntegration = { cwd: { fsPath: "/workspace/project" } };
+  f.events.onDidChangeTerminalShellIntegration({ terminal: f.terminal });
+  f.events.onDidChangeTerminalShellIntegration({ terminal: f.terminal });
+  assert.deepEqual(f.sent, ["source '/workspace/project/.venv/bin/activate'"]);
+});
+
+test("restoration removes an originally absent setting and survives re-enable", async () => {
+  const f = activationFixture();
+  await f.controller.enable();
+  await f.controller.enable();
+  assert.equal(f.saved().original, null);
+  await f.controller.restore();
+  assert.equal(f.setting(), undefined);
+  await f.controller.enable();
+  assert.equal(f.setting(), undefined);
+});
+
+test("takeover skips tasks and terminals outside the selected project", async () => {
+  const f = activationFixture();
+  await f.controller.enable();
+  f.terminal.shellIntegration = { cwd: { fsPath: "/elsewhere" } };
+  f.events.onDidOpenTerminal(f.terminal);
+  f.terminal.shellIntegration.cwd.fsPath = "/workspace/project";
+  f.value.vscode.tasks.taskExecutions.push({ terminal: f.terminal });
+  f.events.onDidOpenTerminal(f.terminal);
+  assert.deepEqual(f.sent, []);
+});
+
+test("new terminal without explicit cwd uses shell integration cwd", async () => {
+  const f = activationFixture();
+  await f.controller.enable();
+  delete f.terminal.creationOptions.cwd;
+  f.events.onDidOpenTerminal(f.terminal);
+  f.terminal.shellIntegration = { cwd: { fsPath: "/workspace/project" } };
+  f.events.onDidChangeTerminalShellIntegration({ terminal: f.terminal });
+  assert.equal(f.sent.length, 1);
+});
+
+test("closed terminal cannot receive a late activation command", async () => {
+  const f = activationFixture();
+  await f.controller.enable();
+  f.events.onDidOpenTerminal(f.terminal);
+  f.events.onDidCloseTerminal(f.terminal);
+  f.terminal.shellIntegration = { cwd: { fsPath: "/workspace/project" } };
+  f.events.onDidChangeTerminalShellIntegration({ terminal: f.terminal });
+  assert.deepEqual(f.sent, []);
+});
+
+test("integration without initial cwd does not discard pending activation", async () => {
+  const f = activationFixture();
+  await f.controller.enable();
+  delete f.terminal.creationOptions.cwd;
+  f.terminal.shellIntegration = {};
+  f.events.onDidOpenTerminal(f.terminal);
+  assert.deepEqual(f.sent, []);
+  f.terminal.shellIntegration.cwd = { fsPath: "/workspace/project" };
+  // Polling must handle cwd arriving without another integration event.
+  await new Promise(setImmediate);
+  assert.equal(f.sent.length, 1);
 });

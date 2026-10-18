@@ -53,15 +53,6 @@ def migrate_legacy(workspace, root):
         raise RuntimeError("Legacy transaction directory must not be a symlink")
     if not legacy.is_dir():
         return
-    api = legacy / "cursor-api-repair"
-    if api.exists():
-        if not all(
-            (api / name).is_file()
-            for name in ("state.json", "original.json", "applied.json")
-        ):
-            raise RuntimeError(f"Incomplete legacy API backup; retained at {api}")
-        json.loads((api / "state.json").read_text())
-        migrate_tree(api, root / api.name)
     for package in sorted(legacy.glob("cursor-envs-transaction.*")):
         if (
             not (package / "backup.json").exists()
@@ -101,8 +92,7 @@ print_usage() {
   cat <<'EOF'
 Usage: use-venv [PROJECT_OR_VENV_PATH] [--workspace WORKSPACE_PATH]
                 [--editor vscode|cursor|both] [--repair-cursor-envs]
-                [--repair-cursor-api] [--reload]
-       use-venv PROJECT --editor cursor --rollback-cursor-api
+                [--reload]
        use-venv --install
        use-venv --uninstall
 
@@ -123,11 +113,6 @@ Arguments:
   --repair-cursor-envs  Allow repairing Cursor's Python Environments package
                         from a matching platform VSIX and reloading its
                         window after replacement. Requires cursor/both.
-  --repair-cursor-api   Repair a missing terminalDataWriteEvent grant, restart
-                        Cursor, and verify activation in a new terminal. Run
-                        outside Cursor. May be combined with package repair.
-  --rollback-cursor-api Restore an unfinished API repair from its backup and
-                        restart Cursor. Requires --editor cursor.
   --install             Install or update a standalone ~/.local/bin/use-venv.
   --uninstall           Remove the managed ~/.local/bin/use-venv installation.
   --reload              Also attempt a guarded target-editor reload on macOS.
@@ -163,8 +148,6 @@ typeset -g USE_VENV_SELECTION_PENDING=false
 typeset -g USE_VENV_CURSOR_REPAIR_DIRECTORY=""
 typeset -g USE_VENV_CURSOR_REPAIR_COMMITTED=false
 typeset -g USE_VENV_CURSOR_RELOADED=false
-typeset -g USE_VENV_CURSOR_API_ACTIVE=false
-typeset -g USE_VENV_CURSOR_API_REQUIRED=false
 
 fail() {
   print -u2 "use-venv: $1"
@@ -322,12 +305,7 @@ finish_file_transaction_on_exit() {
   if ! finish_cursor_repair_transaction; then
     exit_status=1
   fi
-  if [[ "$USE_VENV_CURSOR_API_ACTIVE" == true && -d "$USE_VENV_STATE_DIRECTORY/cursor-api-repair" ]]; then
-    if ! run_cursor_automation rollback-cursor-api; then
-      print -u2 "use-venv: Cursor API rollback failed; backup remains in $USE_VENV_STATE_DIRECTORY/cursor-api-repair"
-      exit_status=1
-    fi
-  fi
+
   exit "$exit_status"
 }
 
@@ -684,49 +662,17 @@ CURSOR_PYTHON
 }
 
 check_cursor_requirements() {
-  local tools_status=0 api_status=0
-  local tools_message="" api_message=""
-  local repair_blocked=false
-  if tools_message="$(ensure_cursor_environment_tools check 2>&1)"; then
-    print -r -- "$tools_message"
-  else
-    tools_status=$?
-    print -ru2 -- "$tools_message"
+  if ensure_cursor_environment_tools check; then
+    return 0
   fi
-  if api_message="$(run_cursor_automation check-cursor-api 2>&1)"; then
-    USE_VENV_CURSOR_API_REQUIRED=false
-    print -r -- "$api_message"
-  else
-    api_status=$?
-    USE_VENV_CURSOR_API_REQUIRED=true
-    print -ru2 -- "$api_message"
+  if [[ "${1:-}" != verify && "$repair_cursor_envs" == true ]]; then
+    print -ru2 -- "use-venv: Cursor environment package repair is authorized; it has not started."
+    return 0
   fi
-  if [[ "${1:-}" == verify ]]; then
-    ((tools_status == 0 && api_status == 0))
-    return
-  fi
-  if ((tools_status != 0)); then
-    if [[ "$repair_cursor_envs" == true ]]; then
-      print -ru2 -- "use-venv: Cursor environment package repair is authorized; it has not started."
-    else
-      print -ru2 -- "use-venv: Rerun the same command with --repair-cursor-envs to allow environment package repair."
-      repair_blocked=true
-    fi
-  fi
-  if ((api_status != 0)); then
-    if [[ "$cursor_api_action" == repair-cursor-api ]]; then
-      print -ru2 -- "use-venv: Cursor API repair is authorized; it has not started."
-    else
-      print -ru2 -- "use-venv: Rerun the same command with --repair-cursor-api to allow API repair."
-      repair_blocked=true
-    fi
-  fi
-  if [[ "$repair_blocked" == true ]]; then
-    print -ru2 -- "use-venv: Stopped before repairs or shared editor configuration changes; authorize all required repairs before retrying."
-    return 1
-  fi
-  return 0
+  print -ru2 -- "use-venv: Stopped before repairs; rerun with --repair-cursor-envs to allow environment package repair."
+  return 1
 }
+
 
 begin_cursor_repair_transaction() {
   prepare_runtime_state
@@ -2405,7 +2351,7 @@ APPLESCRIPT
 
 run_cursor_automation() {
   [[ "$(uname -s)" == "Darwin" ]] || fail "Cursor automation requires macOS"
-  python3 - "$1" "$USE_VENV_WORKSPACE_DIRECTORY" "$USE_VENV_DIRECTORY/bin/python" <<'CURSOR_API_PYTHON'
+  python3 - "$1" "$USE_VENV_WORKSPACE_DIRECTORY" "$USE_VENV_DIRECTORY/bin/python" <<'CURSOR_AUTOMATION_PYTHON'
 import base64
 import io
 import json
@@ -2421,12 +2367,8 @@ import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 
-EXTENSION = "ms-python.vscode-python-envs"
-PROPOSAL = "terminalDataWriteEvent"
-
-
 # Generated by scripts/cursor-helper/build.py; edit the helper sources instead.
-HELPER_ARCHIVE_B64 = "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"
+HELPER_ARCHIVE_B64 = "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"
 HELPER_ARCHIVE = base64.b64decode(HELPER_ARCHIVE_B64)
 with zipfile.ZipFile(io.BytesIO(HELPER_ARCHIVE)) as helper_archive:
     helper_manifest = json.loads(helper_archive.read("extension/package.json"))
@@ -2752,94 +2694,6 @@ def discovery_cleanup(app, project):
             print(f"Cursor discovery cleanup was incomplete: {error}", file=sys.stderr)
 
 
-def patch_product(original):
-    document = json.loads(original)
-    grants = document.get("extensionEnabledApiProposals", {}).get(EXTENSION)
-    if not isinstance(grants, list):
-        raise TypeError("Unexpected Cursor API grant structure; no changes made")
-    if PROPOSAL in grants:
-        return original
-    # Preserve all unrelated bytes, including product.json's original formatting.
-    pattern = re.compile(r'("ms-python\.vscode-python-envs"\s*:\s*)(\[[^\]]*\])')
-    matches = list(pattern.finditer(original.decode()))
-    if len(matches) != 1 or json.loads(matches[0][2]) != grants:
-        raise RuntimeError("Cannot uniquely locate Cursor's API grant list")
-    match = matches[0]
-    changed = (
-        original.decode()[: match.start(2)]
-        + json.dumps([*grants, PROPOSAL])
-        + original.decode()[match.end(2) :]
-    )
-    expected = json.loads(original)
-    expected["extensionEnabledApiProposals"][EXTENSION].append(PROPOSAL)
-    if json.loads(changed) != expected:
-        raise RuntimeError("API patch changed unrelated settings")
-    return changed.encode()
-
-
-def preflight(app):
-    extension_root = Path.home() / ".cursor/extensions"
-    registry = json.loads((extension_root / "extensions.json").read_text())
-    entries = [e for e in registry if e.get("identifier", {}).get("id") == EXTENSION]
-    if len(entries) != 1:
-        raise RuntimeError(
-            "Cannot uniquely identify the installed Python Environments extension"
-        )
-    extension = (extension_root / entries[0]["relativeLocation"]).resolve()
-    if extension_root.resolve() not in extension.parents:
-        raise RuntimeError("Extension path escapes its installation directory")
-    manifest = json.loads((extension / "package.json").read_text())
-    if PROPOSAL not in manifest.get("enabledApiProposals", []):
-        print("Checked:     installed Python Environments does not require this API.")
-        return False
-    host = (
-        Path(app["path"])
-        / "Contents/Resources/app/out/vs/workbench/api/node/extensionHostProcess.js"
-    )
-    if PROPOSAL not in host.read_text():
-        raise RuntimeError("Installed Cursor does not expose the required API")
-    return True
-
-
-def check_api():
-    app = app_info()
-    if app is None:
-        candidates = [
-            Path("/Applications/Cursor.app"),
-            Path.home() / "Applications/Cursor.app",
-        ]
-        bundle = next((path for path in candidates if path.is_dir()), None)
-        if bundle is None:
-            raise RuntimeError("Cannot locate the Cursor application")
-        app = {"path": str(bundle)}
-    if preflight(app) is False:
-        return
-    product = Path(app["path"]) / "Contents/Resources/app/product.json"
-    original = product.read_bytes()
-    if patch_product(original) != original:
-        raise RuntimeError("Cursor is missing the terminalDataWriteEvent grant")
-    print("Checked:     Cursor grants Python Environments terminalDataWriteEvent.")
-
-
-def replace_guarded(product, expected, replacement, transaction):
-    if product.read_bytes() != expected:
-        raise RuntimeError("Cursor product.json changed concurrently; backup retained")
-    # Preserve the application file's inode, permissions and extended attributes.
-    # The original bytes are already backed up before opening it for writing.
-    with product.open("r+b") as stream:
-        if stream.read() != expected:
-            raise RuntimeError(
-                "Cursor product.json changed concurrently; backup retained"
-            )
-        stream.seek(0)
-        stream.write(replacement)
-        stream.truncate()
-        stream.flush()
-        os.fsync(stream.fileno())
-    if product.read_bytes() != replacement:
-        raise RuntimeError("Cursor product.json write could not be verified")
-
-
 def restart(app, workspace, project=None):
     current = app_info()
     if current:
@@ -2896,37 +2750,7 @@ def probe_terminal(
     )
 
 
-def verify_terminal(app, workspace, interpreter, transaction):
-    data = probe_terminal(app, workspace, interpreter, transaction)
-    print(
-        f"Verified terminal environment: {data['venv']}; python: {data['python']}",
-        flush=True,
-    )
-
-
-def clean(transaction):
-    allowed = {
-        "original.json",
-        "applied.json",
-        "state.json",
-        "staged.json",
-        "terminal.json",
-        "probe.sh",
-    }
-    if any(
-        p.name not in allowed or not p.is_file() or p.is_symlink()
-        for p in transaction.iterdir()
-    ):
-        raise RuntimeError("Unexpected transaction contents; backup retained")
-    for path in transaction.iterdir():
-        path.unlink()
-    transaction.rmdir()
-
-
 def execute(action, workspace, interpreter):
-    if action == "check-cursor-api":
-        check_api()
-        return
     if action in ("prepare-helper", "reinstall-helper", "select-environment"):
         app = app_info()
         if not app:
@@ -2947,99 +2771,7 @@ def execute(action, workspace, interpreter):
     if action == "reload-window":
         reload_window(workspace, interpreter.parent.parent.parent)
         return
-    temporary = runtime_directory()
-    transaction = temporary / "cursor-api-repair"
-    if transaction.is_symlink():
-        raise RuntimeError("Repair directory must not be a symlink")
-    app = app_info()
-    if not app:
-        raise RuntimeError("Open the target Cursor workspace before repairing")
-    product = Path(app["path"]) / "Contents/Resources/app/product.json"
-    if action == "commit-cursor-api":
-        state = json.loads((transaction / "state.json").read_text())
-        if (
-            state["product"] != str(product)
-            or product.read_bytes() != (transaction / "applied.json").read_bytes()
-        ):
-            raise RuntimeError(
-                "Cursor product.json changed before commit; backup retained"
-            )
-        clean(transaction)
-        return
-    if action == "rollback-cursor-api":
-        external_process(app["pid"])
-        state = json.loads((transaction / "state.json").read_text())
-        if state["product"] != str(product):
-            raise RuntimeError("Backup belongs to another Cursor installation")
-        original = (transaction / "original.json").read_bytes()
-        if product.read_bytes() != original:
-            replace_guarded(
-                product,
-                (transaction / "applied.json").read_bytes(),
-                original,
-                transaction,
-            )
-        restart(app, workspace, interpreter.parent.parent.parent)
-        clean(transaction)
-        print("Cursor API repair rolled back and Cursor restarted.")
-        return
-    if transaction.exists():
-        raise RuntimeError(
-            f"Unfinished repair at {transaction}; use --rollback-cursor-api first"
-        )
-    if preflight(app) is False:
-        return
-    original = product.read_bytes()
-    applied = patch_product(original)
-    if applied == original:
-        print(
-            "Cursor already grants terminalDataWriteEvent; no patch or restart needed."
-        )
-        return
-    external_process(app["pid"])
-    transaction.mkdir(mode=0o700)
-    (transaction / "original.json").write_bytes(original)
-    (transaction / "applied.json").write_bytes(applied)
-    (transaction / "state.json").write_text(json.dumps({"product": str(product)}))
-    changed = False
-    try:
-        replace_guarded(product, original, applied, transaction)
-        changed = True
-        print("Cursor API grant patched; restarting Cursor...", flush=True)
-        restarted = restart(app, workspace, interpreter.parent.parent.parent)
-        verify_terminal(restarted, workspace, interpreter, transaction)
-    except BaseException:
-        try:
-            if product.read_bytes() != original:
-                replace_guarded(product, applied, original, transaction)
-            if changed:
-                restart(app, workspace, interpreter.parent.parent.parent)
-            clean(transaction)
-            print(
-                "Cursor API repair failed; original configuration restored."
-                + (" Cursor restarted." if changed else " No restart needed."),
-                file=sys.stderr,
-            )
-        except (
-            OSError,
-            ValueError,
-            RuntimeError,
-            subprocess.SubprocessError,
-        ) as rollback_error:
-            print(
-                f"Rollback incomplete; backup retained at {transaction}: {rollback_error}",
-                file=sys.stderr,
-            )
-        raise
-    if action == "repair-cursor-api-staged":
-        print(
-            "Verified:    Cursor API repair; backup retained until the workspace switch commits."
-        )
-        return
-    clean(transaction)
-    print(
-        "Verified: a new Cursor terminal automatically activates the selected virtual environment. Backup removed."
-    )
+    raise RuntimeError(f"Unsupported helper action: {action}")
 
 
 if __name__ == "__main__":
@@ -3058,11 +2790,11 @@ if __name__ == "__main__":
             else str(error)
         )
         operation = (
-            "window reload" if sys.argv[1] == "reload-window" else "API check/repair"
+            "window reload" if sys.argv[1] == "reload-window" else "helper operation"
         )
         print(f"use-venv: Cursor {operation} failed: {detail}", file=sys.stderr)
         sys.exit(1)
-CURSOR_API_PYTHON
+CURSOR_AUTOMATION_PYTHON
 }
 
 requested_path="$PWD"
@@ -3071,7 +2803,6 @@ requested_editor="vscode"
 should_reload=false
 repair_cursor_envs=false
 reinstall_cursor_helper=false
-cursor_api_action=""
 
 while (($# > 0)); do
   case "$1" in
@@ -3113,11 +2844,6 @@ while (($# > 0)); do
       repair_cursor_envs=true
       shift
       ;;
-    --repair-cursor-api | --rollback-cursor-api)
-      [[ -z "$cursor_api_action" ]] || fail "choose only one Cursor API repair action"
-      cursor_api_action="${1#--}"
-      shift
-      ;;
     --reload)
       should_reload=true
       shift
@@ -3134,17 +2860,9 @@ done
 
 if [[ "$reinstall_cursor_helper" == true ]]; then
   [[ "$requested_editor" != vscode ]] || fail "--reinstall-cursor-helper requires --editor cursor or both"
-  [[ "$cursor_api_action" != rollback-cursor-api ]] || fail "run helper reinstall separately from rollback"
 fi
 if [[ "$repair_cursor_envs" == true && "$requested_editor" == "vscode" ]]; then
   fail "--repair-cursor-envs requires --editor cursor or --editor both"
-fi
-if [[ "$cursor_api_action" == "rollback-cursor-api" ]]; then
-  [[ "$requested_editor" == "cursor" ]] || fail "Cursor API rollback requires --editor cursor"
-  [[ "$repair_cursor_envs" == false && "$should_reload" == false ]] ||
-    fail "run Cursor API rollback separately from package repair and --reload"
-elif [[ "$cursor_api_action" == "repair-cursor-api" && "$requested_editor" == "vscode" ]]; then
-  fail "Cursor API repair requires --editor cursor or --editor both"
 fi
 
 find_project_and_venv "$requested_path"
@@ -3160,14 +2878,8 @@ if [[ "$requested_editor" == cursor || "$requested_editor" == both ]]; then
   runtime_state migrate "$USE_VENV_WORKSPACE_DIRECTORY" || exit 1
 fi
 
-if [[ "$cursor_api_action" == "rollback-cursor-api" ]]; then
-  run_cursor_automation "$cursor_api_action" || exit 1
-  exit 0
-fi
 
 if [[ "$requested_editor" == "cursor" || "$requested_editor" == "both" ]]; then
-  [[ ! -e "$USE_VENV_STATE_DIRECTORY/cursor-api-repair" && ! -L "$USE_VENV_STATE_DIRECTORY/cursor-api-repair" ]] ||
-    fail "unfinished Cursor API repair; run with --editor cursor --rollback-cursor-api first"
   check_cursor_requirements || exit 1
   configure_editor cursor
   if editor_process_state; then
@@ -3202,8 +2914,6 @@ for editor_target in "${editor_targets[@]}"; do
   USE_VENV_SELECTION_PENDING=false
   ensure_workspace_environment
   if [[ "$USE_VENV_SELECTION_PENDING" == true ]]; then
-    [[ "$cursor_api_action" != repair-cursor-api || "$USE_VENV_CURSOR_API_REQUIRED" != true || "$editor_target" != cursor ]] ||
-      fail "Cursor selection is pending; API repair cannot be verified"
     if [[ -n "$USE_VENV_CURSOR_REPAIR_DIRECTORY" && -f "$USE_VENV_CURSOR_REPAIR_DIRECTORY/backup.json" ]]; then
       fail "$USE_VENV_EDITOR_LABEL selection is pending; restoring the original extension until a switch can be verified"
     fi
@@ -3221,18 +2931,8 @@ for editor_target in "${editor_targets[@]}"; do
   fi
 done
 
-if [[ "$cursor_api_action" == repair-cursor-api && "$USE_VENV_CURSOR_API_REQUIRED" == true ]]; then
-  USE_VENV_CURSOR_API_ACTIVE=true
-  run_cursor_automation repair-cursor-api-staged || exit 1
-fi
-if [[ "$repair_cursor_envs" == true || "$cursor_api_action" == repair-cursor-api ]]; then
+if [[ "$repair_cursor_envs" == true ]]; then
   check_cursor_requirements verify || exit 1
-fi
-if [[ "$USE_VENV_CURSOR_API_ACTIVE" == true ]]; then
-  if [[ -d "$USE_VENV_STATE_DIRECTORY/cursor-api-repair" ]]; then
-    run_cursor_automation commit-cursor-api || exit 1
-  fi
-  USE_VENV_CURSOR_API_ACTIVE=false
 fi
 commit_file_transaction
 USE_VENV_CURSOR_REPAIR_COMMITTED=true

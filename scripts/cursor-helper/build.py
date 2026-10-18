@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent
 def payload():
     manifest = json.loads((ROOT / "package.json").read_text())
     manifest["useVenvRevision"] = sha256(
-        (ROOT / "extension.js").read_bytes()
+        (ROOT / "extension.js").read_bytes() + (ROOT / "package.json").read_bytes()
     ).hexdigest()
     files = {
         "extension/package.json": json.dumps(manifest).encode(),

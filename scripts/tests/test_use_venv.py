@@ -39,38 +39,6 @@ run_cursor_automation() {
     print "Selected: in Cursor"
     return 0
   fi
-  if [[ "$1" != reload-window ]]; then
-    print -r -- "$1" >> "$VENV_TEST_API_CALLS"
-    case "$1" in
-      check-cursor-api)
-        if [[ "${VENV_TEST_API_POST_FAIL:-false}" == true && -f "$VENV_TEST_STATE/api-repaired" ]]; then
-          print -u2 "simulated final API validation failure"
-          return 1
-        fi
-        if [[ "${VENV_TEST_API_MISSING:-false}" == true && ! -f "$VENV_TEST_STATE/api-repaired" ]]; then
-          print -u2 "Cursor API grant is missing"
-          return 1
-        fi
-        return 0
-        ;;
-      repair-cursor-api-staged)
-        local task="$USE_VENV_STATE_DIRECTORY/cursor-api-repair"
-        mkdir -p "$task"
-        print original > "$task/original.json"
-        [[ "${VENV_TEST_API_VERIFY_FAIL:-false}" != true ]] || return 1
-        print granted > "$VENV_TEST_STATE/api-repaired"
-        return 0
-        ;;
-      commit-cursor-api)
-        [[ "${VENV_TEST_API_COMMIT_FAIL:-false}" != true ]] || return 1
-        ;;
-      rollback-cursor-api) rm -f "$VENV_TEST_STATE/api-repaired" ;;
-      *) return 1 ;;
-    esac
-    rm -f "$USE_VENV_STATE_DIRECTORY/cursor-api-repair/original.json" "$USE_VENV_STATE_DIRECTORY/cursor-api-repair/state.json" "$USE_VENV_STATE_DIRECTORY/cursor-api-repair/applied.json"
-    rmdir "$USE_VENV_STATE_DIRECTORY/cursor-api-repair"
-    return 0
-  fi
   [[ "$1" == reload-window ]] || return 1
   osascript - "$USE_VENV_EDITOR_APPLICATION" "$USE_VENV_EDITOR_PROCESS" "${USE_VENV_WORKSPACE_DIRECTORY:t}" "Developer: Reload Window" </dev/null
 }
@@ -314,37 +282,6 @@ class UseVenvTests(unittest.TestCase):
             str(Path.home() / "Library/Application Support/use-venv/transactions"),
         )
 
-    def legacy_api_backup(self):
-        source = self.workspace / ".agent-tmp/cursor-api-repair"
-        source.mkdir(parents=True)
-        (source / "state.json").write_text(json.dumps({"product": "original product"}))
-        (source / "original.json").write_bytes(b"original application configuration")
-        (source / "applied.json").write_bytes(b"applied configuration")
-        return source
-
-    def test_migrates_legacy_api_backup_before_blocking_new_switch(self):
-        source = self.legacy_api_backup()
-        result = self.run_switch("--editor", "cursor")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("--rollback-cursor-api", result.stderr)
-        self.assertFalse(source.exists())
-        self.assertEqual(
-            (self.runtime / "cursor-api-repair/original.json").read_bytes(),
-            b"original application configuration",
-        )
-        self.assertEqual(self.settings.read_text(), self.original_settings)
-
-    def test_legacy_api_rollback_still_works_after_migration(self):
-        source = self.legacy_api_backup()
-        result = self.run_switch("--editor", "cursor", "--rollback-cursor-api")
-        self.assert_success(result)
-        self.assertFalse(source.exists())
-        self.assertEqual(list(self.runtime.iterdir()), [])
-        self.assertEqual(
-            (self.root / "api-calls").read_text().strip(), "rollback-cursor-api"
-        )
-        self.assertEqual(self.settings.read_text(), self.original_settings)
-
     def test_migrates_retained_extension_backup_without_changing_contents(self):
         source = self.workspace / ".agent-tmp/cursor-envs-transaction.example"
         source.mkdir(parents=True)
@@ -360,19 +297,22 @@ class UseVenvTests(unittest.TestCase):
         self.assertEqual((migrated / "backup.json").read_text(), '{"version":"1.40.0"}')
 
     def test_migration_collision_preserves_both_backups(self):
-        source = self.legacy_api_backup()
+        source = self.workspace / ".agent-tmp/cursor-envs-transaction.collision"
+        source.mkdir(parents=True)
+        (source / "backup.json").write_text("{}")
+        (source / "original.vsix").write_bytes(b"original application configuration")
         destination = self.runtime / source.name
         destination.mkdir()
-        (destination / "original.json").write_bytes(b"another backup")
+        (destination / "original.vsix").write_bytes(b"another backup")
         result = self.run_switch("--editor", "cursor")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("preserving both", result.stderr)
         self.assertEqual(
-            (source / "original.json").read_bytes(),
+            (source / "original.vsix").read_bytes(),
             b"original application configuration",
         )
         self.assertEqual(
-            (destination / "original.json").read_bytes(), b"another backup"
+            (destination / "original.vsix").read_bytes(), b"another backup"
         )
         self.assertEqual(self.settings.read_text(), self.original_settings)
 
@@ -396,15 +336,18 @@ class UseVenvTests(unittest.TestCase):
         self.assertEqual(self.settings.read_text(), self.original_settings)
         self.assertFalse((self.root / "api-calls").exists())
 
-    def test_incomplete_legacy_api_backup_is_retained_and_reported(self):
-        self.incomplete_backup_case(
-            "cursor-api-repair", "original.json", b"original application"
-        )
-
     def test_incomplete_legacy_extension_backup_is_retained_and_reported(self):
         self.incomplete_backup_case(
             "cursor-envs-transaction.partial", "backup.json", b"{}"
         )
+
+    def test_removed_api_repair_option_fails_before_mutation(self):
+        result = self.run_switch("--editor", "cursor", "--repair-cursor-api")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown option: --repair-cursor-api", result.stderr)
+        self.assertEqual(self.settings.read_text(), self.original_settings)
+        self.assertEqual(self.launch.read_text(), self.original_launch)
+        self.assertFalse((self.root / "api-calls").exists())
 
     def test_cursor_selects_cursor_even_when_vscode_is_closed(self):
         result = self.run_switch("--editor", "cursor", VENV_TEST_CLOSED_EDITOR="Code")
@@ -418,9 +361,7 @@ class UseVenvTests(unittest.TestCase):
         )
         self.assertFalse((self.state / "Code").exists())
         self.assertEqual((self.root / "check-calls").read_text().strip(), "check")
-        self.assertEqual(
-            (self.root / "api-calls").read_text().strip(), "check-cursor-api"
-        )
+        self.assertFalse((self.root / "api-calls").exists())
 
     def test_both_routes_selection_and_reload_to_each_editor(self):
         result = self.run_switch("--editor", "both", "--reload")
@@ -454,33 +395,6 @@ class UseVenvTests(unittest.TestCase):
 
         self.assert_success(result)
         self.assertIn("already aligned", result.stdout)
-        self.assertEqual(self.recorded_calls(), [])
-
-    def test_healthy_api_with_repair_flag_skips_api_repair(self):
-        result = self.run_switch("--editor", "cursor", "--repair-cursor-api")
-        self.assert_success(result)
-        self.assertEqual(
-            (self.root / "api-calls").read_text().splitlines(),
-            [
-                "check-cursor-api",
-                "check-cursor-api",
-            ],
-        )
-        self.assertFalse((self.state / "api-repaired").exists())
-        self.assertFalse((self.runtime / "cursor-api-repair").exists())
-
-    def test_healthy_api_with_repair_flag_does_not_require_cursor_to_be_running(self):
-        result = self.run_switch(
-            "--editor",
-            "cursor",
-            "--repair-cursor-api",
-            VENV_TEST_CLOSED_EDITOR="Cursor",
-        )
-        self.assert_success(result)
-        self.assertIn("Pending: Cursor is not running", result.stderr)
-        self.assertNotIn(
-            "repair-cursor-api-staged", (self.root / "api-calls").read_text()
-        )
         self.assertEqual(self.recorded_calls(), [])
 
     def test_failed_selection_rolls_back_shared_files(self):
@@ -673,164 +587,19 @@ class UseVenvTests(unittest.TestCase):
         self.assertEqual(self.settings.read_text(), self.original_settings)
         self.assertEqual(self.recorded_calls(), [])
 
-    def test_both_checks_report_problems_without_repair_flags(self):
-        result = self.run_switch(
-            "--editor",
-            "cursor",
-            VENV_TEST_TOOLS_MISSING="true",
-            VENV_TEST_API_MISSING="true",
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("--repair-cursor-envs", result.stderr)
-        self.assertIn("--repair-cursor-api", result.stderr)
-        self.assertIn("Stopped before repairs", result.stderr)
-        self.assertNotIn("repair is authorized", result.stderr)
-        self.assertEqual((self.root / "check-calls").read_text().strip(), "check")
-        self.assertEqual(
-            (self.root / "api-calls").read_text().strip(), "check-cursor-api"
-        )
-        self.assertFalse((self.root / "tools-calls").exists())
-        self.assertEqual(self.settings.read_text(), self.original_settings)
-
-    def test_package_repair_is_not_started_when_api_problem_is_not_authorized(self):
+    def test_package_repair_can_proceed_without_api_grant(self):
         result = self.run_switch(
             "--editor",
             "cursor",
             "--repair-cursor-envs",
-            VENV_TEST_TOOLS_MISSING="true",
-            VENV_TEST_API_MISSING="true",
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("environment package repair is authorized", result.stderr)
-        self.assertNotIn("--repair-cursor-envs", result.stderr)
-        self.assertIn("--repair-cursor-api", result.stderr)
-        self.assertIn("Stopped before repairs", result.stderr)
-        self.assertFalse((self.root / "tools-calls").exists())
-        self.assertEqual(self.settings.read_text(), self.original_settings)
-        self.assertEqual(self.launch.read_text(), self.original_launch)
-
-    def test_api_repair_is_not_started_when_tools_problem_is_not_authorized(self):
-        result = self.run_switch(
-            "--editor",
-            "cursor",
-            "--repair-cursor-api",
-            VENV_TEST_TOOLS_MISSING="true",
-            VENV_TEST_API_MISSING="true",
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Cursor API repair is authorized", result.stderr)
-        self.assertNotIn("--repair-cursor-api", result.stderr)
-        self.assertIn("--repair-cursor-envs", result.stderr)
-        self.assertIn("Stopped before repairs", result.stderr)
-        self.assertEqual(
-            (self.root / "api-calls").read_text().splitlines(), ["check-cursor-api"]
-        )
-        self.assertFalse((self.root / "tools-calls").exists())
-        self.assertEqual(self.settings.read_text(), self.original_settings)
-
-    def test_both_repairs_commit_only_after_all_verification_passes(self):
-        result = self.run_switch(
-            "--editor",
-            "both",
-            "--repair-cursor-envs",
-            "--repair-cursor-api",
             VENV_TEST_TOOLS_MISSING="true",
             VENV_TEST_API_MISSING="true",
             VENV_TEST_REPAIR_BACKUP="true",
+            VENV_TEST_RELOAD_READY="true",
         )
         self.assert_success(result)
-        self.assertEqual((self.root / "tools-calls").read_text().splitlines(), ["true"])
-        self.assertEqual(
-            (self.root / "api-calls").read_text().splitlines(),
-            [
-                "check-cursor-api",
-                "repair-cursor-api-staged",
-                "check-cursor-api",
-                "commit-cursor-api",
-            ],
-        )
-        self.assertEqual(list((self.runtime).iterdir()), [])
-
-    def test_api_failure_rolls_back_package_and_shared_configuration(self):
-        result = self.run_switch(
-            "--editor",
-            "cursor",
-            "--repair-cursor-envs",
-            "--repair-cursor-api",
-            VENV_TEST_REPAIR_BACKUP="true",
-            VENV_TEST_API_VERIFY_FAIL="true",
-            VENV_TEST_TOOLS_MISSING="true",
-            VENV_TEST_API_MISSING="true",
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(
-            (self.root / "tools-calls").read_text().splitlines(), ["true", "rollback"]
-        )
-        self.assertEqual(
-            (self.root / "api-calls").read_text().splitlines(),
-            [
-                "check-cursor-api",
-                "repair-cursor-api-staged",
-                "rollback-cursor-api",
-            ],
-        )
-        self.assertEqual(self.settings.read_text(), self.original_settings)
-        self.assertEqual(self.launch.read_text(), self.original_launch)
-        self.assertEqual(list((self.runtime).iterdir()), [])
-
-    def test_commit_failure_rolls_back_verified_api_change(self):
-        result = self.run_switch(
-            "--editor",
-            "cursor",
-            "--repair-cursor-api",
-            VENV_TEST_API_COMMIT_FAIL="true",
-            VENV_TEST_API_MISSING="true",
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(
-            (self.root / "api-calls").read_text().splitlines(),
-            [
-                "check-cursor-api",
-                "repair-cursor-api-staged",
-                "check-cursor-api",
-                "commit-cursor-api",
-                "rollback-cursor-api",
-            ],
-        )
-        self.assertEqual(self.settings.read_text(), self.original_settings)
-
-    def test_final_check_failure_rolls_back_both_verified_repairs(self):
-        result = self.run_switch(
-            "--editor",
-            "cursor",
-            "--repair-cursor-envs",
-            "--repair-cursor-api",
-            VENV_TEST_REPAIR_BACKUP="true",
-            VENV_TEST_TOOLS_MISSING="true",
-            VENV_TEST_API_MISSING="true",
-            VENV_TEST_API_POST_FAIL="true",
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("final API validation failure", result.stderr)
-        self.assertNotIn("Rerun the same command", result.stderr)
-        self.assertNotIn("Stopped before repairs", result.stderr)
-        self.assertEqual(
-            (self.root / "tools-calls").read_text().splitlines(), ["true", "rollback"]
-        )
-        self.assertEqual(
-            (self.root / "api-calls").read_text().splitlines(),
-            [
-                "check-cursor-api",
-                "repair-cursor-api-staged",
-                "check-cursor-api",
-                "rollback-cursor-api",
-            ],
-        )
-        self.assertEqual(self.settings.read_text(), self.original_settings)
-        self.assertEqual(self.launch.read_text(), self.original_launch)
-        self.assertFalse((self.state / "api-repaired").exists())
-        self.assertFalse((self.state / "tools-repaired").exists())
-        self.assertEqual(list((self.runtime).iterdir()), [])
+        self.assertFalse((self.root / "api-calls").exists())
+        self.assertTrue((self.root / "tools-calls").exists())
 
     def reload_fixture(self):
         source = DEFINITIONS.split("<<'CURSOR_RELOAD_PYTHON'\n", 1)[1].split(
