@@ -59,8 +59,8 @@ def capture_output(response: ModelResponse) -> str:
     return output.getvalue()
 
 
-class FakeClientTests(unittest.TestCase):
-    def test_streams_scripted_events_in_order_without_default_fallback(self):
+class FakeClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_streams_scripted_events_in_order_without_default_fallback(self):
         request = build_request()
         scripted_events = [
             TextDeltaEvent(delta="first"),
@@ -80,26 +80,26 @@ class FakeClientTests(unittest.TestCase):
 
         self.assertEqual(client.requests, [])
         for expected_event in expected_events:
-            self.assertIs(next(stream), expected_event)
+            self.assertIs(await anext(stream), expected_event)
             self.assertEqual(client.requests, [request])
-        with self.assertRaises(StopIteration):
-            next(stream)
+        with self.assertRaises(StopAsyncIteration):
+            await anext(stream)
         self.assertEqual(scripted_events, list(expected_events))
-        self.assertEqual(list(client.send_stream(request)), [])
+        self.assertEqual([event async for event in client.send_stream(request)], [])
         self.assertEqual(client.requests, [request, request])
 
-    def test_preserves_empty_and_unterminated_scripted_streams(self):
+    async def test_preserves_empty_and_unterminated_scripted_streams(self):
         for scripted_events in ([], [TextDeltaEvent(delta="partial answer")]):
             with self.subTest(scripted_events=scripted_events):
                 request = build_request()
                 client = FakeClient(build_config(), scripted_events=scripted_events)
 
-                events = list(client.send_stream(request))
+                events = [event async for event in client.send_stream(request)]
 
                 self.assertEqual(events, scripted_events)
                 self.assertEqual(client.requests, [request])
 
-    def test_default_normal_stream_matches_response_on_repeated_calls(self):
+    async def test_default_normal_stream_matches_response_on_repeated_calls(self):
         first_request = build_request()
         second_request = ModelRequest(
             input=[Message(role="user", content="second prompt")],
@@ -109,7 +109,7 @@ class FakeClientTests(unittest.TestCase):
         client = FakeClient(build_config())
 
         for request in (first_request, second_request):
-            events = list(client.send_stream(request))
+            events = [event async for event in client.send_stream(request)]
 
             self.assertGreaterEqual(len(events), 3)
             self.assertTrue(
@@ -130,11 +130,11 @@ class FakeClientTests(unittest.TestCase):
             )
         self.assertEqual(client.requests, [first_request, second_request])
 
-    def test_default_truncated_stream_reports_output_limit(self):
+    async def test_default_truncated_stream_reports_output_limit(self):
         request = build_request()
         client = FakeClient(build_config(), outcome="max_output_tokens")
 
-        events = list(client.send_stream(request))
+        events = [event async for event in client.send_stream(request)]
 
         self.assertEqual(len(events), 1)
         self.assertIsInstance(events[0], EndEvent)

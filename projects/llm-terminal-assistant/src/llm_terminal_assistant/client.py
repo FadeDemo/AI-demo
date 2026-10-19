@@ -1,4 +1,4 @@
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from typing import Protocol
 
 from llm_terminal_assistant.config import ModelConfig
@@ -14,8 +14,10 @@ class ModelClient(Protocol):
 
     def send(self, request: ModelRequest) -> ModelResponse: ...
 
-    def send_stream(self, request: ModelRequest) -> Generator[StreamEvent]: ...
+    def send_stream(self, request: ModelRequest) -> AsyncGenerator[StreamEvent]: ...
 
     def validate_reasoning_effort(
         self, effort: str | None, allowed_efforts: tuple[str, ...]
     ) -> None: ...
+
+    async def aclose(self) -> None: ...

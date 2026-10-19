@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
 from httpx import Timeout
@@ -35,10 +35,11 @@ logger = logging.getLogger(__name__)
 
 class OpenAIClient(ModelClient):
     def __init__(self, config: ModelConfig):
-        from openai import OpenAI
+        self.client = None
+        self.stream_client = None
 
         super().__init__(config)
-        constructor_kwargs = {
+        self.constructor_kwargs = {
             "api_key": self.api_key,
             "base_url": self.base_url,
         }
@@ -47,8 +48,7 @@ class OpenAIClient(ModelClient):
 
             timeout = Timeout(DEFAULT_TIMEOUT)
             timeout.connect = config.request_timeout_config.connect_seconds
-            constructor_kwargs["timeout"] = timeout
-        self.client = OpenAI(**constructor_kwargs)
+            self.constructor_kwargs["timeout"] = timeout
 
     def _build_request_options(self, request: ModelRequest) -> dict[str, object]:
         request_options: dict[str, object] = {
@@ -85,6 +85,10 @@ class OpenAIClient(ModelClient):
         return request_options
 
     def send(self, request: ModelRequest) -> ModelResponse:
+        if self.client is None:
+            from openai import OpenAI
+
+            self.client = OpenAI(**self.constructor_kwargs)
         request_options = self._build_request_options(request)
         openai_response = self.client.responses.create(**request_options)
         logger.debug("Using model: %s", openai_response.model)
@@ -156,7 +160,11 @@ class OpenAIClient(ModelClient):
                 f"Supported efforts: {supported_efforts}"
             )
 
-    def send_stream(self, request: ModelRequest) -> Generator[StreamEvent]:
+    async def send_stream(self, request: ModelRequest) -> AsyncGenerator[StreamEvent]:
+        if self.stream_client is None:
+            from openai import AsyncOpenAI
+
+            self.stream_client = AsyncOpenAI(**self.constructor_kwargs)
         from httpx import ConnectTimeout
         from openai import APITimeoutError
 
@@ -164,8 +172,8 @@ class OpenAIClient(ModelClient):
         request_options["stream"] = True
         events = None
         try:
-            events = self.client.responses.create(**request_options)
-            for event in events:
+            events = await self.stream_client.responses.create(**request_options)
+            async for event in events:
                 if event.type == "response.output_text.delta":
                     yield TextDeltaEvent(
                         delta=event.delta,
@@ -223,4 +231,10 @@ class OpenAIClient(ModelClient):
                 raise
         finally:
             if events is not None:
-                events.close()
+                await events.close()
+
+    async def aclose(self) -> None:
+        if self.stream_client is not None:
+            await self.stream_client.close()
+        if self.client is not None:
+            self.client.close()

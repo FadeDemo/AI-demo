@@ -1,5 +1,5 @@
 from collections import deque
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.config import ModelConfig
@@ -75,7 +75,7 @@ class FakeClient(ModelClient):
                 f"Supported efforts: {allowed_efforts}"
             )
 
-    def send_stream(self, request: ModelRequest) -> Generator[StreamEvent]:
+    async def send_stream(self, request: ModelRequest) -> AsyncGenerator[StreamEvent]:
         self.requests.append(request)
         if self.scripted_events is not None:
             if not self.scripted_events:
@@ -111,3 +111,6 @@ class FakeClient(ModelClient):
                     reason="max_output_tokens"
                 ),
             )
+
+    async def aclose(self) -> None:
+        pass

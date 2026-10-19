@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from llm_terminal_assistant.adapter.openai_client import OpenAIClient
 from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
@@ -25,11 +25,14 @@ class RecordingStream:
     def __init__(self, events):
         self.events = events
         self.closed = False
+        self.read_count = 0
 
-    def __iter__(self):
-        return iter(self.events)
+    async def __aiter__(self):
+        for event in self.events:
+            self.read_count += 1
+            yield event
 
-    def close(self):
+    async def close(self):
         self.closed = True
 
 
@@ -67,8 +70,15 @@ class RecordingResponses:
         return response
 
 
-class OpenAIClientTests(unittest.TestCase):
-    def test_connection_timeout_during_creation_reaches_consumer_as_end_reason(self):
+class RecordingAsyncResponses(RecordingResponses):
+    async def create(self, **kwargs):
+        return super().create(**kwargs)
+
+
+class OpenAIClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connection_timeout_during_creation_reaches_consumer_as_end_reason(
+        self,
+    ):
         from httpx import ConnectTimeout, Request
         from openai import APITimeoutError
 
@@ -76,12 +86,12 @@ class OpenAIClientTests(unittest.TestCase):
         error.__cause__ = ConnectTimeout("connection timed out")
         client = object.__new__(OpenAIClient)
         client.model = "deepseek-flash"
-        client.client = SimpleNamespace(
-            responses=SimpleNamespace(create=Mock(side_effect=error))
+        client.stream_client = SimpleNamespace(
+            responses=SimpleNamespace(create=AsyncMock(side_effect=error))
         )
         consumer = Mock()
 
-        response = consume_stream(
+        response = await consume_stream(
             client.send_stream(ModelRequest(input=[], reserved_output_tokens=20)),
             consumer,
             start_at=0.0,
@@ -93,9 +103,9 @@ class OpenAIClientTests(unittest.TestCase):
         self.assertEqual(response.error.message, error.message)
         self.assertEqual(response.text, "")
         consumer.assert_not_called()
-        client.client.responses.create.assert_called_once()
+        client.stream_client.responses.create.assert_awaited_once()
 
-    def test_other_creation_errors_propagate_without_cleanup_masking_them(self):
+    async def test_other_creation_errors_propagate_without_cleanup_masking_them(self):
         from httpx import ReadTimeout, Request
         from openai import APITimeoutError
 
@@ -110,20 +120,23 @@ class OpenAIClientTests(unittest.TestCase):
             with self.subTest(error=error):
                 client = object.__new__(OpenAIClient)
                 client.model = "deepseek-flash"
-                client.client = SimpleNamespace(
-                    responses=SimpleNamespace(create=Mock(side_effect=error))
+                client.stream_client = SimpleNamespace(
+                    responses=SimpleNamespace(create=AsyncMock(side_effect=error))
                 )
 
                 with self.assertRaises(type(error)) as caught:
-                    list(
+                    await anext(
                         client.send_stream(
                             ModelRequest(input=[], reserved_output_tokens=20)
                         )
                     )
 
                 self.assertIs(caught.exception, error)
+                client.stream_client.responses.create.assert_awaited_once()
 
-    def test_missing_timeout_config_omits_sdk_timeout_argument(self):
+    async def test_clients_are_created_on_first_use_and_reused_without_timeout_override(
+        self,
+    ):
         config = ModelConfig(
             api_key="test-key",
             base_url="https://example.invalid",
@@ -132,15 +145,96 @@ class OpenAIClientTests(unittest.TestCase):
             provider="openai",
         )
 
-        with patch("openai.OpenAI") as constructor:
-            client = OpenAIClient(config)
+        request = ModelRequest(input=[], reserved_output_tokens=20)
+        for streaming in (False, True):
+            with (
+                self.subTest(streaming=streaming),
+                patch("openai.OpenAI") as sync_constructor,
+                patch("openai.AsyncOpenAI") as async_constructor,
+            ):
+                sync_constructor.return_value.responses = RecordingResponses()
+                async_constructor.return_value.responses = RecordingAsyncResponses()
+                client = OpenAIClient(config)
+                sync_constructor.assert_not_called()
+                async_constructor.assert_not_called()
+                self.assertIsNone(client.client)
+                self.assertIsNone(client.stream_client)
 
-        constructor.assert_called_once_with(
-            api_key=config.api_key, base_url=config.base_url
+                for _ in range(2):
+                    if streaming:
+                        events = [event async for event in client.send_stream(request)]
+                        self.assertIsInstance(events[-1], EndEvent)
+                    else:
+                        self.assertEqual(client.send(request).text, "response")
+
+                if streaming:
+                    used, unused = async_constructor, sync_constructor
+                    self.assertIs(client.stream_client, used.return_value)
+                    self.assertIsNone(client.client)
+                else:
+                    used, unused = sync_constructor, async_constructor
+                    self.assertIs(client.client, used.return_value)
+                    self.assertIsNone(client.stream_client)
+                used.assert_called_once_with(
+                    api_key=config.api_key, base_url=config.base_url
+                )
+                unused.assert_not_called()
+
+    async def test_aclose_closes_only_created_clients(self):
+        config = ModelConfig(
+            api_key="test-key",
+            base_url="https://example.invalid",
+            model="deepseek-flash",
+            model_profile=DEEPSEEK_V41_FLASH_1017,
+            provider="openai",
         )
-        self.assertIs(client.client, constructor.return_value)
+        request = ModelRequest(input=[], reserved_output_tokens=20)
+        for use_sync, use_async in (
+            (False, False),
+            (True, False),
+            (False, True),
+            (True, True),
+        ):
+            sync_client = SimpleNamespace(
+                responses=RecordingResponses(), close=Mock(return_value=None)
+            )
+            async_client = SimpleNamespace(
+                responses=RecordingAsyncResponses(), close=AsyncMock(return_value=None)
+            )
+            with (
+                self.subTest(use_sync=use_sync, use_async=use_async),
+                patch("openai.OpenAI", return_value=sync_client) as sync_constructor,
+                patch(
+                    "openai.AsyncOpenAI", return_value=async_client
+                ) as async_constructor,
+            ):
+                client = OpenAIClient(config)
+                if use_sync:
+                    client.send(request)
+                if use_async:
+                    events = [event async for event in client.send_stream(request)]
+                    self.assertIsInstance(events[-1], EndEvent)
+                    self.assertTrue(async_client.responses.stream.closed)
 
-    def test_timeout_config_overrides_only_connect_without_mutating_sdk_defaults(self):
+                sync_client.close.assert_not_called()
+                async_client.close.assert_not_called()
+
+                await client.aclose()
+
+                self.assertEqual(sync_constructor.call_count, int(use_sync))
+                self.assertEqual(async_constructor.call_count, int(use_async))
+                if use_sync:
+                    sync_client.close.assert_called_once_with()
+                else:
+                    sync_client.close.assert_not_called()
+                if use_async:
+                    async_client.close.assert_awaited_once_with()
+                else:
+                    async_client.close.assert_not_called()
+
+    async def test_timeout_config_overrides_only_connect_without_mutating_sdk_defaults(
+        self,
+    ):
         from openai import DEFAULT_TIMEOUT
 
         original_defaults = DEFAULT_TIMEOUT.as_dict()
@@ -153,13 +247,23 @@ class OpenAIClientTests(unittest.TestCase):
             request_timeout_config=RequestTimeoutConfig(0.25, 2.0, 3.0, 4.0),
         )
 
-        with patch("openai.OpenAI") as constructor:
-            OpenAIClient(config)
+        with (
+            patch("openai.OpenAI") as sync_constructor,
+            patch("openai.AsyncOpenAI") as async_constructor,
+        ):
+            sync_constructor.return_value.responses = RecordingResponses()
+            async_constructor.return_value.responses = RecordingAsyncResponses()
+            client = OpenAIClient(config)
+            request = ModelRequest(input=[], reserved_output_tokens=20)
+            client.send(request)
+            events = [event async for event in client.send_stream(request)]
+            self.assertIsInstance(events[-1], EndEvent)
 
-        constructor.assert_called_once()
-        timeout = constructor.call_args.kwargs["timeout"]
-        self.assertIsNot(timeout, DEFAULT_TIMEOUT)
-        self.assertEqual(timeout.as_dict(), {**original_defaults, "connect": 0.25})
+        for constructor in (sync_constructor, async_constructor):
+            constructor.assert_called_once()
+            timeout = constructor.call_args.kwargs["timeout"]
+            self.assertIsNot(timeout, DEFAULT_TIMEOUT)
+            self.assertEqual(timeout.as_dict(), {**original_defaults, "connect": 0.25})
         self.assertEqual(DEFAULT_TIMEOUT.as_dict(), original_defaults)
 
     def test_ultra_is_allowed_only_by_1017_profile_and_sent_unchanged(self):
@@ -189,7 +293,9 @@ class OpenAIClientTests(unittest.TestCase):
         )
         self.assertEqual(responses.create_kwargs["reasoning"], {"effort": "ultra"})
 
-    def test_streaming_preserves_request_options_without_affecting_later_send(self):
+    async def test_streaming_preserves_request_options_without_affecting_later_send(
+        self,
+    ):
         requests = [
             ModelRequest(
                 input=[Message(role="user", content="question")],
@@ -222,26 +328,31 @@ class OpenAIClientTests(unittest.TestCase):
         for request in requests:
             with self.subTest(request=request):
                 responses = RecordingResponses()
+                stream_responses = RecordingAsyncResponses()
                 client = object.__new__(OpenAIClient)
                 client.model = "test-model"
                 client.client = SimpleNamespace(responses=responses)
+                client.stream_client = SimpleNamespace(responses=stream_responses)
 
                 client.send(request)
                 expected_options = responses.create_kwargs.copy()
-                list(client.send_stream(request))
+                events = [event async for event in client.send_stream(request)]
 
+                self.assertIsInstance(events[-1], EndEvent)
                 self.assertEqual(
-                    responses.create_kwargs, {**expected_options, "stream": True}
+                    stream_responses.create_kwargs, {**expected_options, "stream": True}
                 )
                 client.send(request)
                 self.assertEqual(responses.create_kwargs, expected_options)
                 self.assertNotIn("stream", responses.create_kwargs)
 
-    def test_streams_text_then_usage_and_end_and_closes_sdk_stream(self):
+    async def test_streams_text_then_usage_and_end_and_closes_sdk_stream(self):
         responses = RecordingResponses()
+        stream_responses = RecordingAsyncResponses()
         client = object.__new__(OpenAIClient)
         client.model = "test-model"
         client.client = SimpleNamespace(responses=responses)
+        client.stream_client = SimpleNamespace(responses=stream_responses)
         request = ModelRequest(
             input=[Message(role="user", content="question")],
             reserved_output_tokens=321,
@@ -250,21 +361,21 @@ class OpenAIClientTests(unittest.TestCase):
         expected_response = client.send(request)
         events = client.send_stream(request)
         for delta in ("first", "", "third"):
-            self.assertEqual(next(events), TextDeltaEvent(delta=delta))
-        self.assertEqual(next(events), UsageEvent(usage=expected_response.usage))
+            self.assertEqual(await anext(events), TextDeltaEvent(delta=delta))
+        self.assertEqual(await anext(events), UsageEvent(usage=expected_response.usage))
         self.assertEqual(
-            next(events),
+            await anext(events),
             EndEvent(
                 reason=expected_response.reason,
                 error=expected_response.error,
                 incomplete_details=expected_response.incomplete_details,
             ),
         )
-        with self.assertRaises(StopIteration):
-            next(events)
-        self.assertTrue(responses.stream.closed)
+        with self.assertRaises(StopAsyncIteration):
+            await anext(events)
+        self.assertTrue(stream_responses.stream.closed)
 
-    def test_maps_output_truncation_without_usage_and_closes_sdk_stream(self):
+    async def test_maps_output_truncation_without_usage_and_closes_sdk_stream(self):
         stream = RecordingStream(
             [
                 SimpleNamespace(type="response.output_text.delta", delta="partial"),
@@ -280,8 +391,8 @@ class OpenAIClientTests(unittest.TestCase):
         )
         client = object.__new__(OpenAIClient)
         client.model = "test-model"
-        client.client = SimpleNamespace(
-            responses=SimpleNamespace(create=Mock(return_value=stream))
+        client.stream_client = SimpleNamespace(
+            responses=SimpleNamespace(create=AsyncMock(return_value=stream))
         )
         request = ModelRequest(
             input=[Message(role="user", content="question")],
@@ -290,9 +401,9 @@ class OpenAIClientTests(unittest.TestCase):
 
         events = client.send_stream(request)
 
-        self.assertEqual(next(events), TextDeltaEvent(delta="partial"))
+        self.assertEqual(await anext(events), TextDeltaEvent(delta="partial"))
         self.assertEqual(
-            next(events),
+            await anext(events),
             EndEvent(
                 reason=ModelResponseEndReason.REQUEST_INCOMPLETE,
                 error=None,
@@ -301,11 +412,11 @@ class OpenAIClientTests(unittest.TestCase):
                 ),
             ),
         )
-        with self.assertRaises(StopIteration):
-            next(events)
+        with self.assertRaises(StopAsyncIteration):
+            await anext(events)
         self.assertTrue(stream.closed)
 
-    def test_maps_failed_response_error_and_closes_sdk_stream(self):
+    async def test_maps_failed_response_error_and_closes_sdk_stream(self):
         stream = RecordingStream(
             [
                 SimpleNamespace(type="response.output_text.delta", delta="partial"),
@@ -324,8 +435,8 @@ class OpenAIClientTests(unittest.TestCase):
         )
         client = object.__new__(OpenAIClient)
         client.model = "test-model"
-        client.client = SimpleNamespace(
-            responses=SimpleNamespace(create=Mock(return_value=stream))
+        client.stream_client = SimpleNamespace(
+            responses=SimpleNamespace(create=AsyncMock(return_value=stream))
         )
         request = ModelRequest(
             input=[Message(role="user", content="question")],
@@ -334,9 +445,9 @@ class OpenAIClientTests(unittest.TestCase):
 
         events = client.send_stream(request)
 
-        self.assertEqual(next(events), TextDeltaEvent(delta="partial"))
+        self.assertEqual(await anext(events), TextDeltaEvent(delta="partial"))
         self.assertEqual(
-            next(events),
+            await anext(events),
             EndEvent(
                 reason=ModelResponseEndReason.REQUEST_FAILED,
                 error=ModelResponseError(
@@ -346,11 +457,11 @@ class OpenAIClientTests(unittest.TestCase):
                 incomplete_details=None,
             ),
         )
-        with self.assertRaises(StopIteration):
-            next(events)
+        with self.assertRaises(StopAsyncIteration):
+            await anext(events)
         self.assertTrue(stream.closed)
 
-    def test_closes_sdk_stream_when_reading_or_conversion_raises(self):
+    async def test_closes_sdk_stream_when_reading_or_conversion_raises(self):
         def failing_events():
             yield SimpleNamespace(type="response.output_text.delta", delta="partial")
             raise RuntimeError("stream read failed")
@@ -368,8 +479,8 @@ class OpenAIClientTests(unittest.TestCase):
                 stream = RecordingStream(raw_events)
                 client = object.__new__(OpenAIClient)
                 client.model = "test-model"
-                client.client = SimpleNamespace(
-                    responses=SimpleNamespace(create=Mock(return_value=stream))
+                client.stream_client = SimpleNamespace(
+                    responses=SimpleNamespace(create=AsyncMock(return_value=stream))
                 )
                 request = ModelRequest(
                     input=[Message(role="user", content="question")],
@@ -377,9 +488,35 @@ class OpenAIClientTests(unittest.TestCase):
                 )
 
                 with self.assertRaisesRegex(error_type, message):
-                    list(client.send_stream(request))
+                    async for _ in client.send_stream(request):
+                        pass
 
                 self.assertTrue(stream.closed)
+
+    async def test_closing_generator_early_awaits_sdk_cleanup_without_reading_more(
+        self,
+    ):
+        stream = RecordingStream(
+            [
+                SimpleNamespace(type="response.output_text.delta", delta="first"),
+                SimpleNamespace(type="response.output_text.delta", delta="unread"),
+            ]
+        )
+        client = object.__new__(OpenAIClient)
+        client.model = "test-model"
+        client.stream_client = SimpleNamespace(
+            responses=SimpleNamespace(create=AsyncMock(return_value=stream))
+        )
+        events = client.send_stream(ModelRequest(input=[], reserved_output_tokens=20))
+
+        self.assertEqual(await anext(events), TextDeltaEvent("first"))
+        self.assertFalse(stream.closed)
+        await events.aclose()
+
+        self.assertTrue(stream.closed)
+        self.assertEqual(stream.read_count, 1)
+        with self.assertRaises(StopAsyncIteration):
+            await anext(events)
 
     def test_maps_input_items_to_responses_input_in_order(self):
         responses = RecordingResponses()

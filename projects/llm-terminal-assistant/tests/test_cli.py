@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import unittest
@@ -23,6 +24,7 @@ from llm_terminal_assistant.budgeter import (
 )
 from llm_terminal_assistant.cli import (
     main,
+    run_conversation,
     send_conversation_turn,
     send_stream_conversation_turn,
     talk,
@@ -64,7 +66,7 @@ def make_response(text: str, calls: list[ToolCallRequest] | None = None):
     )
 
 
-class StreamConversationTurnTests(unittest.TestCase):
+class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.config = ModelConfig(
             api_key="",
@@ -81,7 +83,7 @@ class StreamConversationTurnTests(unittest.TestCase):
         self.system = Message(role="system", content="You are a helpful assistant.")
         self.user = Message(role="user", content="question")
 
-    def test_stream_turn_checks_budget_and_displays_each_delta_before_reading_more(
+    async def test_stream_turn_checks_budget_and_displays_each_delta_before_reading_more(
         self,
     ):
         usage = make_response("").usage
@@ -107,18 +109,18 @@ class StreamConversationTurnTests(unittest.TestCase):
         displayed = []
         upstream_send = client.send_stream
 
-        def observed_stream(request):
+        async def observed_stream(request):
             self.assertEqual(budget_check.call_args.args, (request,))
             upstream = upstream_send(request)
             expected_display = []
             try:
-                for event in upstream:
+                async for event in upstream:
                     if isinstance(event, TextDeltaEvent):
                         expected_display.append(event.delta)
                     yield event
                     self.assertEqual(displayed, expected_display)
             finally:
-                upstream.close()
+                await upstream.aclose()
 
         with (
             patch.object(
@@ -129,7 +131,7 @@ class StreamConversationTurnTests(unittest.TestCase):
             ) as send_stream,
             patch.object(client, "send", wraps=client.send) as send,
         ):
-            response, trim_result = send_stream_conversation_turn(
+            response, trim_result = await send_stream_conversation_turn(
                 client=client,
                 budgeter=self.budgeter,
                 system_message=self.system,
@@ -163,8 +165,8 @@ class StreamConversationTurnTests(unittest.TestCase):
         self.assertIs(response.usage, usage)
         self.assertEqual(response.tool_calls, [])
 
-    def test_total_timing_includes_preparation_reading_and_cleanup(self):
-        def exercise(expected_reason, first_text):
+    async def test_total_timing_includes_preparation_reading_and_cleanup(self):
+        async def exercise(expected_reason, first_text):
             now = [100.0]
             closed = []
             client = FakeClient(self.config)
@@ -174,7 +176,7 @@ class StreamConversationTurnTests(unittest.TestCase):
                 now[0] += 2.0
                 return encode(request)
 
-            def timed_stream(request):
+            async def timed_stream(request):
                 try:
                     now[0] += 1.0
                     yield TextDeltaEvent("")
@@ -202,7 +204,7 @@ class StreamConversationTurnTests(unittest.TestCase):
                 ),
                 patch.object(client, "send_stream", side_effect=timed_stream),
             ):
-                response, _ = send_stream_conversation_turn(
+                response, _ = await send_stream_conversation_turn(
                     client=client,
                     budgeter=self.budgeter,
                     system_message=self.system,
@@ -231,9 +233,9 @@ class StreamConversationTurnTests(unittest.TestCase):
         ):
             for first_text in ("partial", " \n", None):
                 with self.subTest(reason=reason, first_text=first_text):
-                    exercise(reason, first_text)
+                    await exercise(reason, first_text)
 
-    def test_budget_rejection_prevents_stream_creation_and_display(self):
+    async def test_budget_rejection_prevents_stream_creation_and_display(self):
         self.budgeter.model_limits = ModelLimits(context_window_tokens=1)
         client = FakeClient(self.config)
         displayed = Mock()
@@ -245,7 +247,7 @@ class StreamConversationTurnTests(unittest.TestCase):
             patch.object(client, "send", wraps=client.send) as send,
             self.assertRaises(BudgetRejectedError) as caught,
         ):
-            send_stream_conversation_turn(
+            await send_stream_conversation_turn(
                 client=client,
                 budgeter=self.budgeter,
                 system_message=self.system,
@@ -265,7 +267,7 @@ class StreamConversationTurnTests(unittest.TestCase):
         self.assertEqual(client.requests, [])
 
 
-class TalkTests(unittest.TestCase):
+class TalkTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.config = ModelConfig(
             api_key="",
@@ -284,7 +286,7 @@ class TalkTests(unittest.TestCase):
         self.clock = Mock(return_value=datetime(2026, 10, 4, 4, 0, tzinfo=UTC))
         self.registry = create_default_tool_registry(clock=self.clock)
 
-    def run_talk(
+    async def run_talk(
         self,
         prompts: list[str],
         responses: list[ModelResponse],
@@ -295,17 +297,18 @@ class TalkTests(unittest.TestCase):
         output = StringIO()
         with (
             patch(
-                "llm_terminal_assistant.cli.prompt",
-                side_effect=[*prompts, "exit"],
-            ),
+                "llm_terminal_assistant.cli.PromptSession", autospec=True
+            ) as prompt_session,
             patch(
                 "llm_terminal_assistant.cli.create_default_tool_registry",
                 return_value=self.registry,
             ) as create_registry,
             redirect_stdout(output),
         ):
-            talk(client, self.config, self.budgeter)
+            prompt_session.return_value.prompt_async.side_effect = [*prompts, "exit"]
+            await talk(client, self.config, self.budgeter)
 
+        prompt_session.assert_called_once_with()
         create_registry.assert_called_once_with()
         checked_requests = [
             call.args[0] for call in self.encoder.encode_request.call_args_list
@@ -320,17 +323,17 @@ class TalkTests(unittest.TestCase):
             self.assertEqual(request.tools, self.registry.get_tool_list())
         return client, output.getvalue()
 
-    def run_stream_talk(self, events, prompts):
+    async def run_stream_talk(self, events, prompts):
         config = replace(self.config, stream_output_enabled=True)
         client = FakeClient(config, scripted_events=events)
         output = StringIO()
         upstream_send = client.send_stream
 
-        def observed_stream(request):
+        async def observed_stream(request):
             self.assertTrue(output.getvalue().endswith("Model Response: \n"))
             upstream = upstream_send(request)
             try:
-                for event in upstream:
+                async for event in upstream:
                     before = output.getvalue()
                     yield event
                     if isinstance(event, TextDeltaEvent):
@@ -338,10 +341,12 @@ class TalkTests(unittest.TestCase):
                     elif isinstance(event, UsageEvent):
                         self.assertEqual(output.getvalue(), before)
             finally:
-                upstream.close()
+                await upstream.aclose()
 
         with (
-            patch("llm_terminal_assistant.cli.prompt", side_effect=[*prompts, "exit"]),
+            patch(
+                "llm_terminal_assistant.cli.PromptSession", autospec=True
+            ) as prompt_session,
             patch(
                 "llm_terminal_assistant.cli.create_default_tool_registry",
                 return_value=self.registry,
@@ -352,8 +357,10 @@ class TalkTests(unittest.TestCase):
             patch.object(client, "send", wraps=client.send) as send,
             redirect_stdout(output),
         ):
-            talk(client, config, self.budgeter)
+            prompt_session.return_value.prompt_async.side_effect = [*prompts, "exit"]
+            await talk(client, config, self.budgeter)
 
+        prompt_session.assert_called_once_with()
         self.assertEqual(send_stream.call_count, len(prompts))
         send.assert_not_called()
         self.clock.assert_not_called()
@@ -365,9 +372,9 @@ class TalkTests(unittest.TestCase):
             self.assertEqual(request.tools, [])
         return client, output.getvalue()
 
-    def test_streaming_displays_deltas_once_and_replays_assembled_history(self):
+    async def test_streaming_displays_deltas_once_and_replays_assembled_history(self):
         completed = EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None)
-        client, output = self.run_stream_talk(
+        client, output = await self.run_stream_talk(
             [
                 TextDeltaEvent(""),
                 UsageEvent(make_response("").usage),
@@ -397,11 +404,13 @@ class TalkTests(unittest.TestCase):
             ],
         )
 
-    def test_streaming_preserves_model_newlines_and_always_adds_ui_separator(self):
+    async def test_streaming_preserves_model_newlines_and_always_adds_ui_separator(
+        self,
+    ):
         for text in ("", "answer", "answer\n", "answer\n\n"):
             with self.subTest(text=text):
                 self.encoder.reset_mock()
-                _, output = self.run_stream_talk(
+                _, output = await self.run_stream_talk(
                     [
                         TextDeltaEvent(text),
                         EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None),
@@ -415,7 +424,7 @@ class TalkTests(unittest.TestCase):
                     "Model Response: \n" + text + "\nExiting...\n",
                 )
 
-    def test_streaming_keeps_partial_text_and_displays_terminal_status_on_new_line(
+    async def test_streaming_keeps_partial_text_and_displays_terminal_status_on_new_line(
         self,
     ):
         cases = [
@@ -451,7 +460,7 @@ class TalkTests(unittest.TestCase):
                 events = [TextDeltaEvent("partial answer")]
                 if terminal is not None:
                     events.append(terminal)
-                _, output = self.run_stream_talk(events, ["question"])
+                _, output = await self.run_stream_talk(events, ["question"])
 
                 self.assertEqual(
                     output,
@@ -459,13 +468,33 @@ class TalkTests(unittest.TestCase):
                     f"Model Response: \npartial answer\n{notice}\nExiting...\n",
                 )
 
-    def test_stream_read_failure_keeps_partial_text_and_displays_notice(self):
+    async def test_stream_connection_timeout_displays_notice_without_answer_text(self):
+        _, output = await self.run_stream_talk(
+            [
+                EndEvent(
+                    ModelResponseEndReason.CONNECTION_TIMEOUT,
+                    ModelResponseError("connection_timeout", "Request timed out."),
+                    None,
+                ),
+            ],
+            ["question"],
+        )
+
+        self.assertEqual(
+            output,
+            "Please enter your prompt (type 'exit' to quit):\n\n"
+            "Model Response: \n\n"
+            "Connection timed out. Could not connect to the model service.\n"
+            "Exiting...\n",
+        )
+
+    async def test_stream_read_failure_keeps_partial_text_and_displays_notice(self):
         config = replace(self.config, stream_output_enabled=True)
         client = FakeClient(config)
         output = StringIO()
         closures = []
 
-        def failing_stream(request):
+        async def failing_stream(request):
             try:
                 yield TextDeltaEvent("partial answer")
                 self.assertTrue(output.getvalue().endswith("partial answer"))
@@ -475,8 +504,8 @@ class TalkTests(unittest.TestCase):
 
         with (
             patch(
-                "llm_terminal_assistant.cli.prompt", side_effect=["question", "exit"]
-            ),
+                "llm_terminal_assistant.cli.PromptSession", autospec=True
+            ) as prompt_session,
             patch(
                 "llm_terminal_assistant.cli.create_default_tool_registry",
                 return_value=self.registry,
@@ -484,7 +513,8 @@ class TalkTests(unittest.TestCase):
             patch.object(client, "send_stream", side_effect=failing_stream) as send,
             redirect_stdout(output),
         ):
-            talk(client, config, self.budgeter)
+            prompt_session.return_value.prompt_async.side_effect = ["question", "exit"]
+            await talk(client, config, self.budgeter)
 
         send.assert_called_once()
         self.assertEqual(closures, [True])
@@ -501,9 +531,15 @@ class TalkTests(unittest.TestCase):
         client = FakeClient(config)
         output = StringIO()
         responses = []
+        request_loops = []
+        cleanup_loops = []
+        cleanup_completed = []
+        original_close = client.aclose
         root = logging.getLogger()
 
-        def logged_stream(request):
+        async def logged_stream(request):
+            close.assert_not_called()
+            request_loops.append(asyncio.get_running_loop())
             client.requests.append(request)
             yield TextDeltaEvent("你好")
             logging.getLogger("llm_terminal_assistant.adapter.openai_client").warning(
@@ -512,10 +548,16 @@ class TalkTests(unittest.TestCase):
             yield TextDeltaEvent("继续")
             yield EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None)
 
-        def observed_turn(*args, **kwargs):
-            result = send_stream_conversation_turn(*args, **kwargs)
+        async def observed_turn(*args, **kwargs):
+            result = await send_stream_conversation_turn(*args, **kwargs)
             responses.append(result[0])
             return result
+
+        async def observed_close():
+            cleanup_loops.append(asyncio.get_running_loop())
+            await asyncio.sleep(0)
+            await original_close()
+            cleanup_completed.append(True)
 
         with (
             patch.object(root, "handlers", []),
@@ -532,22 +574,33 @@ class TalkTests(unittest.TestCase):
                 return_value=self.registry,
             ),
             patch(
-                "llm_terminal_assistant.cli.prompt",
-                side_effect=["first", "second", "exit"],
-            ),
+                "llm_terminal_assistant.cli.PromptSession", autospec=True
+            ) as prompt_session,
             patch(
                 "llm_terminal_assistant.cli.send_stream_conversation_turn",
                 side_effect=observed_turn,
             ),
             patch.object(client, "send_stream", side_effect=logged_stream),
+            patch.object(client, "aclose", side_effect=observed_close) as close,
             redirect_stdout(output),
         ):
+            prompt_session.return_value.prompt_async.side_effect = [
+                "first",
+                "second",
+                "exit",
+            ]
             try:
                 main()
             finally:
                 for handler in root.handlers:
                     handler.close()
 
+        self.assertEqual(len(request_loops), 2)
+        self.assertIs(request_loops[0], request_loops[1])
+        close.assert_awaited_once_with()
+        self.assertEqual(cleanup_loops, [request_loops[0]])
+        self.assertEqual(cleanup_completed, [True])
+        self.assertTrue(request_loops[0].is_closed())
         self.assertEqual([response.text for response in responses], ["你好继续"] * 2)
         self.assertIn(Message("assistant", "你好继续"), client.requests[1].input)
         self.assertEqual(output.getvalue().count("[WARNING] example event"), 2)
@@ -555,10 +608,33 @@ class TalkTests(unittest.TestCase):
             output.getvalue(), r"你好\n[^\n]*\[WARNING\] example event\n继续\n"
         )
 
-    def test_disabled_streaming_keeps_full_response_output_and_tool_definitions(self):
+    async def test_run_conversation_closes_client_when_model_request_raises(self):
+        client = FakeClient(self.config)
+        failure = RuntimeError("model request failed")
+        with (
+            patch(
+                "llm_terminal_assistant.cli.PromptSession", autospec=True
+            ) as prompt_session,
+            patch.object(client, "send", side_effect=failure) as send,
+            patch.object(client, "aclose", wraps=client.aclose) as close,
+            redirect_stdout(StringIO()),
+        ):
+            prompt_session.return_value.prompt_async.side_effect = ["question"]
+            with self.assertRaises(RuntimeError) as caught:
+                await run_conversation(client, self.config, self.budgeter)
+
+        send.assert_called_once()
+        close.assert_awaited_once_with()
+        self.assertIs(caught.exception, failure)
+
+    async def test_disabled_streaming_keeps_full_response_output_and_tool_definitions(
+        self,
+    ):
         self.config = replace(self.config, stream_output_enabled=False)
         with patch.object(FakeClient, "send_stream") as send_stream:
-            client, output = self.run_talk(["question"], [make_response("Full answer")])
+            client, output = await self.run_talk(
+                ["question"], [make_response("Full answer")]
+            )
 
         send_stream.assert_not_called()
         self.assertEqual(client.requests[0].tools, self.registry.get_tool_list())
@@ -568,7 +644,7 @@ class TalkTests(unittest.TestCase):
             "Model Response: \nFull answer\nExiting...\n",
         )
 
-    def test_bracketed_multiline_paste_is_sent_once_and_exit_still_works(self):
+    async def test_bracketed_multiline_paste_is_sent_once_and_exit_still_works(self):
         for trailing_newline in ("", "\n"):
             with self.subTest(trailing_newline=bool(trailing_newline)):
                 self.encoder.reset_mock()
@@ -587,7 +663,7 @@ class TalkTests(unittest.TestCase):
                     redirect_stdout(output),
                 ):
                     terminal_input.send_text(f"\x1b[200~{text}\x1b[201~\rexit\r")
-                    talk(client, self.config, self.budgeter)
+                    await talk(client, self.config, self.budgeter)
 
                 self.assertEqual(len(client.requests), 1)
                 self.assertEqual(
@@ -600,14 +676,14 @@ class TalkTests(unittest.TestCase):
                 self.assertIn("Done", output.getvalue())
                 self.assertIn("Exiting...", output.getvalue())
 
-    def test_exit_with_surrounding_whitespace_does_not_send_a_request(self):
-        client, output = self.run_talk([" \nEXIT\n "], [])
+    async def test_exit_with_surrounding_whitespace_does_not_send_a_request(self):
+        client, output = await self.run_talk([" \nEXIT\n "], [])
 
         self.assertEqual(client.requests, [])
         self.assertIn("Exiting...", output)
 
-    def test_plain_answers_reuse_registry_without_executing_tools(self):
-        client, output = self.run_talk(
+    async def test_plain_answers_reuse_registry_without_executing_tools(self):
+        client, output = await self.run_talk(
             ["Hello", "Another question"],
             [make_response("First answer"), make_response("Second answer")],
         )
@@ -626,7 +702,7 @@ class TalkTests(unittest.TestCase):
             ],
         )
 
-    def test_tool_loop_stop_shows_reason_and_allows_next_question(self):
+    async def test_tool_loop_stop_shows_reason_and_allows_next_question(self):
         for reason in ToolLoopStopReason:
             with self.subTest(reason=reason):
                 self.encoder.reset_mock()
@@ -640,7 +716,7 @@ class TalkTests(unittest.TestCase):
                         "llm_terminal_assistant.cli", level="ERROR"
                     ) as logs,
                 ):
-                    client, output = self.run_talk(
+                    client, output = await self.run_talk(
                         ["Stopped question", "Next question"],
                         [make_response("Next answer")],
                     )
@@ -659,14 +735,16 @@ class TalkTests(unittest.TestCase):
                     ],
                 )
 
-    def test_time_tool_history_is_replayed_and_only_final_answers_are_displayed(self):
+    async def test_time_tool_history_is_replayed_and_only_final_answers_are_displayed(
+        self,
+    ):
         tool_call = ToolCallRequest(
             call_id="time-call-1",
             name="get_current_time",
             arguments='{"timezone":"Asia/Shanghai"}',
         )
         with self.assertLogs("llm_terminal_assistant", level="INFO") as logs:
-            client, output = self.run_talk(
+            client, output = await self.run_talk(
                 ["What time is it in Shanghai?", "Did you use a tool?"],
                 [
                     make_response("Checking the clock.", [tool_call]),
@@ -720,7 +798,9 @@ class TalkTests(unittest.TestCase):
         self.assertNotIn(result.output, log_text)
         self.assertIn("tool_call_count=1 tool_result_count=1", log_text)
 
-    def test_talk_trims_whole_tool_turns_and_saves_current_turn_after_trimming(self):
+    async def test_talk_trims_whole_tool_turns_and_saves_current_turn_after_trimming(
+        self,
+    ):
         system_message = Message("system", "You are a helpful assistant.")
         tool_call = ToolCallRequest(
             "time-call-1", "get_current_time", '{"timezone":"Asia/Shanghai"}'
@@ -795,7 +875,7 @@ class TalkTests(unittest.TestCase):
                     responses.insert(0, make_response("Old answer"))
                 expected_requests = len(responses)
 
-                client, output = self.run_talk(
+                client, output = await self.run_talk(
                     prompts,
                     responses,
                     expected_budget_checks=expected_requests + 2,
@@ -822,7 +902,7 @@ class TalkTests(unittest.TestCase):
                 self.assertIn("Next answer", output)
                 self.assertNotIn("Checking the clock.", output)
 
-    def test_tool_round_limit_does_not_display_or_save_unfinished_turn(self):
+    async def test_tool_round_limit_does_not_display_or_save_unfinished_turn(self):
         self.config = replace(
             self.config,
             tool_loop_limits=ToolLoopLimits(max_tool_rounds=1, max_model_requests=5),
@@ -832,7 +912,7 @@ class TalkTests(unittest.TestCase):
         )
         pending_call = replace(first_call, call_id="time-call-2")
         with self.assertLogs("llm_terminal_assistant.cli", level="ERROR") as logs:
-            client, output = self.run_talk(
+            client, output = await self.run_talk(
                 ["Earlier question", "Unfinished question", "Next question"],
                 [
                     make_response("Earlier answer"),
@@ -861,7 +941,7 @@ class TalkTests(unittest.TestCase):
             ],
         )
 
-    def test_execution_budget_resets_after_completed_or_stopped_turn(self):
+    async def test_execution_budget_resets_after_completed_or_stopped_turn(self):
         self.config = replace(
             self.config,
             tool_loop_limits=ToolLoopLimits(
@@ -893,7 +973,7 @@ class TalkTests(unittest.TestCase):
                 with self.assertLogs(
                     "llm_terminal_assistant.cli", level="INFO"
                 ) as logs:
-                    client, output = self.run_talk(
+                    client, output = await self.run_talk(
                         ["First question", "Next question"], responses
                     )
 
@@ -916,7 +996,7 @@ class TalkTests(unittest.TestCase):
                 self.assertIsInstance(result, ToolCallResult)
                 self.assertEqual(result.call_id, next_call.call_id)
 
-    def test_noncompleted_responses_with_calls_show_status_and_keep_text_in_history(
+    async def test_noncompleted_responses_with_calls_show_status_and_keep_text_in_history(
         self,
     ):
         tool_call = ToolCallRequest(
@@ -961,7 +1041,7 @@ class TalkTests(unittest.TestCase):
                         responses.insert(
                             0, make_response("Checking the clock.", [tool_call])
                         )
-                    client, output = self.run_talk(
+                    client, output = await self.run_talk(
                         ["Interrupted question", "Next question"], responses
                     )
 

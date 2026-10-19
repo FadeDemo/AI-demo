@@ -1,8 +1,9 @@
+import asyncio
 import logging
 from collections.abc import Callable
 from time import monotonic
 
-from prompt_toolkit import prompt
+from prompt_toolkit import PromptSession
 
 from llm_terminal_assistant.budgeter import (
     Budgeter,
@@ -64,6 +65,10 @@ def output_response_status(response: ModelResponse) -> None:
     elif response.reason == ModelResponseEndReason.STREAM_READ_FAILED:
         terminal_output.write_line(
             "Streaming response could not be read. The answer may be incomplete."
+        )
+    elif response.reason == ModelResponseEndReason.CONNECTION_TIMEOUT:
+        terminal_output.write_line(
+            "Connection timed out. Could not connect to the model service."
         )
 
 
@@ -202,7 +207,7 @@ def send_conversation_turn(
     return model_response, trim_result
 
 
-def send_stream_conversation_turn(
+async def send_stream_conversation_turn(
     client: ModelClient,
     budgeter: Budgeter,
     system_message: Message,
@@ -231,7 +236,7 @@ def send_stream_conversation_turn(
         top_p,
     )
     stream = client.send_stream(trim_result.request)
-    model_response = consume_stream(stream, display_text, start_at, clock)
+    model_response = await consume_stream(stream, display_text, start_at, clock)
     return model_response, trim_result
 
 
@@ -239,13 +244,14 @@ def print_text_delta(delta: str) -> None:
     terminal_output.write_text(delta)
 
 
-def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
+async def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
+    prompt_session = PromptSession()
     completed_turns: list[ConversationTurn] = []
     registry: ToolRegistry = create_default_tool_registry()
     tool_executor = ToolExecutor(tool_registry=registry)
     terminal_output.write_line("Please enter your prompt (type 'exit' to quit):\n")
     while True:
-        user_input = prompt("> ", multiline=False)
+        user_input = await prompt_session.prompt_async("> ", multiline=False)
         if user_input.strip().lower() == "exit":
             terminal_output.write_line("Exiting...")
             return
@@ -255,7 +261,7 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
         try:
             if config.stream_output_enabled:
                 terminal_output.write_line("Model Response: ")
-                model_response, trim_result = send_stream_conversation_turn(
+                model_response, trim_result = await send_stream_conversation_turn(
                     client=client,
                     budgeter=budgeter,
                     system_message=system_msg,
@@ -320,6 +326,15 @@ def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
             output_model_response(model_response)
 
 
+async def run_conversation(
+    client: ModelClient, config: ModelConfig, budgeter: Budgeter
+):
+    try:
+        await talk(client, config, budgeter)
+    finally:
+        await client.aclose()
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -349,7 +364,7 @@ def main():
     except ValueError:
         logger.exception("Invalid reasoning effort configuration.")
         return
-    talk(client, config, budgeter)
+    asyncio.run(run_conversation(client, config, budgeter))
 
 
 if __name__ == "__main__":

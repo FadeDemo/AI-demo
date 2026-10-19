@@ -1,4 +1,4 @@
-from collections.abc import Callable, Generator
+from collections.abc import AsyncGenerator, Callable
 
 from llm_terminal_assistant.model import (
     ModelResponse,
@@ -14,8 +14,8 @@ from llm_terminal_assistant.stream.events import (
 from llm_terminal_assistant.stream.timing import StreamResponseTiming
 
 
-def consume_stream(
-    stream: Generator[StreamEvent],
+async def consume_stream(
+    stream: AsyncGenerator[StreamEvent],
     consumer: Callable[[str], None],
     start_at: float,
     clock: Callable[[], float],
@@ -29,8 +29,8 @@ def consume_stream(
     try:
         while True:
             try:
-                event = next(stream)
-            except StopIteration:
+                event = await anext(stream)
+            except StopAsyncIteration:
                 break
             except Exception:
                 reason = ModelResponseEndReason.STREAM_READ_FAILED
@@ -54,7 +54,7 @@ def consume_stream(
             else:
                 raise ValueError(f"Unsupported event type: {type(event)}")
     finally:
-        stream.close()
+        await stream.aclose()
     total_seconds = clock() - start_at
     text = "".join(text_part)
     if reason is None:
