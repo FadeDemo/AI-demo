@@ -29,7 +29,7 @@ from llm_terminal_assistant.cli import (
     send_stream_conversation_turn,
     talk,
 )
-from llm_terminal_assistant.config import ModelConfig
+from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
 from llm_terminal_assistant.conversation import ConversationTurn
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
@@ -234,6 +234,125 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
             for first_text in ("partial", " \n", None):
                 with self.subTest(reason=reason, first_text=first_text):
                     await exercise(reason, first_text)
+
+    async def test_total_deadline_includes_preparation_and_stops_before_first_read(
+        self,
+    ):
+        async def exercise(preparation_seconds):
+            now = [100.0]
+            client = FakeClient(
+                self.config,
+                scripted_events=[
+                    EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None)
+                ],
+            )
+            encode = self.budgeter.request_encoder.encode_request
+            send_stream = client.send_stream
+            streams = []
+            display = Mock()
+
+            def timed_encode(request):
+                now[0] += preparation_seconds
+                return encode(request)
+
+            def record_stream(request):
+                stream = send_stream(request)
+                streams.append(stream)
+                return stream
+
+            with (
+                patch.object(
+                    self.budgeter.request_encoder,
+                    "encode_request",
+                    side_effect=timed_encode,
+                ),
+                patch.object(client, "send_stream", side_effect=record_stream),
+            ):
+                response, _ = await send_stream_conversation_turn(
+                    client=client,
+                    budgeter=self.budgeter,
+                    system_message=self.system,
+                    completed_turns=[],
+                    current_user_message=self.user,
+                    reserved_output_tokens=128,
+                    min_reserved_recent_turns=1,
+                    display_text=display,
+                    clock=lambda: now[0],
+                    request_timeout_config=RequestTimeoutConfig(10.0, 30.0, 30.0, 5.0),
+                )
+
+            self.assertEqual(
+                response.reason, ModelResponseEndReason.REQUEST_DEADLINE_EXCEEDED
+            )
+            self.assertEqual(response.error.code, "request_deadline_exceeded")
+            self.assertEqual(client.requests, [])
+            self.assertEqual(len(streams), 1)
+            self.assertIsNone(streams[0].ag_frame)
+            display.assert_not_called()
+            self.assertEqual(response.text, "")
+            self.assertIsNone(response.usage)
+            self.assertIsNone(response.timing.ttft_seconds)
+            self.assertEqual(response.timing.total_seconds, preparation_seconds)
+
+        for preparation_seconds in (5.0, 6.0):
+            with self.subTest(preparation_seconds=preparation_seconds):
+                await exercise(preparation_seconds)
+
+    async def test_total_deadline_is_not_reset_by_activity_and_includes_cleanup(self):
+        now = [100.0]
+        client = FakeClient(self.config)
+        usage = make_response("").usage
+        reads, displayed, closures = [], [], []
+        events = [
+            (101.0, TextDeltaEvent("first")),
+            (102.0, TextDeltaEvent("")),
+            (103.0, UsageEvent(usage)),
+            (104.0, TextDeltaEvent("last")),
+            (105.0, TextDeltaEvent("must not read")),
+        ]
+
+        async def active_stream(request):
+            client.requests.append(request)
+            try:
+                for received_at, event in events:
+                    now[0] = received_at
+                    reads.append(event)
+                    yield event
+            finally:
+                await asyncio.sleep(0)
+                now[0] += 1.0
+                closures.append(True)
+
+        def display(delta):
+            displayed.append(delta)
+            now[0] += 1.0
+
+        with patch.object(client, "send_stream", side_effect=active_stream):
+            response, _ = await send_stream_conversation_turn(
+                client=client,
+                budgeter=self.budgeter,
+                system_message=self.system,
+                completed_turns=[],
+                current_user_message=self.user,
+                reserved_output_tokens=128,
+                min_reserved_recent_turns=1,
+                display_text=display,
+                clock=lambda: now[0],
+                request_timeout_config=RequestTimeoutConfig(10.0, 30.0, 30.0, 5.0),
+            )
+
+        self.assertEqual(
+            response.reason, ModelResponseEndReason.REQUEST_DEADLINE_EXCEEDED
+        )
+        self.assertEqual(response.error.code, "request_deadline_exceeded")
+        self.assertEqual(response.text, "firstlast")
+        self.assertIs(response.usage, usage)
+        self.assertEqual(response.timing.ttft_seconds, 1.0)
+        self.assertEqual(response.timing.total_seconds, 6.0)
+        self.assertEqual(displayed, ["first", "", "last"])
+        self.assertEqual(reads, [event for _, event in events[:-1]])
+        self.assertEqual(closures, [True])
+        self.assertEqual(len(client.requests), 1)
 
     async def test_budget_rejection_prevents_stream_creation_and_display(self):
         self.budgeter.model_limits = ModelLimits(context_window_tokens=1)
@@ -487,6 +606,174 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             "Connection timed out. Could not connect to the model service.\n"
             "Exiting...\n",
         )
+
+    async def _assert_pending_stream_timeout(
+        self,
+        *,
+        timeout_config,
+        events,
+        expected_waits,
+        expected_reason,
+        error_message,
+        notice,
+    ):
+        config = replace(
+            self.config,
+            stream_output_enabled=True,
+            request_timeout_config=timeout_config,
+        )
+        client = FakeClient(config)
+        loop = asyncio.get_running_loop()
+        pending_read = loop.create_future()
+        timeouts, steps, responses = [], [], []
+        output = StringIO()
+
+        def record_timeout(seconds):
+            context = asyncio.timeout(seconds)
+            timeouts.append(context)
+            return context
+
+        async def waiting_stream(request):
+            client.requests.append(request)
+            try:
+                for event in events:
+                    yield event
+                self.assertEqual(len(timeouts), len(events) + 1)
+                # 等待读取挂起后，调度真实 timeout 到期，不注入事件或超时异常。
+                loop.call_soon(timeouts[-1].reschedule, loop.time())
+                steps.append("reading")
+                await pending_read
+                steps.append("read completed")
+                yield TextDeltaEvent("must not display")
+            finally:
+                steps.append("cleanup started")
+                await asyncio.sleep(0)
+                steps.append("closed")
+
+        async def observed_turn(*args, **kwargs):
+            result = await send_stream_conversation_turn(
+                *args, **kwargs, clock=lambda: 100.0
+            )
+            responses.append(result[0])
+            steps.append("turn returned")
+            return result
+
+        with (
+            patch(
+                "llm_terminal_assistant.cli.PromptSession", autospec=True
+            ) as prompt_session,
+            patch(
+                "llm_terminal_assistant.stream.consumer.timeout",
+                side_effect=record_timeout,
+            ) as timeout,
+            patch(
+                "llm_terminal_assistant.cli.send_stream_conversation_turn",
+                side_effect=observed_turn,
+            ),
+            patch.object(
+                client, "send_stream", side_effect=waiting_stream
+            ) as send_stream,
+            patch.object(client, "send", wraps=client.send) as send,
+            redirect_stdout(output),
+        ):
+            prompt_session.return_value.prompt_async.side_effect = ["question", "exit"]
+            await talk(client, config, self.budgeter)
+
+        self.assertEqual(
+            [call.args[0] for call in timeout.call_args_list], expected_waits
+        )
+        self.assertEqual(
+            [context.expired() for context in timeouts],
+            [False] * len(events) + [True],
+        )
+        self.assertTrue(pending_read.cancelled())
+        self.assertEqual(
+            steps, ["reading", "cleanup started", "closed", "turn returned"]
+        )
+        self.assertEqual(len(responses), 1)
+        response = responses[0]
+        self.assertEqual(response.reason, expected_reason)
+        self.assertEqual(
+            response.error,
+            ModelResponseError(code=expected_reason, message=error_message),
+        )
+        expected_text = "".join(
+            event.delta for event in events if isinstance(event, TextDeltaEvent)
+        )
+        expected_usage = next(
+            (
+                event.usage
+                for event in reversed(events)
+                if isinstance(event, UsageEvent)
+            ),
+            None,
+        )
+        self.assertEqual(response.text, expected_text)
+        self.assertIs(response.usage, expected_usage)
+        self.assertEqual(response.timing.ttft_seconds, 0.0 if expected_text else None)
+        self.assertEqual(len(client.requests), 1)
+        send_stream.assert_called_once_with(client.requests[0])
+        send.assert_not_called()
+        self.assertEqual(
+            output.getvalue(),
+            "Please enter your prompt (type 'exit' to quit):\n\n"
+            f"Model Response: \n{expected_text}\n{notice}\n"
+            "Exiting...\n",
+        )
+
+    async def test_first_event_timeout_interrupts_pending_read_and_displays_notice(
+        self,
+    ):
+        await self._assert_pending_stream_timeout(
+            timeout_config=RequestTimeoutConfig(10.0, 3.5, 30.0, 120.0),
+            events=[],
+            expected_waits=[3.5],
+            expected_reason=ModelResponseEndReason.FIRST_EVENT_TIMEOUT,
+            error_message="Timed out waiting for the first stream event.",
+            notice="Timed out waiting for the model's initial response.",
+        )
+
+    async def test_idle_timeout_interrupts_pending_read_and_preserves_progress(self):
+        await self._assert_pending_stream_timeout(
+            timeout_config=RequestTimeoutConfig(10.0, 3.5, 30.0, 120.0),
+            events=[
+                TextDeltaEvent("partial answer"),
+                UsageEvent(make_response("").usage),
+            ],
+            expected_waits=[3.5, 30.0, 30.0],
+            expected_reason=ModelResponseEndReason.STREAM_IDLE_TIMEOUT,
+            error_message="Timed out waiting for the next stream event.",
+            notice=(
+                "Timed out waiting for more data from the model. "
+                "The answer may be incomplete."
+            ),
+        )
+
+    async def test_total_deadline_interrupts_first_and_later_reads_and_displays_notice(
+        self,
+    ):
+        for stage_seconds in (5.0, 30.0):
+            for events in (
+                [],
+                [
+                    TextDeltaEvent("partial answer"),
+                    UsageEvent(make_response("").usage),
+                ],
+            ):
+                with self.subTest(stage_seconds=stage_seconds, events=events):
+                    await self._assert_pending_stream_timeout(
+                        timeout_config=RequestTimeoutConfig(
+                            10.0, stage_seconds, stage_seconds, 5.0
+                        ),
+                        events=events,
+                        expected_waits=[5.0] * (len(events) + 1),
+                        expected_reason=ModelResponseEndReason.REQUEST_DEADLINE_EXCEEDED,
+                        error_message="The overall request deadline was exceeded.",
+                        notice=(
+                            "The overall request deadline was exceeded. "
+                            "The answer may be incomplete."
+                        ),
+                    )
 
     async def test_stream_read_failure_keeps_partial_text_and_displays_notice(self):
         config = replace(self.config, stream_output_enabled=True)

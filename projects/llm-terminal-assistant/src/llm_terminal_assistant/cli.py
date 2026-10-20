@@ -13,7 +13,11 @@ from llm_terminal_assistant.budgeter import (
 from llm_terminal_assistant.budgeter_factory import create_budgeter
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.client_factory import create_model_client
-from llm_terminal_assistant.config import ModelConfig, load_model_config
+from llm_terminal_assistant.config import (
+    ModelConfig,
+    RequestTimeoutConfig,
+    load_model_config,
+)
 from llm_terminal_assistant.conversation import (
     ConversationTurn,
     HistoryTrimResult,
@@ -69,6 +73,18 @@ def output_response_status(response: ModelResponse) -> None:
     elif response.reason == ModelResponseEndReason.CONNECTION_TIMEOUT:
         terminal_output.write_line(
             "Connection timed out. Could not connect to the model service."
+        )
+    elif response.reason == ModelResponseEndReason.FIRST_EVENT_TIMEOUT:
+        terminal_output.write_line(
+            "Timed out waiting for the model's initial response."
+        )
+    elif response.reason == ModelResponseEndReason.STREAM_IDLE_TIMEOUT:
+        terminal_output.write_line(
+            "Timed out waiting for more data from the model. The answer may be incomplete."
+        )
+    elif response.reason == ModelResponseEndReason.REQUEST_DEADLINE_EXCEEDED:
+        terminal_output.write_line(
+            "The overall request deadline was exceeded. The answer may be incomplete."
         )
 
 
@@ -221,6 +237,7 @@ async def send_stream_conversation_turn(
     *,
     display_text: Callable[[str], None],
     clock: Callable[[], float] = monotonic,
+    request_timeout_config: RequestTimeoutConfig | None = None,
 ) -> tuple[ModelResponse, HistoryTrimResult]:
     start_at = clock()
     current_turn_input = [current_user_message]
@@ -236,7 +253,9 @@ async def send_stream_conversation_turn(
         top_p,
     )
     stream = client.send_stream(trim_result.request)
-    model_response = await consume_stream(stream, display_text, start_at, clock)
+    model_response = await consume_stream(
+        stream, display_text, start_at, clock, request_timeout_config
+    )
     return model_response, trim_result
 
 
@@ -273,6 +292,7 @@ async def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
                     temperature=config.temperature,
                     top_p=config.top_p,
                     display_text=print_text_delta,
+                    request_timeout_config=config.request_timeout_config,
                 )
             else:
                 model_response, trim_result = send_conversation_turn(

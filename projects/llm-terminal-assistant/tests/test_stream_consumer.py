@@ -1,8 +1,10 @@
+import asyncio
 import unittest
 from functools import partial
+from unittest.mock import patch
 
 from llm_terminal_assistant.adapter.fake_client import FakeClient
-from llm_terminal_assistant.config import ModelConfig
+from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     FAKE_MODEL_PROFILE,
@@ -44,6 +46,170 @@ class StreamConsumerTests(unittest.IsolatedAsyncioTestCase):
             error=None,
             incomplete_details=None,
         )
+
+    async def test_first_event_switches_to_idle_timeout_without_requiring_nonempty_text(
+        self,
+    ):
+        config = RequestTimeoutConfig(10.0, 3.5, 30.0, 120.0)
+        for first_event in (
+            TextDeltaEvent("answer"),
+            TextDeltaEvent(""),
+            UsageEvent(self.usage),
+            self.completed,
+        ):
+            with self.subTest(first_event=first_event):
+                reads, closures, displayed = [], [], []
+
+                async def delayed_stream(first_event, reads, closures):
+                    try:
+                        for event in (
+                            first_event,
+                            self.completed,
+                            TextDeltaEvent("must not read"),
+                        ):
+                            reads.append(event)
+                            yield event
+                            await asyncio.sleep(0)
+                    finally:
+                        closures.append(True)
+
+                # 首事件立即到达；后续让出执行机会，验证首事件计时已解除。
+                with patch(
+                    "llm_terminal_assistant.stream.consumer.timeout",
+                    side_effect=lambda seconds: asyncio.timeout(
+                        0 if seconds == config.first_event_seconds else seconds
+                    ),
+                ) as timeout:
+                    response = await self.consume_stream(
+                        delayed_stream(first_event, reads, closures),
+                        displayed.append,
+                        request_timeout_config=config,
+                    )
+
+                expected_timeouts = [config.first_event_seconds]
+                if first_event is not self.completed:
+                    expected_timeouts.append(config.stream_idle_seconds)
+                self.assertEqual(
+                    [call.args[0] for call in timeout.call_args_list],
+                    expected_timeouts,
+                )
+                expected_text = (
+                    first_event.delta if isinstance(first_event, TextDeltaEvent) else ""
+                )
+                self.assertEqual(
+                    response.reason, ModelResponseEndReason.COMPLETED_NORMALLY
+                )
+                self.assertEqual(response.text, expected_text)
+                self.assertEqual("".join(displayed), expected_text)
+                self.assertEqual(
+                    response.timing.ttft_seconds, 2.0 if expected_text else None
+                )
+                self.assertIs(
+                    response.usage,
+                    self.usage if isinstance(first_event, UsageEvent) else None,
+                )
+                self.assertIsNone(response.error)
+                self.assertEqual(
+                    reads,
+                    [first_event]
+                    if first_event is self.completed
+                    else [first_event, self.completed],
+                )
+                self.assertEqual(closures, [True])
+
+    async def test_idle_budget_starts_at_receipt_and_resets_for_each_event(self):
+        config = RequestTimeoutConfig(10.0, 30.0, 5.0, 120.0)
+        now = [10.0]
+        reads, closures, displayed = [], [], []
+        events = [
+            (11.0, TextDeltaEvent("")),
+            (15.0, UsageEvent(self.usage)),
+            (19.0, TextDeltaEvent("first")),
+            (23.0, TextDeltaEvent("second")),
+            (27.0, self.completed),
+        ]
+
+        async def timed_stream():
+            try:
+                for received_at, event in events:
+                    now[0] = received_at
+                    reads.append(event)
+                    yield event
+            finally:
+                closures.append(True)
+
+        def display(delta):
+            displayed.append(delta)
+            now[0] += 2.0
+
+        with patch(
+            "llm_terminal_assistant.stream.consumer.timeout",
+            wraps=asyncio.timeout,
+        ) as timeout:
+            response = await consume_stream(
+                timed_stream(),
+                display,
+                start_at=10.0,
+                clock=lambda: now[0],
+                request_timeout_config=config,
+            )
+
+        # 展示消耗的时间计入空闲预算；空文本、用量和正文均刷新期限。
+        self.assertEqual(
+            [call.args[0] for call in timeout.call_args_list],
+            [30.0, 3.0, 5.0, 3.0, 3.0],
+        )
+        self.assertEqual(response.reason, ModelResponseEndReason.COMPLETED_NORMALLY)
+        self.assertIsNone(response.error)
+        self.assertEqual(response.text, "firstsecond")
+        self.assertEqual(displayed, ["", "first", "second"])
+        self.assertIs(response.usage, self.usage)
+        self.assertEqual(response.timing.ttft_seconds, 9.0)
+        self.assertEqual(response.timing.total_seconds, 17.0)
+        self.assertEqual(reads, [event for _, event in events])
+        self.assertEqual(closures, [True])
+
+    async def test_expired_idle_budget_stops_before_reading_an_immediate_event(self):
+        config = RequestTimeoutConfig(10.0, 30.0, 5.0, 120.0)
+        for display_seconds in (5.0, 6.0):
+            with self.subTest(display_seconds=display_seconds):
+                now = [10.0]
+                reads, closures, displayed = [], [], []
+                first = TextDeltaEvent("partial")
+
+                def display(
+                    delta, displayed=displayed, now=now, display_seconds=display_seconds
+                ):
+                    displayed.append(delta)
+                    now[0] += display_seconds
+
+                with patch(
+                    "llm_terminal_assistant.stream.consumer.timeout",
+                    wraps=asyncio.timeout,
+                ) as timeout:
+                    response = await consume_stream(
+                        recording_stream(
+                            [first, TextDeltaEvent("must not read"), self.completed],
+                            reads,
+                            closures,
+                        ),
+                        display,
+                        start_at=10.0,
+                        clock=lambda now=now: now[0],
+                        request_timeout_config=config,
+                    )
+
+                timeout.assert_called_once_with(config.first_event_seconds)
+                self.assertEqual(
+                    response.reason, ModelResponseEndReason.STREAM_IDLE_TIMEOUT
+                )
+                self.assertEqual(response.error.code, "stream_idle_timeout")
+                self.assertEqual(response.text, "partial")
+                self.assertEqual(displayed, ["partial"])
+                self.assertEqual(response.timing.ttft_seconds, 0.0)
+                self.assertEqual(response.timing.total_seconds, display_seconds)
+                self.assertEqual(reads, [first])
+                self.assertEqual(closures, [True])
 
     async def test_zero_ttft_is_preserved_and_measured_before_display(self):
         now = [10.0]
