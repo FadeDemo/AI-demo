@@ -34,19 +34,35 @@ function fixture({
   };
   let analysisInterpreter;
   const analysisUpdates = [];
+  const analysisListeners = new Set();
+  const configListeners = new Set();
+  const notifications = [];
+  const warnings = [];
+  const subscribe = (listeners, fn) => {
+    listeners.add(fn);
+    return { dispose: () => listeners.delete(fn) };
+  };
+  const changeInterpreter = (interpreter) => {
+    analysisInterpreter = interpreter;
+    for (const listener of analysisListeners) notifications.push(listener());
+  };
   const pythonApi = {
     environments: {
       updateActiveEnvironmentPath: async (interpreter, scope) => {
         analysisUpdates.push({ interpreter, scope });
-        if (analysisMatches) analysisInterpreter = interpreter;
+        if (analysisMatches) changeInterpreter(interpreter);
       },
     },
-    settings: { getExecutionDetails: () => ({ execCommand: [analysisInterpreter] }) },
+    settings: {
+      getExecutionDetails: () => ({ execCommand: [analysisInterpreter] }),
+      onDidChangeExecutionDetails: (fn) => subscribe(analysisListeners, fn),
+    },
   };
   const vscode = {
     workspace: {
       workspaceFolders: [{ uri: { fsPath: "/workspace" } }],
       getConfiguration: () => ({ get: () => ["${workspaceFolder}/project/.venv/bin/python"] }),
+      onDidChangeConfiguration: (fn) => subscribe(configListeners, fn),
     },
     env: { appName: "Visual Studio Code" },
     Uri: { file: (value) => value },
@@ -57,6 +73,7 @@ function fixture({
       }),
     },
     window: {
+      showWarningMessage: (message) => warnings.push(message),
       createTerminal: (options) => {
         assert.equal(options.env, undefined);
         return terminal;
@@ -95,18 +112,29 @@ function fixture({
   });
   vm.runInContext(
     fs.readFileSync(path.join(__dirname, "extension.js"), "utf8") +
-      "\nmodule.exports.dispatch = dispatch; module.exports.sync = synchronizeConfiguredAnalysis; module.exports.createActivation = createTerminalActivation;",
+      "\nmodule.exports.dispatch = dispatch; module.exports.sync = synchronizeConfiguredAnalysis; module.exports.watch = watchConfiguredAnalysis; module.exports.createActivation = createTerminalActivation;",
     context,
   );
   return {
     dispatch: context.module.exports.dispatch,
     sync: context.module.exports.sync,
+    watch: context.module.exports.watch,
     activate: context.module.exports.activate,
     createActivation: context.module.exports.createActivation,
     vscode,
     api,
     commands,
     analysisUpdates,
+    changeInterpreter,
+    analysisInterpreter: () => analysisInterpreter,
+    changeConfiguration: () => {
+      for (const listener of configListeners)
+        notifications.push(listener({ affectsConfiguration: () => true }));
+    },
+    settle: async () => {
+      while (notifications.length) await Promise.all(notifications.splice(0));
+    },
+    warnings,
     sent,
     disposed: () => disposed,
   };
@@ -183,6 +211,52 @@ test("automatic synchronization resolves existing workspace configuration", asyn
   assert.deepEqual(value.analysisUpdates, [
     { interpreter: request.interpreter, scope: request.workspace },
   ]);
+});
+
+test("late startup selection is repaired without reacting endlessly to our own updates", async () => {
+  const value = fixture();
+  const context = { subscriptions: [] };
+  await value.watch(context);
+  await value.settle();
+  assert.equal(value.analysisUpdates.length, 1);
+
+  value.changeInterpreter("/opt/homebrew/bin/python3");
+  await value.settle();
+  assert.equal(value.analysisInterpreter(), request.interpreter);
+  assert.equal(value.analysisUpdates.length, 2);
+  assert.deepEqual(value.warnings, []);
+
+  for (const subscription of context.subscriptions) subscription.dispose();
+  value.changeInterpreter("/other/python");
+  value.changeConfiguration();
+  await value.settle();
+  assert.equal(value.analysisUpdates.length, 2);
+});
+
+test("interpreter notifications use the latest configured target", async () => {
+  const value = fixture();
+  await value.watch({ subscriptions: [] });
+  await value.settle();
+  const interpreter = "/workspace/another/.venv/bin/python";
+  value.vscode.workspace.getConfiguration = () => ({ get: () => [interpreter] });
+  value.changeConfiguration();
+  await value.settle();
+  assert.equal(value.analysisInterpreter(), interpreter);
+
+  value.changeInterpreter(request.interpreter);
+  await value.settle();
+  assert.equal(value.analysisInterpreter(), interpreter);
+  assert.equal(value.analysisUpdates.length, 3);
+});
+
+test("interpreter changes do not select an environment without use-venv configuration", async () => {
+  const value = fixture();
+  value.vscode.workspace.getConfiguration = () => ({ get: () => undefined });
+  await value.watch({ subscriptions: [] });
+  value.changeInterpreter("/other/python");
+  await value.settle();
+  assert.deepEqual(value.analysisUpdates, []);
+  assert.equal(value.analysisInterpreter(), "/other/python");
 });
 
 test("activation in VS Code has no side effects", () => {

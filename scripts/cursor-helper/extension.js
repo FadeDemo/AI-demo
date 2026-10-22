@@ -179,6 +179,9 @@ function synchronizeAnalysis(workspace, interpreter) {
       if (!api?.environments?.updateActiveEnvironmentPath || !api?.settings?.getExecutionDetails)
         throw new Error("Python extension does not expose interpreter synchronization APIs");
       const scope = vscode.Uri.file(workspace);
+      // Our own update also emits an interpreter-change event. Read inside the
+      // queue so queued notifications cannot write the same selection again.
+      if ((await api.settings.getExecutionDetails(scope)).execCommand?.[0] === interpreter) return;
       await api.environments.updateActiveEnvironmentPath(interpreter, scope);
       for (let attempt = 0; attempt < 50; attempt++) {
         const details = await api.settings.getExecutionDetails(scope);
@@ -201,6 +204,27 @@ async function synchronizeConfiguredAnalysis() {
     if (!path.isAbsolute(interpreter) || !fs.existsSync(interpreter)) continue;
     await synchronizeAnalysis(folder.uri.fsPath, interpreter);
   }
+}
+
+async function watchConfiguredAnalysis(context) {
+  const extension = vscode.extensions.getExtension("ms-python.python");
+  if (!extension) throw new Error("Python extension is not installed");
+  const api = await extension.activate();
+  if (!api?.settings?.onDidChangeExecutionDetails)
+    throw new Error("Python extension does not expose interpreter-change notifications");
+  const sync = () =>
+    synchronizeConfiguredAnalysis().catch((error) => {
+      vscode.window.showWarningMessage(`use-venv: ${error.message}`);
+    });
+  // Python Environments can finish its initial selection after our startup
+  // update. Subscribe first and reconcile later changes against use-venv's config.
+  context.subscriptions.push(
+    api.settings.onDidChangeExecutionDetails(sync),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("pylint.interpreter")) return sync();
+    }),
+  );
+  await sync();
 }
 
 // The takeover uses only stable terminal APIs; no terminal output subscription.
@@ -336,22 +360,18 @@ async function activate(context) {
   if (!/cursor/i.test(vscode.env.appName)) return;
   const activation = createTerminalActivation(context);
   await activation.enable();
-  const sync = () => {
-    synchronizeConfiguredAnalysis().catch((error) => {
-      vscode.window.showWarningMessage(`use-venv: ${error.message}`);
-    });
-  };
+  watchConfiguredAnalysis(context).catch((error) =>
+    vscode.window.showWarningMessage(`use-venv: ${error.message}`),
+  );
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("pylint.interpreter")) {
-        sync();
         activation
           .enable()
           .catch((error) => vscode.window.showWarningMessage(`use-venv: ${error.message}`));
       }
     }),
   );
-  sync();
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   if (fs.lstatSync(root).isSymbolicLink())
     throw new Error("Helper state directory must not be a symlink");
