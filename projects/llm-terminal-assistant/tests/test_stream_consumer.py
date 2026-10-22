@@ -409,6 +409,93 @@ class StreamConsumerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(result.incomplete_details)
                 self.assertEqual(closures, [True])
 
+    async def test_task_cancellation_interrupts_read_preserves_progress_and_awaits_cleanup(
+        self,
+    ):
+        async def exercise(events, text, usage, timeout_config):
+            now = [10.0]
+            reads, displayed, steps = [], [], []
+            read_started = asyncio.Event()
+            cleanup_started = asyncio.Event()
+            allow_cleanup = asyncio.Event()
+            pending_read = asyncio.get_running_loop().create_future()
+
+            async def waiting_stream():
+                try:
+                    for event in events:
+                        now[0] = 11.0
+                        reads.append(event)
+                        yield event
+                    now[0] = 12.0
+                    steps.append("reading")
+                    read_started.set()
+                    await pending_read
+                    unexpected = TextDeltaEvent("must not read")
+                    reads.append(unexpected)
+                    yield unexpected
+                finally:
+                    steps.append("cleanup started")
+                    cleanup_started.set()
+                    await allow_cleanup.wait()
+                    now[0] = 15.0
+                    steps.append("closed")
+
+            stream = waiting_stream()
+            task = asyncio.create_task(
+                consume_stream(
+                    stream,
+                    displayed.append,
+                    start_at=10.0,
+                    clock=lambda: now[0],
+                    request_timeout_config=timeout_config,
+                ),
+                name="test-stream-consumer-user-cancellation",
+            )
+            try:
+                # 用事件同步真实挂起、取消和清理；超时仅防止回归导致测试挂住。
+                async with asyncio.timeout(5.0):
+                    await read_started.wait()
+                    now[0] = 13.0
+                    self.assertTrue(task.cancel())
+                    await cleanup_started.wait()
+                    self.assertTrue(pending_read.cancelled())
+                    self.assertFalse(task.done())
+                    allow_cleanup.set()
+                    result = await task
+            finally:
+                allow_cleanup.set()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                await stream.aclose()
+
+            self.assertFalse(task.cancelled())
+            self.assertEqual(result.reason, ModelResponseEndReason.REQUEST_CANCELLED)
+            self.assertIsNone(result.error)
+            self.assertIsNone(result.incomplete_details)
+            self.assertEqual(result.text, text)
+            self.assertEqual(displayed, [text] if text else [])
+            self.assertIs(result.usage, usage)
+            self.assertEqual(result.timing.ttft_seconds, 1.0 if text else None)
+            self.assertEqual(result.timing.total_seconds, 5.0)
+            self.assertEqual(reads, events)
+            self.assertEqual(steps, ["reading", "cleanup started", "closed"])
+            self.assertIsNone(stream.ag_frame)
+
+        cases = [
+            ([], "", None),
+            ([TextDeltaEvent("partial")], "partial", None),
+            (
+                [TextDeltaEvent("partial"), UsageEvent(self.usage)],
+                "partial",
+                self.usage,
+            ),
+        ]
+        for timeout_config in (None, RequestTimeoutConfig(10.0, 30.0, 30.0, 120.0)):
+            for events, text, usage in cases:
+                with self.subTest(timeout_config=timeout_config, events=events):
+                    await exercise(events, text, usage, timeout_config)
+
     async def test_keyboard_interrupt_propagates_and_closes(self):
         closures = []
 

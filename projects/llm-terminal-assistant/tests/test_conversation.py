@@ -2,6 +2,7 @@ import json
 import unittest
 from copy import deepcopy
 from dataclasses import replace
+from threading import Event
 from unittest.mock import Mock
 
 from llm_terminal_assistant.adapter.fake_client import FakeClient
@@ -690,6 +691,20 @@ class ToolFollowupRequestTests(unittest.TestCase):
         }
         kwargs.update(overrides)
         return send_conversation_turn(**kwargs)
+
+    def test_cancelled_request_does_not_send_or_execute_tools(self):
+        cancel_event = Event()
+        cancel_event.set()
+        client = Mock()
+        client.send.return_value = self.make_response()
+        budgeter, _ = self.make_sending_budgeter()
+
+        with self.assertRaises(ToolLoopStoppedError) as caught:
+            self.send_turn(client, budgeter, cancel_event=cancel_event)
+
+        self.assertEqual(caught.exception.reason, ToolLoopStopReason.REQUEST_CANCELLED)
+        client.send.assert_not_called()
+        self.assertEqual(self.executed_values, [])
 
     def test_malicious_tool_output_is_preserved_as_data_without_triggering_other_tools(
         self,

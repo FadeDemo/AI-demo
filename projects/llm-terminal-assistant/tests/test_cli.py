@@ -6,10 +6,12 @@ from contextlib import redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime
 from io import StringIO
-from unittest.mock import DEFAULT, Mock, patch
+from threading import Event, get_ident
+from types import SimpleNamespace
+from unittest.mock import DEFAULT, AsyncMock, Mock, patch
 
 from prompt_toolkit.application import create_app_session
-from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.input import DummyInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
 from llm_terminal_assistant.adapter.fake_client import FakeClient
@@ -64,6 +66,11 @@ def make_response(text: str, calls: list[ToolCallRequest] | None = None):
         ),
         tool_calls=[] if calls is None else calls,
     )
+
+
+def configure_prompt_session(mock_session, prompts):
+    mock_session.return_value.app = SimpleNamespace(input=DummyInput(), ttimeoutlen=0.5)
+    mock_session.return_value.prompt_async.side_effect = prompts
 
 
 class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
@@ -424,7 +431,7 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             ) as create_registry,
             redirect_stdout(output),
         ):
-            prompt_session.return_value.prompt_async.side_effect = [*prompts, "exit"]
+            configure_prompt_session(prompt_session, [*prompts, "exit"])
             await talk(client, self.config, self.budgeter)
 
         prompt_session.assert_called_once_with()
@@ -476,7 +483,7 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             patch.object(client, "send", wraps=client.send) as send,
             redirect_stdout(output),
         ):
-            prompt_session.return_value.prompt_async.side_effect = [*prompts, "exit"]
+            configure_prompt_session(prompt_session, [*prompts, "exit"])
             await talk(client, config, self.budgeter)
 
         prompt_session.assert_called_once_with()
@@ -490,6 +497,121 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
         for request in client.requests:
             self.assertEqual(request.tools, [])
         return client, output.getvalue()
+
+    async def test_cancel_keys_cancel_pending_read_and_next_turn_completes(self):
+        usage = make_response("").usage
+        for key_input in ("\x1b", "\x03"):
+            for events in ([], [TextDeltaEvent("partial answer"), UsageEvent(usage)]):
+                with self.subTest(key_input=key_input, events=events):
+                    await self._assert_keyboard_cancellation(events, key_input)
+
+    async def _assert_keyboard_cancellation(self, events, key_input):
+        usage = make_response("").usage
+        config = replace(self.config, stream_output_enabled=True)
+        client = FakeClient(config)
+        waiting = asyncio.Event()
+        closures, responses = [], []
+        output = StringIO()
+
+        async def waiting_stream(request):
+            client.requests.append(request)
+            if len(client.requests) > 1:
+                self.assertEqual(closures, [True])
+                yield TextDeltaEvent("next answer")
+                yield EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None)
+                return
+            try:
+                for event in events:
+                    yield event
+                waiting.set()
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                closures.append(True)
+
+        async def observed_turn(*args, **kwargs):
+            result = await send_stream_conversation_turn(*args, **kwargs)
+            responses.append(result[0])
+            return result
+
+        with (
+            create_pipe_input() as terminal_input,
+            patch("llm_terminal_assistant.cli.PromptSession") as session,
+            patch.object(client, "send_stream", side_effect=waiting_stream),
+            patch(
+                "llm_terminal_assistant.cli.send_stream_conversation_turn",
+                side_effect=observed_turn,
+            ),
+            redirect_stdout(output),
+        ):
+            session.return_value = SimpleNamespace(
+                app=SimpleNamespace(input=terminal_input, ttimeoutlen=0),
+                prompt_async=AsyncMock(side_effect=["first", "second", "exit"]),
+            )
+            task = asyncio.create_task(talk(client, config, self.budgeter))
+            try:
+                async with asyncio.timeout(2):
+                    await waiting.wait()
+                    terminal_input.send_text(key_input)
+                    await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+        self.assertEqual(closures, [True])
+        self.assertEqual(len(client.requests), 2)
+        self.assertEqual(
+            [response.reason for response in responses],
+            [
+                ModelResponseEndReason.REQUEST_CANCELLED,
+                ModelResponseEndReason.COMPLETED_NORMALLY,
+            ],
+        )
+        self.assertEqual(responses[0].text, "partial answer" if events else "")
+        self.assertEqual(responses[0].usage, usage if events else None)
+        self.assertIsNone(responses[0].error)
+        self.assertEqual(output.getvalue().count("Request was cancelled."), 1)
+        self.assertIn("next answer\nExiting...", output.getvalue())
+
+    async def test_pending_keyboard_timer_is_cancelled_when_each_turn_ends(self):
+        for fail_read in (False, True):
+            with self.subTest(fail_read=fail_read):
+                await self._assert_keyboard_timer_cleanup(fail_read)
+
+    async def _assert_keyboard_timer_cleanup(self, fail_read):
+        config = replace(self.config, stream_output_enabled=True)
+        client = FakeClient(config)
+        handles = []
+        loop = asyncio.get_running_loop()
+        original_call_later = loop.call_later
+
+        def record_timer(delay, callback, *args, **kwargs):
+            handle = original_call_later(delay, callback, *args, **kwargs)
+            if callback.__name__ == "flush_pending_keys":
+                handles.append(handle)
+            return handle
+
+        async def stream(request):
+            if fail_read:
+                raise RuntimeError("stream failed")
+            yield EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None)
+
+        with (
+            patch("llm_terminal_assistant.cli.PromptSession", autospec=True) as session,
+            patch.object(client, "send_stream", side_effect=stream),
+            patch.object(loop, "call_later", side_effect=record_timer),
+            redirect_stdout(StringIO()),
+        ):
+            configure_prompt_session(session, ["first", "second", "exit"])
+            session.return_value.app.ttimeoutlen = 3600
+            try:
+                await talk(client, config, self.budgeter)
+                self.assertEqual(len(handles), 2)
+                self.assertTrue(all(handle.cancelled() for handle in handles))
+            finally:
+                for handle in handles:
+                    handle.cancel()
 
     async def test_streaming_displays_deltas_once_and_replays_assembled_history(self):
         completed = EndEvent(ModelResponseEndReason.COMPLETED_NORMALLY, None, None)
@@ -676,7 +798,7 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             patch.object(client, "send", wraps=client.send) as send,
             redirect_stdout(output),
         ):
-            prompt_session.return_value.prompt_async.side_effect = ["question", "exit"]
+            configure_prompt_session(prompt_session, ["question", "exit"])
             await talk(client, config, self.budgeter)
 
         self.assertEqual(
@@ -800,7 +922,7 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             patch.object(client, "send_stream", side_effect=failing_stream) as send,
             redirect_stdout(output),
         ):
-            prompt_session.return_value.prompt_async.side_effect = ["question", "exit"]
+            configure_prompt_session(prompt_session, ["question", "exit"])
             await talk(client, config, self.budgeter)
 
         send.assert_called_once()
@@ -871,11 +993,7 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             patch.object(client, "aclose", side_effect=observed_close) as close,
             redirect_stdout(output),
         ):
-            prompt_session.return_value.prompt_async.side_effect = [
-                "first",
-                "second",
-                "exit",
-            ]
+            configure_prompt_session(prompt_session, ["first", "second", "exit"])
             try:
                 main()
             finally:
@@ -906,7 +1024,7 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             patch.object(client, "aclose", wraps=client.aclose) as close,
             redirect_stdout(StringIO()),
         ):
-            prompt_session.return_value.prompt_async.side_effect = ["question"]
+            configure_prompt_session(prompt_session, ["question"])
             with self.assertRaises(RuntimeError) as caught:
                 await run_conversation(client, self.config, self.budgeter)
 
@@ -930,6 +1048,129 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             "Please enter your prompt (type 'exit' to quit):\n\n"
             "Model Response: \nFull answer\nExiting...\n",
         )
+
+    async def test_nonstream_cancel_keys_set_signal_and_wait_before_next_turn(self):
+        for key_input in ("\x1b", "\x03"):
+            with self.subTest(key_input=key_input):
+                await self._assert_nonstream_worker_cleanup(key_input=key_input)
+
+    async def test_nonstream_outer_cancellation_waits_for_worker_before_closing_client(
+        self,
+    ):
+        for worker_failure in (None, RuntimeError("worker failed during cleanup")):
+            with self.subTest(worker_failure=worker_failure):
+                await self._assert_nonstream_worker_cleanup(
+                    worker_failure=worker_failure
+                )
+
+    async def _assert_nonstream_worker_cleanup(
+        self, *, key_input=None, worker_failure=None
+    ):
+        config = replace(self.config, stream_output_enabled=False)
+        client = FakeClient(config)
+        loop = asyncio.get_running_loop()
+        loop_thread = get_ident()
+        started, signal_seen, finished = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        release_worker = Event()
+        cancel_events, lifecycle = [], []
+        output = StringIO()
+
+        class ObservedCancelEvent(Event):
+            def __init__(self):
+                super().__init__()
+                cancel_events.append(self)
+
+            def set(self):
+                super().set()
+                loop.call_soon_threadsafe(signal_seen.set)
+
+        def blocking_send(request):
+            self.assertNotEqual(get_ident(), loop_thread)
+            client.requests.append(request)
+            if len(client.requests) > 1:
+                self.assertEqual(lifecycle, ["worker finished"])
+                return make_response("next answer")
+            loop.call_soon_threadsafe(started.set)
+            try:
+                # The gate controls completion; the timeout only bounds test failures.
+                if not release_worker.wait(5):
+                    raise AssertionError("The test did not release the worker")
+                if worker_failure is not None:
+                    raise worker_failure
+                return make_response("first answer")
+            finally:
+                lifecycle.append("worker finished")
+                loop.call_soon_threadsafe(finished.set)
+
+        async def close_client():
+            self.assertEqual(lifecycle, ["worker finished"])
+            lifecycle.append("client closed")
+
+        with (
+            create_pipe_input() as terminal_input,
+            patch("llm_terminal_assistant.cli.PromptSession") as session,
+            patch("llm_terminal_assistant.cli.Event", ObservedCancelEvent),
+            patch(
+                "llm_terminal_assistant.cli.send_conversation_turn",
+                wraps=send_conversation_turn,
+            ) as send_turn,
+            patch.object(client, "send", side_effect=blocking_send),
+            patch.object(client, "aclose", side_effect=close_client) as close,
+            redirect_stdout(output),
+        ):
+            prompt = AsyncMock(side_effect=["first", "second", "exit"])
+            session.return_value = SimpleNamespace(
+                app=SimpleNamespace(input=terminal_input, ttimeoutlen=0),
+                prompt_async=prompt,
+            )
+            task = asyncio.create_task(run_conversation(client, config, self.budgeter))
+            try:
+                async with asyncio.timeout(2):
+                    await started.wait()
+                    if key_input is None:
+                        task.cancel()
+                    else:
+                        terminal_input.send_text(key_input)
+                    await signal_seen.wait()
+                    await asyncio.sleep(0)
+                    self.assertTrue(cancel_events[0].is_set())
+                    self.assertFalse(task.done())
+                    self.assertEqual(task.cancelling(), int(key_input is None))
+                    self.assertEqual(prompt.await_count, 1)
+                    self.assertEqual(lifecycle, [])
+                    close.assert_not_awaited()
+                    release_worker.set()
+                    if key_input is None:
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                    else:
+                        await task
+            finally:
+                release_worker.set()
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                if started.is_set():
+                    await asyncio.wait_for(finished.wait(), timeout=2)
+
+        self.assertEqual(lifecycle, ["worker finished", "client closed"])
+        close.assert_awaited_once_with()
+        expected_turns = 1 if key_input is None else 2
+        self.assertEqual(len(client.requests), expected_turns)
+        self.assertEqual(len(cancel_events), expected_turns)
+        self.assertEqual(send_turn.call_count, expected_turns)
+        for call, event in zip(send_turn.call_args_list, cancel_events, strict=True):
+            self.assertIs(call.kwargs["cancel_event"], event)
+        if key_input is not None:
+            self.assertIsNot(cancel_events[0], cancel_events[1])
+            self.assertFalse(cancel_events[1].is_set())
+            self.assertEqual(output.getvalue().count("Request was cancelled."), 1)
+            self.assertNotIn("first answer", output.getvalue())
+            self.assertIn("next answer\nExiting...", output.getvalue())
 
     async def test_bracketed_multiline_paste_is_sent_once_and_exit_still_works(self):
         for trailing_newline in ("", "\n"):
@@ -990,7 +1231,11 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_tool_loop_stop_shows_reason_and_allows_next_question(self):
-        for reason in ToolLoopStopReason:
+        for reason in (
+            ToolLoopStopReason.MAX_TOOL_ROUNDS_REACHED,
+            ToolLoopStopReason.MAX_MODEL_REQUESTS_REACHED,
+            ToolLoopStopReason.MAX_TOOL_EXECUTIONS_REACHED,
+        ):
             with self.subTest(reason=reason):
                 self.encoder.reset_mock()
                 with (
@@ -1021,6 +1266,86 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
                         Message("user", "Next question"),
                     ],
                 )
+
+    async def test_cancellation_stops_tools_and_followup_requests_from_talk(self):
+        cases = (
+            ("model response", 2, 0),
+            ("first tool", 2, 1),
+            ("last tool", 1, 1),
+        )
+        for stop_after, tool_count, expected_executions in cases:
+            with self.subTest(stop_after=stop_after):
+                await self._assert_cancelled_tool_flow(
+                    stop_after, tool_count, expected_executions
+                )
+
+    async def _assert_cancelled_tool_flow(
+        self, stop_after, tool_count, expected_executions
+    ):
+        config = replace(self.config, stream_output_enabled=False)
+        cancel_event = Event()
+        calls = [
+            ToolCallRequest(f"time-{index}", "get_current_time", '{"timezone":"UTC"}')
+            for index in range(tool_count)
+        ]
+        tool_response = make_response("Checking the time.", calls)
+        client = FakeClient(
+            config,
+            scripted_responses=[tool_response, make_response("Unexpected follow-up")],
+        )
+        original_send = client.send
+        stop_reasons = []
+        output = StringIO()
+
+        def send_and_maybe_cancel(request):
+            response = original_send(request)
+            if stop_after == "model response":
+                cancel_event.set()
+            return response
+
+        def cancel_after_tool():
+            cancel_event.set()
+            return self.clock.return_value
+
+        clock = Mock(side_effect=cancel_after_tool)
+        registry = create_default_tool_registry(clock=clock)
+
+        def observed_turn(*args, **kwargs):
+            self.assertIs(kwargs["cancel_event"], cancel_event)
+            try:
+                return send_conversation_turn(*args, **kwargs)
+            except ToolLoopStoppedError as error:
+                stop_reasons.append(error.reason)
+                raise
+
+        with (
+            patch("llm_terminal_assistant.cli.PromptSession", autospec=True) as session,
+            patch("llm_terminal_assistant.cli.Event", return_value=cancel_event),
+            patch(
+                "llm_terminal_assistant.cli.create_default_tool_registry",
+                return_value=registry,
+            ),
+            patch(
+                "llm_terminal_assistant.cli.send_conversation_turn",
+                side_effect=observed_turn,
+            ),
+            patch.object(client, "send", side_effect=send_and_maybe_cancel),
+            self.assertNoLogs("llm_terminal_assistant.cli", level="ERROR"),
+            redirect_stdout(output),
+        ):
+            configure_prompt_session(session, ["question", "exit"])
+            await talk(client, config, self.budgeter)
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertEqual(stop_reasons, [ToolLoopStopReason.REQUEST_CANCELLED])
+        self.assertEqual(len(client.requests), 1)
+        self.assertEqual(client.requests[0].tools, registry.get_tool_list())
+        self.assertEqual(clock.call_count, expected_executions)
+        self.assertEqual(session.return_value.prompt_async.await_count, 2)
+        self.assertEqual(output.getvalue().count("Request was cancelled."), 1)
+        self.assertNotIn("Checking the time.", output.getvalue())
+        self.assertNotIn("Unexpected follow-up", output.getvalue())
+        self.assertIn("Exiting...", output.getvalue())
 
     async def test_time_tool_history_is_replayed_and_only_final_answers_are_displayed(
         self,

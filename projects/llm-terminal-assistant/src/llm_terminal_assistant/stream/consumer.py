@@ -1,4 +1,4 @@
-from asyncio import timeout
+from asyncio import CancelledError, timeout
 from collections.abc import AsyncGenerator, Callable
 
 from llm_terminal_assistant.config import RequestTimeoutConfig
@@ -103,6 +103,8 @@ async def consume_stream(
                 break
             else:
                 raise ValueError(f"Unsupported event type: {type(event)}")
+    except CancelledError:
+        reason = ModelResponseEndReason.REQUEST_CANCELLED
     finally:
         await stream.aclose()
     total_seconds = clock() - start_at

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from threading import Event
 
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 
@@ -19,3 +20,11 @@ class ToolExecutionBudget:
         if self.used_tool_executions >= self.max_tool_executions:
             raise ToolLoopStoppedError(ToolLoopStopReason.MAX_TOOL_EXECUTIONS_REACHED)
         self.used_tool_executions += 1
+
+
+def check_request_cancelled(cancel_event: Event | None) -> None:
+    if cancel_event is None:
+        return
+    if not cancel_event.is_set():
+        return
+    raise ToolLoopStoppedError(ToolLoopStopReason.REQUEST_CANCELLED)

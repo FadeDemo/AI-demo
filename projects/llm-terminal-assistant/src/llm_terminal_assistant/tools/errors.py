@@ -26,6 +26,7 @@ class ToolLoopStopReason(StrEnum):
     MAX_TOOL_ROUNDS_REACHED = "max_tool_rounds_reached"
     MAX_MODEL_REQUESTS_REACHED = "max_model_requests_reached"
     MAX_TOOL_EXECUTIONS_REACHED = "max_tool_executions_reached"
+    REQUEST_CANCELLED = "request_cancelled"
 
 
 class ToolLoopStoppedError(RuntimeError):

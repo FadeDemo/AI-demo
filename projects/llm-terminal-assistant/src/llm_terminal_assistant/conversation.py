@@ -1,4 +1,5 @@
 from dataclasses import dataclass, replace
+from threading import Event
 
 from llm_terminal_assistant.budgeter import (
     Budgeter,
@@ -15,7 +16,10 @@ from llm_terminal_assistant.model import (
 )
 from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.executor import ToolExecutor
-from llm_terminal_assistant.tools.loop import ToolExecutionBudget
+from llm_terminal_assistant.tools.loop import (
+    ToolExecutionBudget,
+    check_request_cancelled,
+)
 
 
 @dataclass(frozen=True)
@@ -88,6 +92,8 @@ def build_tool_followup_request(
     response: ModelResponse,
     executor: ToolExecutor,
     tool_execution_budget: ToolExecutionBudget | None = None,
+    *,
+    cancel_event: Event | None = None,
 ) -> ModelRequest:
     if response.reason != ModelResponseEndReason.COMPLETED_NORMALLY:
         raise ValueError(
@@ -104,6 +110,7 @@ def build_tool_followup_request(
         ],
     )
     for tool_call in response.tool_calls:
+        check_request_cancelled(cancel_event)
         followup_request.input.append(
             executor.execute_call(tool_call, tool_execution_budget)
         )
