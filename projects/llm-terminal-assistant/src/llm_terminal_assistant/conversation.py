@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from threading import Event
 
@@ -14,12 +15,13 @@ from llm_terminal_assistant.model import (
     ModelResponse,
     ModelResponseEndReason,
 )
+from llm_terminal_assistant.request_control import (
+    check_request_cancelled,
+    check_request_deadline,
+)
 from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.executor import ToolExecutor
-from llm_terminal_assistant.tools.loop import (
-    ToolExecutionBudget,
-    check_request_cancelled,
-)
+from llm_terminal_assistant.tools.loop import ToolExecutionBudget
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,8 @@ def build_tool_followup_request(
     tool_execution_budget: ToolExecutionBudget | None = None,
     *,
     cancel_event: Event | None = None,
+    clock: Callable[[], float],
+    deadline_at: float | None,
 ) -> ModelRequest:
     if response.reason != ModelResponseEndReason.COMPLETED_NORMALLY:
         raise ValueError(
@@ -111,6 +115,7 @@ def build_tool_followup_request(
     )
     for tool_call in response.tool_calls:
         check_request_cancelled(cancel_event)
+        check_request_deadline(deadline_at=deadline_at, clock=clock)
         followup_request.input.append(
             executor.execute_call(tool_call, tool_execution_budget)
         )

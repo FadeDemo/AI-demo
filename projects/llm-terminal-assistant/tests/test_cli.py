@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import unittest
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime
 from io import StringIO
@@ -19,6 +19,7 @@ from llm_terminal_assistant.adapter.fake_model import (
     CodePointTokenCounter,
     FakeModelRequestEncoder,
 )
+from llm_terminal_assistant.adapter.openai_client import OpenAIClient
 from llm_terminal_assistant.budgeter import (
     Budgeter,
     BudgetRejectedError,
@@ -45,6 +46,10 @@ from llm_terminal_assistant.model import (
     ModelResponseIncompleteDetails,
     ModelUsage,
     OutputTokensDetails,
+)
+from llm_terminal_assistant.request_control import (
+    RequestStoppedError,
+    RequestStopReason,
 )
 from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
@@ -360,6 +365,106 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reads, [event for _, event in events[:-1]])
         self.assertEqual(closures, [True])
         self.assertEqual(len(client.requests), 1)
+
+    async def test_connection_timeout_interrupts_pending_connection_from_stream_turn(
+        self,
+    ):
+        import anyio
+        import httpx
+        from openai import AsyncOpenAI
+
+        config = replace(
+            self.config,
+            provider="openai",
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+            request_timeout_config=RequestTimeoutConfig(0.25, 30.0, 30.0, 120.0),
+        )
+        client = OpenAIClient(config)
+        http_client = httpx.AsyncClient(trust_env=False)
+        # 单独验证一次连接尝试；关闭 SDK 重试，避免真实退避等待。
+        client.stream_client = AsyncOpenAI(
+            **client.constructor_kwargs, http_client=http_client, max_retries=0
+        )
+        loop = asyncio.get_running_loop()
+        pending_connection = loop.create_future()
+        connection_scopes, read_timeouts, handles, steps = [], [], [], []
+        display = Mock()
+        original_fail_after = anyio.fail_after
+
+        @contextmanager
+        def record_connection_timeout(delay, shield=False):
+            with original_fail_after(delay, shield=shield) as scope:
+                if delay == config.request_timeout_config.connect_seconds:
+                    connection_scopes.append(scope)
+                yield scope
+
+        async def wait_for_connection(**kwargs):
+            self.assertEqual(kwargs["remote_host"], "example.invalid")
+            self.assertEqual(kwargs["remote_port"], 443)
+            self.assertEqual(len(connection_scopes), 1)
+            # 先挂起连接，再让传输层实际的超时作用域到期，不直接抛出异常。
+            handles.append(
+                loop.call_soon(setattr, connection_scopes[0], "deadline", loop.time())
+            )
+            steps.append("connecting")
+            try:
+                await pending_connection
+                self.fail("The pending connection must be interrupted")
+            finally:
+                steps.append("connection wait ended")
+
+        def record_read_timeout(seconds):
+            context = asyncio.timeout(seconds)
+            read_timeouts.append(context)
+            return context
+
+        try:
+            with (
+                patch("anyio.fail_after", new=record_connection_timeout),
+                patch("anyio.connect_tcp", side_effect=wait_for_connection) as connect,
+                patch(
+                    "llm_terminal_assistant.stream.consumer.timeout",
+                    side_effect=record_read_timeout,
+                ) as read_timeout,
+            ):
+                # 仅防止测试回归时挂住；连接超时由上面的受控调度触发。
+                async with asyncio.timeout(5.0):
+                    response, _ = await send_stream_conversation_turn(
+                        client=client,
+                        budgeter=self.budgeter,
+                        system_message=self.system,
+                        completed_turns=[],
+                        current_user_message=self.user,
+                        reserved_output_tokens=128,
+                        min_reserved_recent_turns=1,
+                        display_text=display,
+                        request_timeout_config=config.request_timeout_config,
+                    )
+                steps.append("turn returned")
+                connection_was_cancelled = pending_connection.cancelled()
+        finally:
+            for handle in handles:
+                handle.cancel()
+            pending_connection.cancel()
+            await client.aclose()
+
+        connect.assert_awaited_once()
+        self.assertTrue(connection_scopes[0].cancel_called)
+        self.assertTrue(connection_scopes[0].cancelled_caught)
+        self.assertTrue(connection_was_cancelled)
+        read_timeout.assert_called_once_with(30.0)
+        self.assertFalse(read_timeouts[0].expired())
+        self.assertEqual(
+            steps, ["connecting", "connection wait ended", "turn returned"]
+        )
+        self.assertEqual(response.reason, ModelResponseEndReason.CONNECTION_TIMEOUT)
+        self.assertEqual(response.error.code, "connection_timeout")
+        self.assertEqual(response.text, "")
+        self.assertIsNone(response.usage)
+        self.assertIsNone(response.timing.ttft_seconds)
+        display.assert_not_called()
+        self.assertTrue(http_client.is_closed)
 
     async def test_budget_rejection_prevents_stream_creation_and_display(self):
         self.budgeter.model_limits = ModelLimits(context_window_tokens=1)
@@ -1267,6 +1372,171 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
                     ],
                 )
 
+    async def test_request_stop_shows_notice_and_allows_next_question(self):
+        cases = (
+            (RequestStopReason.REQUEST_CANCELLED, "Request was cancelled."),
+            (
+                RequestStopReason.REQUEST_DEADLINE_EXCEEDED,
+                "The overall request deadline was exceeded.",
+            ),
+        )
+        for reason, notice in cases:
+            with self.subTest(reason=reason):
+                self.encoder.reset_mock()
+                with (
+                    patch(
+                        "llm_terminal_assistant.cli.send_conversation_turn",
+                        side_effect=[RequestStoppedError(reason), DEFAULT],
+                        wraps=send_conversation_turn,
+                    ),
+                    self.assertNoLogs("llm_terminal_assistant.cli", level="ERROR"),
+                ):
+                    client, output = await self.run_talk(
+                        ["Stopped question", "Next question"],
+                        [make_response("Next answer")],
+                    )
+
+                self.assertEqual(output.count(notice), 1)
+                self.assertIn("Next answer", output)
+                self.assertEqual(len(client.requests), 1)
+                self.assertEqual(
+                    client.requests[0].input,
+                    [
+                        Message("system", "You are a helpful assistant."),
+                        Message("user", "Next question"),
+                    ],
+                )
+
+    async def test_deadline_stops_expired_work_and_allows_next_question_from_talk(self):
+        cases = (
+            ("request preparation", {"prepare_seconds": 10, "expected_requests": 0}),
+            ("plain model response", {"model_seconds": 10}),
+            ("tool response", {"tool_count": 2, "model_seconds": 10}),
+            (
+                "between tools",
+                {"tool_count": 2, "tool_seconds": 10, "expected_executions": 1},
+            ),
+            (
+                "before follow-up request",
+                {"tool_count": 1, "tool_seconds": 10, "expected_executions": 1},
+            ),
+            (
+                "shared deadline across model requests",
+                {
+                    "tool_count": 1,
+                    "model_seconds": 3,
+                    "tool_seconds": 4,
+                    "expected_requests": 2,
+                    "expected_executions": 1,
+                },
+            ),
+        )
+        for scenario, options in cases:
+            with self.subTest(scenario=scenario):
+                await self._assert_deadline_flow(**options)
+
+    async def _assert_deadline_flow(
+        self,
+        *,
+        tool_count=0,
+        prepare_seconds=0,
+        model_seconds=0,
+        tool_seconds=0,
+        expected_requests=1,
+        expected_executions=0,
+    ):
+        config = replace(
+            self.config,
+            stream_output_enabled=False,
+            request_timeout_config=RequestTimeoutConfig(
+                connect_seconds=1,
+                first_event_seconds=2,
+                stream_idle_seconds=2,
+                request_deadline_seconds=10,
+            ),
+        )
+        clock = Mock(return_value=100.0)
+        calls = [
+            ToolCallRequest(f"time-{index}", "get_current_time", '{"timezone":"UTC"}')
+            for index in range(tool_count)
+        ]
+        client = FakeClient(config)
+        original_send = client.send
+        stop_reasons = []
+        output = StringIO()
+
+        def encode_with_elapsed_time(request):
+            if not stop_reasons:
+                clock.return_value += prepare_seconds
+            return FakeModelRequestEncoder().encode_request(request)
+
+        def send_with_elapsed_time(request):
+            response = original_send(request)
+            if stop_reasons:
+                # 下一轮重新获得完整期限，即使绝对时间已经超过上一轮截止时刻。
+                clock.return_value += 1
+                return replace(response, text="Next answer")
+            clock.return_value += model_seconds
+            return replace(
+                response,
+                text="Expired turn response",
+                tool_calls=calls if len(client.requests) == 1 else [],
+            )
+
+        def finish_tool():
+            clock.return_value += tool_seconds
+            return self.clock.return_value
+
+        tool_clock = Mock(side_effect=finish_tool)
+        registry = create_default_tool_registry(clock=tool_clock)
+
+        def observed_turn(*args, **kwargs):
+            try:
+                return send_conversation_turn(*args, **kwargs, clock=clock)
+            except RequestStoppedError as error:
+                stop_reasons.append(error.reason)
+                raise
+
+        with (
+            patch("llm_terminal_assistant.cli.PromptSession", autospec=True) as session,
+            patch(
+                "llm_terminal_assistant.cli.create_default_tool_registry",
+                return_value=registry,
+            ),
+            patch(
+                "llm_terminal_assistant.cli.send_conversation_turn",
+                side_effect=observed_turn,
+            ),
+            patch.object(
+                self.encoder, "encode_request", side_effect=encode_with_elapsed_time
+            ),
+            patch.object(client, "send", side_effect=send_with_elapsed_time),
+            self.assertNoLogs("llm_terminal_assistant.cli", level="ERROR"),
+            redirect_stdout(output),
+        ):
+            configure_prompt_session(session, ["question", "Next question", "exit"])
+            await talk(client, config, self.budgeter)
+
+        self.assertEqual(stop_reasons, [RequestStopReason.REQUEST_DEADLINE_EXCEEDED])
+        self.assertEqual(len(client.requests), expected_requests + 1)
+        self.assertEqual(tool_clock.call_count, expected_executions)
+        for request in client.requests:
+            self.assertEqual(request.tools, registry.get_tool_list())
+        self.assertEqual(
+            client.requests[-1].input,
+            [
+                Message("system", "You are a helpful assistant."),
+                Message("user", "Next question"),
+            ],
+        )
+        self.assertEqual(session.return_value.prompt_async.await_count, 3)
+        self.assertEqual(
+            output.getvalue().count("The overall request deadline was exceeded."), 1
+        )
+        self.assertNotIn("Expired turn response", output.getvalue())
+        self.assertIn("Next answer", output.getvalue())
+        self.assertIn("Exiting...", output.getvalue())
+
     async def test_cancellation_stops_tools_and_followup_requests_from_talk(self):
         cases = (
             ("model response", 2, 0),
@@ -1314,7 +1584,7 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(kwargs["cancel_event"], cancel_event)
             try:
                 return send_conversation_turn(*args, **kwargs)
-            except ToolLoopStoppedError as error:
+            except RequestStoppedError as error:
                 stop_reasons.append(error.reason)
                 raise
 
@@ -1337,7 +1607,7 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             await talk(client, config, self.budgeter)
 
         self.assertTrue(cancel_event.is_set())
-        self.assertEqual(stop_reasons, [ToolLoopStopReason.REQUEST_CANCELLED])
+        self.assertEqual(stop_reasons, [RequestStopReason.REQUEST_CANCELLED])
         self.assertEqual(len(client.requests), 1)
         self.assertEqual(client.requests[0].tools, registry.get_tool_list())
         self.assertEqual(clock.call_count, expected_executions)

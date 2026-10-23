@@ -13,6 +13,8 @@
 - 将 OpenAI Responses API 的正文、结束状态、usage 和工具请求转换为项目自己的 `ModelResponse`。
 - 支持回答正文的流式展示，将 SDK 事件转换为应用的文本增量、用量和终止事件；保留部分正文并提示截断、读取失败或缺少终止事件。
 - 使用可注入的单调时钟测量首个可展示内容延迟（TTFT）和总耗时，随流式响应返回计时结果。
+- 为流式请求接入连接、首事件、空闲超时和本轮总期限；生成期间按 Esc 或 Ctrl+C 可取消本轮，完成本地清理后继续提问。
+- 为非流式模型调用和工具流程接入取消信号与总期限检查，停止后不再执行后续工具或发送后续模型请求。
 - 通过注册表和参数 Schema 校验工具请求，执行只读 `get_current_time` 工具，并在同一用户轮次内连续回传结果；未注册工具返回稳定的拒绝结果。
 - 为每轮工具流程设置工具回传轮数、模型请求次数和实际工具执行次数的独立上限，触发保护时记录停止原因并允许继续提问。
 - 将应用请求中的 temperature 和 top-p 映射到 OpenAI Responses API 的 `temperature` 和 `top_p` 请求选项，并提供单变量批量实验入口。
@@ -21,7 +23,7 @@
 - 使用固定 revision 的 DeepSeek-V4.1-Flash-1017 tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
 
-当前课程阶段尚未将学习卡片生成和验证接入终端对话或远程模型请求，也没有实现旧历史摘要、应用级超时控制、等待中的主动取消或有限退避重试。非流式调用的连接失败和超时等 SDK 异常目前会从 `OpenAIClient.send()` 原样抛出；流式消费者已将读取事件时的普通异常转换为独立失败状态，但尚未进一步区分网络错误类别或实现恢复策略。
+当前课程阶段尚未将学习卡片生成和验证接入终端对话或远程模型请求，也没有实现旧历史摘要或应用级有限退避重试。非流式调用使用同步 SDK，取消和总期限在调用前后及每个工具执行前检查，不会中断正在执行的同步调用；连接失败和超时等 SDK 异常仍会从 `OpenAIClient.send()` 原样抛出。流式流程已区分连接超时、首事件超时、空闲超时、总期限耗尽和用户取消；其余读取异常返回读取失败，尚未接入进一步的网络错误分类或恢复策略。
 
 ## 项目结构
 
@@ -45,6 +47,7 @@ src/llm_terminal_assistant/
 ├── message.py
 ├── model.py
 ├── prompt_experiment.py
+├── request_control.py
 ├── sampling_experiment.py
 ├── stream/
 │   ├── consumer.py
@@ -80,6 +83,7 @@ tests/
 - `conversation.py`：完整问答轮次、候选请求组装、工具结果回传和历史裁剪策略。
 - `message.py`、`model.py`：服务商无关的消息、请求、响应、usage 和工具请求结构。
 - `prompt_experiment.py`：组合零样本或少样本 Prompt 与固定评测集，执行独立请求并保存待人工评判的实验记录。
+- `request_control.py`：模型调用和工具流程共用的取消信号、总期限检查及停止原因。
 - `sampling_experiment.py`：用固定输入重复执行彼此独立的单变量请求，并逐条保存实验记录。
 - `stream/`：应用流事件协议、增量消费与流关闭，以及流式响应的计时数据。
 - `structured_output/`：学习卡片的四步验证流水线、稳定错误类别、安全日志和项目类型。
@@ -114,19 +118,25 @@ uv sync --extra token-counting
 
 程序从项目根目录的 `.env` 或当前进程环境读取以下变量：
 
-| 变量                    | 含义                                                   |
-| ----------------------- | ------------------------------------------------------ |
-| `PROVIDER`              | 客户端类型：`faked` 或 `openai`                        |
-| `API_KEY`               | 远程模型服务凭据；fake 模式不会使用                    |
-| `BASE_URL`              | OpenAI Responses API 或兼容服务的基础 URL              |
-| `MODEL`                 | 请求使用的模型标识或显式的 `fake-model`                |
-| `REASONING_EFFORT`      | OpenAI Responses API 的 reasoning effort；省略时不发送 |
-| `TEMPERATURE`           | OpenAI Responses API 的 `temperature`；省略时不发送    |
-| `TOP_P`                 | OpenAI Responses API 的 `top_p`；省略时不发送          |
-| `MAX_TOOL_ROUNDS`       | 每轮最大工具回传轮数；默认 3                           |
-| `MAX_MODEL_REQUESTS`    | 每轮最大模型请求次数，包含首次请求；默认 4             |
-| `MAX_TOOL_EXECUTIONS`   | 每轮最大实际工具执行次数；默认 8                       |
-| `STREAM_OUTPUT_ENABLED` | 回答正文流式展示开关；默认 `false`，设为 `true` 开启   |
+| 变量                       | 含义                                                              |
+| -------------------------- | ----------------------------------------------------------------- |
+| `PROVIDER`                 | 客户端类型：`faked` 或 `openai`                                   |
+| `API_KEY`                  | 远程模型服务凭据；fake 模式不会使用                               |
+| `BASE_URL`                 | OpenAI Responses API 或兼容服务的基础 URL                         |
+| `MODEL`                    | 请求使用的模型标识或显式的 `fake-model`                           |
+| `REASONING_EFFORT`         | OpenAI Responses API 的 reasoning effort；省略时不发送            |
+| `TEMPERATURE`              | OpenAI Responses API 的 `temperature`；省略时不发送               |
+| `TOP_P`                    | OpenAI Responses API 的 `top_p`；省略时不发送                     |
+| `MAX_TOOL_ROUNDS`          | 每轮最大工具回传轮数；默认 3                                      |
+| `MAX_MODEL_REQUESTS`       | 每轮最大模型请求次数，包含首次请求；默认 4                        |
+| `MAX_TOOL_EXECUTIONS`      | 每轮最大实际工具执行次数；默认 8                                  |
+| `STREAM_OUTPUT_ENABLED`    | 回答正文流式展示开关；默认 `false`，设为 `true` 开启              |
+| `CONNECT_SECONDS`          | OpenAI 或兼容接口的 SDK 连接超时，单位为秒；启用超时配置后默认 10 |
+| `FIRST_EVENT_SECONDS`      | 流式首事件等待上限，单位为秒；启用超时配置后默认 30               |
+| `STREAM_IDLE_SECONDS`      | 流式相邻有效事件之间的等待上限，单位为秒；启用超时配置后默认 30   |
+| `REQUEST_DEADLINE_SECONDS` | 本轮总期限的时间预算，单位为秒；启用超时配置后默认 120            |
+
+四项超时变量均未设置时，`request_timeout_config` 为 `None`，不启用这组应用超时控制，远程 SDK 自身的默认超时仍然生效。设置其中任意一项后，未设置的其余项采用表中的默认值。显式设置必须是大于零的有限数值；空值、零、负数、NaN 和无穷大均会被拒绝。键盘取消不依赖这些超时变量，具体行为见[超时与取消](#超时与取消)。
 
 本地 `.env` 不应提交。示例值必须使用占位符：
 
@@ -320,7 +330,7 @@ HF_HUB_OFFLINE=1 MODEL=deepseek-flash \
 
 ## 回答正文的流式展示
 
-本节对应[流式输出与可靠性任务 1](../../notes/llm/streaming-and-reliability.md#任务-1接入回答正文的流式展示必须)。`STREAM_OUTPUT_ENABLED` 是应用自己的配置项，接受 `true` 或 `false`，忽略大小写和两端空白，其他值会报配置错误。在项目目录执行：
+`STREAM_OUTPUT_ENABLED` 是应用自己的配置项，接受 `true` 或 `false`，忽略大小写和两端空白，其他值会报配置错误。在项目目录执行：
 
 ```shell
 PROVIDER=faked MODEL=fake-model STREAM_OUTPUT_ENABLED=true \
@@ -340,6 +350,34 @@ PROVIDER=faked MODEL=fake-model STREAM_OUTPUT_ENABLED=true \
 
 默认 fake 正常响应只产生一个正文增量，因此上述命令用于确认入口、开关和输出，不能单独证明多片段展示时机。预设多个增量、用量、正常终止、截断、读取异常和无终止事件的路径，由下列离线测试验证。
 
+## 超时与取消
+
+在项目目录执行以下命令，可使用离线 fake 客户端启用流式入口和超时配置：
+
+```shell
+PROVIDER=faked MODEL=fake-model STREAM_OUTPUT_ENABLED=true \
+CONNECT_SECONDS=10 FIRST_EVENT_SECONDS=30 STREAM_IDLE_SECONDS=30 \
+REQUEST_DEADLINE_SECONDS=120 uv run llm-terminal-assistant
+```
+
+将 `STREAM_OUTPUT_ENABLED` 改为 `false` 可使用已有的非流式工具流程。默认 fake 会立即返回，且没有远程连接；这条命令只能检查入口和配置，等待中的取消与超时由下节的可控离线测试验证。
+
+### 流式等待与停止
+
+连接超时由远程 SDK 的连接配置控制。消费者在首事件到达前限制首事件等待；之后从每个有效事件的接收时刻计算空闲期限。应用事件中的正文增量（包括空字符串）和用量事件均算有效活动，终止事件到达后直接结束。首事件和空闲等待同时受本轮剩余总期限约束，取较短的等待时间；两者相同时按总期限耗尽处理。
+
+本轮总期限从单轮处理开始、准备请求和检查预算之前计时，收到新事件不会重置它。等待期间到期会取消当前异步读取，再关闭流。已经展示的正文保留，终端按超时类别显示提示；中途停止时提示回答可能不完整。停止后的资源清理仍需要时间，因此实际总耗时可能超过设置的期限。
+
+### 键盘取消与非流式检查
+
+生成期间按 Esc 或 Ctrl+C 取消当前轮次，不退出整个程序。流式请求会取消等待首事件或下一事件的异步读取，关闭流，保留已经展示的正文，并显示 `Request was cancelled.`。完成本轮清理后，可以继续输入下一问；在输入提示符中输入 `exit` 退出。
+
+非流式请求在工作线程中执行同步模型调用，主事件循环继续监听键盘。按键会设置本轮取消信号；应用在每次模型调用前后、每个工具开始前检查取消信号和总期限，并优先处理主动取消。同一轮的工具回传共用原来的截止时刻，不会重新获得一份时间预算。
+
+如果取消或到期发生在同步模型调用、工具执行期间，当前调用仍需先结束，应用才能在随后的检查点停止。停止后不会展示该轮尚未交付的模型正文，也不再执行后续工具或发送后续模型请求；已完成的工具不会被撤销。取消显示 `Request was cancelled.`，总期限耗尽显示 `The overall request deadline was exceeded.`，随后可以继续提问。
+
+正常完成、异常、超时和取消都会执行相应的本地清理：提供方流关闭、键盘监听解除、终端模式恢复、Esc 解析计时器撤销。非流式外层协程被取消时，会先设置停止信号并等工作线程结束，再向外传递取消。
+
 ## 验证
 
 默认自动化测试完全离线，使用确定性的 fake Token 计数器和记录调用次数的 fake 客户端，不加载 Hugging Face tokenizer、访问网络、要求 API Key 或产生模型费用：
@@ -356,9 +394,12 @@ uv run python -m unittest discover -s tests -p 'test_cli.py' -v
 uv run python -m unittest discover -s tests -p 'test_openai_client.py' -v
 uv run python -m unittest discover -s tests -p 'test_fake_client.py' -v
 uv run python -m unittest discover -s tests -p 'test_config.py' -v
+uv run python -m unittest discover -s tests -p 'test_request_control.py' -v
 ```
 
 消费者测试检查增量、最终状态、用量保留和关闭行为；单轮入口与终端测试检查预算、增量展示时机、失败提示、历史复用以及开关。可控时钟验证空正文和用量不触发 TTFT、首个非空正文只记录一次、无正文时保持未知，以及总耗时包含请求准备和流关闭。适配器使用 SDK 替身验证映射与关闭，不访问真实服务；这些测试不代表已验证远程服务端到端可用。适配范围遵循[项目流式用量验收边界](AGENTS.md#流式用量适配的验收边界)。
+
+超时与取消测试从单轮处理或终端入口驱动等待和停止：连接超时用底层连接替身保持等待，通过受控调度让传输层的真实超时作用域到期，再经过 HTTPX、OpenAI SDK 和应用适配层得到连接超时原因。该用例只关闭测试客户端的 SDK 重试，以隔离一次连接尝试，不建立真实网络连接。首事件和空闲读取同样在挂起时触发超时；持续活动场景验证总期限不重置。Esc 和 Ctrl+C 测试覆盖首事件前、正文展示后取消，以及清理后继续下一问。非流式测试检查模型调用、工具执行之间的停止原因和执行记录，确认后续操作不会继续；公共期限检查还覆盖未配置期限、到期前、恰好到期和超过期限。
 
 学习卡片 Schema 位于 `schemas/study-card.schema.json`。Schema 测试使用 Python `jsonschema` 库的 Draft 2020-12 验证器验收结构约束；流水线测试覆盖合法对象、坏 JSON、截断 JSON、缺失字段、错误类型、无效来源、字段路径和安全错误日志。可以分别执行：
 

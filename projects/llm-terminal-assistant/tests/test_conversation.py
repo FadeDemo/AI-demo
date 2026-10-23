@@ -32,6 +32,10 @@ from llm_terminal_assistant.model import (
     ModelUsage,
     OutputTokensDetails,
 )
+from llm_terminal_assistant.request_control import (
+    RequestStoppedError,
+    RequestStopReason,
+)
 from llm_terminal_assistant.tools.definition import (
     RegisteredTool,
     ToolArguments,
@@ -699,10 +703,10 @@ class ToolFollowupRequestTests(unittest.TestCase):
         client.send.return_value = self.make_response()
         budgeter, _ = self.make_sending_budgeter()
 
-        with self.assertRaises(ToolLoopStoppedError) as caught:
+        with self.assertRaises(RequestStoppedError) as caught:
             self.send_turn(client, budgeter, cancel_event=cancel_event)
 
-        self.assertEqual(caught.exception.reason, ToolLoopStopReason.REQUEST_CANCELLED)
+        self.assertEqual(caught.exception.reason, RequestStopReason.REQUEST_CANCELLED)
         client.send.assert_not_called()
         self.assertEqual(self.executed_values, [])
 
@@ -730,7 +734,7 @@ class ToolFollowupRequestTests(unittest.TestCase):
         recorded_execute_call = Mock(wraps=executor.execute_call)
         executor.execute_call = recorded_execute_call
         follow_up_request = build_tool_followup_request(
-            initial_request, response, executor
+            initial_request, response, executor, clock=lambda: 0.0, deadline_at=None
         )
         recorded_execute_call.assert_called_once_with(response.tool_calls[0], None)
         self.assertIsInstance(follow_up_request.input[-1], ToolCallResult)
@@ -1231,7 +1235,9 @@ class ToolFollowupRequestTests(unittest.TestCase):
     def test_groups_calls_before_results_and_executes_each_once_in_order(self):
         response = self.make_response()
 
-        result = build_tool_followup_request(self.request, response, self.executor)
+        result = build_tool_followup_request(
+            self.request, response, self.executor, clock=lambda: 0.0, deadline_at=None
+        )
 
         self.assertEqual(
             result.input[:5],
@@ -1296,7 +1302,9 @@ class ToolFollowupRequestTests(unittest.TestCase):
         response = self.make_response()
         original_request, original_response = deepcopy((self.request, response))
 
-        result = build_tool_followup_request(self.request, response, self.executor)
+        result = build_tool_followup_request(
+            self.request, response, self.executor, clock=lambda: 0.0, deadline_at=None
+        )
 
         self.assertIsNot(result, self.request)
         self.assertIsNot(result.input, self.request.input)
@@ -1315,7 +1323,9 @@ class ToolFollowupRequestTests(unittest.TestCase):
     def test_empty_assistant_text_is_valid_and_still_returns_tool_results(self):
         response = self.make_response(text="", calls=self.calls[:1])
 
-        result = build_tool_followup_request(self.request, response, self.executor)
+        result = build_tool_followup_request(
+            self.request, response, self.executor, clock=lambda: 0.0, deadline_at=None
+        )
 
         self.assertEqual(
             result.input[:4],
@@ -1336,7 +1346,9 @@ class ToolFollowupRequestTests(unittest.TestCase):
         ]
         response = self.make_response(calls=calls)
 
-        result = build_tool_followup_request(self.request, response, self.executor)
+        result = build_tool_followup_request(
+            self.request, response, self.executor, clock=lambda: 0.0, deadline_at=None
+        )
 
         self.assertEqual(result.input[3:7], calls)
         outputs = result.input[7:]
@@ -1363,7 +1375,13 @@ class ToolFollowupRequestTests(unittest.TestCase):
                 original_request, original_response = deepcopy((self.request, response))
 
                 with self.assertRaisesRegex(ValueError, "response reason"):
-                    build_tool_followup_request(self.request, response, executor)
+                    build_tool_followup_request(
+                        self.request,
+                        response,
+                        executor,
+                        clock=lambda: 0.0,
+                        deadline_at=None,
+                    )
 
                 executor.execute_call.assert_not_called()
                 self.assertEqual(self.request, original_request)
@@ -1375,7 +1393,9 @@ class ToolFollowupRequestTests(unittest.TestCase):
         original_request = deepcopy(self.request)
 
         with self.assertRaisesRegex(ValueError, "No tool calls"):
-            build_tool_followup_request(self.request, response, executor)
+            build_tool_followup_request(
+                self.request, response, executor, clock=lambda: 0.0, deadline_at=None
+            )
 
         executor.execute_call.assert_not_called()
         self.assertEqual(self.request, original_request)

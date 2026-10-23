@@ -35,6 +35,12 @@ from llm_terminal_assistant.model import (
     ModelResponse,
     ModelResponseEndReason,
 )
+from llm_terminal_assistant.request_control import (
+    RequestStoppedError,
+    RequestStopReason,
+    check_request_cancelled,
+    check_request_deadline,
+)
 from llm_terminal_assistant.stream.consumer import consume_stream
 from llm_terminal_assistant.terminal_output import TerminalLogHandler, TerminalOutput
 from llm_terminal_assistant.tools.definition import ToolDefinition
@@ -44,7 +50,6 @@ from llm_terminal_assistant.tools.factory import create_default_tool_registry
 from llm_terminal_assistant.tools.loop import (
     ToolExecutionBudget,
     ToolLoopLimits,
-    check_request_cancelled,
 )
 from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 from llm_terminal_assistant.tools.registry import ToolRegistry
@@ -174,7 +179,16 @@ def send_conversation_turn(
     tool_loop_limits: ToolLoopLimits = DEFAULT_TOOL_LOOP_LIMITS,
     *,
     cancel_event: Event | None = None,
+    clock: Callable[[], float] = monotonic,
+    request_timeout_config: RequestTimeoutConfig | None = None,
 ) -> tuple[ModelResponse, HistoryTrimResult]:
+    start_at = clock()
+    deadline_at = (
+        start_at + request_timeout_config.request_deadline_seconds
+        if request_timeout_config is not None
+        else None
+    )
+
     def trim_and_send(
         turn_input: list[ModelInputItem],
         history: list[ConversationTurn],
@@ -192,8 +206,10 @@ def send_conversation_turn(
             tools,
         )
         check_request_cancelled(cancel_event)
+        check_request_deadline(deadline_at=deadline_at, clock=clock)
         response = client.send(trim_result.request)
         check_request_cancelled(cancel_event)
+        check_request_deadline(deadline_at=deadline_at, clock=clock)
         return response, trim_result
 
     current_turn_input = [current_user_message]
@@ -229,6 +245,8 @@ def send_conversation_turn(
             executor=executor,
             tool_execution_budget=tool_execution_budget,
             cancel_event=cancel_event,
+            clock=clock,
+            deadline_at=deadline_at,
         )
         current_turn_start = len(model_request.input) - len(current_turn_input)
         current_turn_input = followup_request.input[current_turn_start:]
@@ -397,6 +415,7 @@ async def _run_nonstream_turn_with_cancel(
                 executor=executor,
                 tool_loop_limits=config.tool_loop_limits,
                 cancel_event=cancel_event,
+                request_timeout_config=config.request_timeout_config,
             )
         )
         try:
@@ -455,11 +474,14 @@ async def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
             ):
                 continue
             return
-        except ToolLoopStoppedError as error:
-            if error.reason == ToolLoopStopReason.REQUEST_CANCELLED:
+        except RequestStoppedError as error:
+            if error.reason == RequestStopReason.REQUEST_CANCELLED:
                 output_request_cancelled()
-            else:
-                logger.error("Tool loop stopped due to: %s", error.reason.value)
+            elif error.reason == RequestStopReason.REQUEST_DEADLINE_EXCEEDED:
+                terminal_output.write_line("The overall request deadline was exceeded.")
+            continue
+        except ToolLoopStoppedError as error:
+            logger.error("Tool loop stopped due to: %s", error.reason.value)
             continue
         except ValueError:
             logger.exception("Invalid conversation configuration.")
