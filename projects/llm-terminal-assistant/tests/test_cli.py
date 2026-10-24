@@ -177,6 +177,169 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(response.usage, usage)
         self.assertEqual(response.tool_calls, [])
 
+    async def test_sdk_connection_failure_and_read_timeout_reach_stream_turn(self):
+        from httpx import ReadTimeout, Request
+        from openai import APIConnectionError, APITimeoutError
+
+        request = Request("POST", "https://example.invalid")
+        read_error = APITimeoutError(request=request)
+        read_error.__cause__ = ReadTimeout("read timed out")
+        for error, expected_reason in (
+            (
+                APIConnectionError(request=request),
+                ModelResponseEndReason.CONNECTION_FAILED,
+            ),
+            (read_error, ModelResponseEndReason.READ_TIMEOUT),
+        ):
+            with self.subTest(reason=expected_reason):
+                create = AsyncMock(side_effect=error)
+                client = object.__new__(OpenAIClient)
+                client.model = "test-model"
+                client.stream_client = SimpleNamespace(
+                    responses=SimpleNamespace(create=create)
+                )
+                display_text = Mock()
+
+                response, _ = await send_stream_conversation_turn(
+                    client=client,
+                    budgeter=self.budgeter,
+                    system_message=self.system,
+                    completed_turns=[],
+                    current_user_message=self.user,
+                    reserved_output_tokens=128,
+                    min_reserved_recent_turns=1,
+                    display_text=display_text,
+                )
+
+                self.assertEqual(response.reason, expected_reason)
+                self.assertEqual(
+                    response.error,
+                    ModelResponseError(expected_reason, error.message),
+                )
+                self.assertIsNone(response.incomplete_details)
+                self.assertEqual(response.text, "")
+                display_text.assert_not_called()
+                create.assert_awaited_once()
+                self.assertTrue(create.await_args.kwargs["stream"])
+
+    async def test_direct_read_timeout_keeps_partial_text_and_closes_sdk_stream(self):
+        from httpx import ReadTimeout
+
+        class TimeoutStream:
+            def __init__(self, partial):
+                self.partial = partial
+                self.read_count = 0
+                self.close = AsyncMock()
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self.read_count += 1
+                if self.partial and self.read_count == 1:
+                    return SimpleNamespace(
+                        type="response.output_text.delta", delta=self.partial
+                    )
+                raise ReadTimeout("private transport error details")
+
+        for partial in ("", "partial answer"):
+            with self.subTest(partial=partial):
+                stream = TimeoutStream(partial)
+                create = AsyncMock(return_value=stream)
+                client = object.__new__(OpenAIClient)
+                client.model = "test-model"
+                client.stream_client = SimpleNamespace(
+                    responses=SimpleNamespace(create=create)
+                )
+                displayed = []
+
+                response, _ = await send_stream_conversation_turn(
+                    client=client,
+                    budgeter=self.budgeter,
+                    system_message=self.system,
+                    completed_turns=[],
+                    current_user_message=self.user,
+                    reserved_output_tokens=128,
+                    min_reserved_recent_turns=1,
+                    display_text=displayed.append,
+                )
+
+                self.assertEqual(response.reason, ModelResponseEndReason.READ_TIMEOUT)
+                self.assertEqual(
+                    response.error,
+                    ModelResponseError(
+                        ModelResponseEndReason.READ_TIMEOUT,
+                        "Timed out while reading from the model service.",
+                    ),
+                )
+                self.assertIsNone(response.incomplete_details)
+                self.assertEqual(response.text, partial)
+                self.assertEqual(displayed, [partial] if partial else [])
+                self.assertEqual(stream.read_count, 2 if partial else 1)
+                stream.close.assert_awaited_once_with()
+                create.assert_awaited_once()
+
+    async def test_service_errors_preserve_turn_result_and_close_without_reading_more(
+        self,
+    ):
+        for reason in (
+            ModelResponseEndReason.RATE_LIMITED,
+            ModelResponseEndReason.SERVICE_UNAVAILABLE,
+            ModelResponseEndReason.AUTHENTICATION_FAILED,
+            ModelResponseEndReason.PERMISSION_DENIED,
+            ModelResponseEndReason.INVALID_REQUEST,
+            ModelResponseEndReason.CONNECTION_FAILED,
+        ):
+            for partial in ("", "partial answer"):
+                with self.subTest(reason=reason, partial=partial):
+                    error = ModelResponseError(reason, "Service request failed.")
+                    unread = TextDeltaEvent("must remain unread")
+                    client = FakeClient(
+                        self.config,
+                        scripted_events=[
+                            *([TextDeltaEvent(partial)] if partial else []),
+                            EndEvent(reason, error, None),
+                            unread,
+                        ],
+                    )
+                    displayed = []
+                    closed = []
+                    upstream_send = client.send_stream
+
+                    async def observed_stream(
+                        request, *, upstream_send=upstream_send, closed=closed
+                    ):
+                        upstream = upstream_send(request)
+                        try:
+                            async for event in upstream:
+                                yield event
+                        finally:
+                            await upstream.aclose()
+                            closed.append(True)
+
+                    with patch.object(
+                        client, "send_stream", side_effect=observed_stream
+                    ) as send_stream:
+                        response, trim_result = await send_stream_conversation_turn(
+                            client=client,
+                            budgeter=self.budgeter,
+                            system_message=self.system,
+                            completed_turns=[],
+                            current_user_message=self.user,
+                            reserved_output_tokens=128,
+                            min_reserved_recent_turns=1,
+                            display_text=displayed.append,
+                        )
+
+                    self.assertEqual(response.reason, reason)
+                    self.assertEqual(response.error, error)
+                    self.assertEqual(response.text, partial)
+                    self.assertEqual(displayed, [partial] if partial else [])
+                    self.assertEqual(closed, [True])
+                    self.assertEqual(list(client.scripted_events), [unread])
+                    self.assertEqual(client.requests, [trim_result.request])
+                    send_stream.assert_called_once_with(trim_result.request)
+
     async def test_total_timing_includes_preparation_reading_and_cleanup(self):
         async def exercise(expected_reason, first_text):
             now = [100.0]
@@ -795,6 +958,65 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
                 "Request was incomplete: max_output_tokens",
             ),
             (
+                EndEvent(
+                    ModelResponseEndReason.RATE_LIMITED,
+                    ModelResponseError("rate_limited", "Service request failed."),
+                    None,
+                ),
+                "Rate limited. Please try again later.",
+            ),
+            (
+                EndEvent(
+                    ModelResponseEndReason.SERVICE_UNAVAILABLE,
+                    ModelResponseError(
+                        "service_unavailable", "Service request failed."
+                    ),
+                    None,
+                ),
+                "Service unavailable. Please try again later.",
+            ),
+            (
+                EndEvent(
+                    ModelResponseEndReason.AUTHENTICATION_FAILED,
+                    ModelResponseError("authentication_failed", "Request failed."),
+                    None,
+                ),
+                "Authentication failed. Please check your credentials.",
+            ),
+            (
+                EndEvent(
+                    ModelResponseEndReason.PERMISSION_DENIED,
+                    ModelResponseError("permission_denied", "Request failed."),
+                    None,
+                ),
+                "Permission denied. Please check your permissions.",
+            ),
+            (
+                EndEvent(
+                    ModelResponseEndReason.INVALID_REQUEST,
+                    ModelResponseError("invalid_request", "Request failed."),
+                    None,
+                ),
+                "Invalid request. Please check your request.",
+            ),
+            (
+                EndEvent(
+                    ModelResponseEndReason.CONNECTION_FAILED,
+                    ModelResponseError("connection_failed", "Connection failed."),
+                    None,
+                ),
+                "Connection failed. Please check your connection.",
+            ),
+            (
+                EndEvent(
+                    ModelResponseEndReason.READ_TIMEOUT,
+                    ModelResponseError("read_timeout", "Request timed out."),
+                    None,
+                ),
+                "Timed out while reading from the model service. "
+                "The answer may be incomplete.",
+            ),
+            (
                 None,
                 "Streaming response ended without a terminal event. "
                 "The answer may be incomplete.",
@@ -814,25 +1036,58 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
                     f"Model Response: \npartial answer\n{notice}\nExiting...\n",
                 )
 
-    async def test_stream_connection_timeout_displays_notice_without_answer_text(self):
-        _, output = await self.run_stream_talk(
-            [
-                EndEvent(
-                    ModelResponseEndReason.CONNECTION_TIMEOUT,
-                    ModelResponseError("connection_timeout", "Request timed out."),
-                    None,
-                ),
-            ],
-            ["question"],
-        )
+    async def test_stream_failures_display_notice_without_answer_text(self):
+        for reason, notice in (
+            (
+                ModelResponseEndReason.CONNECTION_TIMEOUT,
+                "Connection timed out. Could not connect to the model service.",
+            ),
+            (
+                ModelResponseEndReason.RATE_LIMITED,
+                "Rate limited. Please try again later.",
+            ),
+            (
+                ModelResponseEndReason.SERVICE_UNAVAILABLE,
+                "Service unavailable. Please try again later.",
+            ),
+            (
+                ModelResponseEndReason.AUTHENTICATION_FAILED,
+                "Authentication failed. Please check your credentials.",
+            ),
+            (
+                ModelResponseEndReason.PERMISSION_DENIED,
+                "Permission denied. Please check your permissions.",
+            ),
+            (
+                ModelResponseEndReason.INVALID_REQUEST,
+                "Invalid request. Please check your request.",
+            ),
+            (
+                ModelResponseEndReason.CONNECTION_FAILED,
+                "Connection failed. Please check your connection.",
+            ),
+            (
+                ModelResponseEndReason.READ_TIMEOUT,
+                "Timed out while reading from the model service. "
+                "The answer may be incomplete.",
+            ),
+        ):
+            with self.subTest(reason=reason):
+                self.encoder.reset_mock()
+                _, output = await self.run_stream_talk(
+                    [
+                        EndEvent(
+                            reason, ModelResponseError(reason, "Request failed."), None
+                        )
+                    ],
+                    ["question"],
+                )
 
-        self.assertEqual(
-            output,
-            "Please enter your prompt (type 'exit' to quit):\n\n"
-            "Model Response: \n\n"
-            "Connection timed out. Could not connect to the model service.\n"
-            "Exiting...\n",
-        )
+                self.assertEqual(
+                    output,
+                    "Please enter your prompt (type 'exit' to quit):\n\n"
+                    f"Model Response: \n\n{notice}\nExiting...\n",
+                )
 
     async def _assert_pending_stream_timeout(
         self,

@@ -103,6 +103,25 @@ def output_response_status(response: ModelResponse) -> None:
         terminal_output.write_line(
             "The overall request deadline was exceeded. The answer may be incomplete."
         )
+    elif response.reason == ModelResponseEndReason.RATE_LIMITED:
+        terminal_output.write_line("Rate limited. Please try again later.")
+    elif response.reason == ModelResponseEndReason.SERVICE_UNAVAILABLE:
+        terminal_output.write_line("Service unavailable. Please try again later.")
+    elif response.reason == ModelResponseEndReason.AUTHENTICATION_FAILED:
+        terminal_output.write_line(
+            "Authentication failed. Please check your credentials."
+        )
+    elif response.reason == ModelResponseEndReason.PERMISSION_DENIED:
+        terminal_output.write_line("Permission denied. Please check your permissions.")
+    elif response.reason == ModelResponseEndReason.INVALID_REQUEST:
+        terminal_output.write_line("Invalid request. Please check your request.")
+    elif response.reason == ModelResponseEndReason.CONNECTION_FAILED:
+        terminal_output.write_line("Connection failed. Please check your connection.")
+    elif response.reason == ModelResponseEndReason.READ_TIMEOUT:
+        terminal_output.write_line(
+            "Timed out while reading from the model service. "
+            "The answer may be incomplete."
+        )
 
 
 def output_model_response(response: ModelResponse):

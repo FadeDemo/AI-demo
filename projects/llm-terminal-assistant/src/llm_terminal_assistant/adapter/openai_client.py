@@ -2,7 +2,8 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
-from httpx import Timeout
+from httpx import ReadTimeout, Timeout
+from openai import APIConnectionError, APIStatusError
 
 from llm_terminal_assistant.adapter.protocol_mapping import (
     to_openai_responses_input_item,
@@ -227,8 +228,83 @@ class OpenAIClient(ModelClient):
                     ),
                     incomplete_details=None,
                 )
+            elif isinstance(e.__cause__, ReadTimeout):
+                yield EndEvent(
+                    reason=ModelResponseEndReason.READ_TIMEOUT,
+                    error=ModelResponseError(
+                        code=ModelResponseEndReason.READ_TIMEOUT,
+                        message=e.message,
+                    ),
+                    incomplete_details=None,
+                )
             else:
                 raise
+        except APIStatusError as e:
+            if e.status_code == 429:
+                yield EndEvent(
+                    reason=ModelResponseEndReason.RATE_LIMITED,
+                    error=ModelResponseError(
+                        code=ModelResponseEndReason.RATE_LIMITED,
+                        message=e.message,
+                    ),
+                    incomplete_details=None,
+                )
+            elif e.status_code == 503:
+                yield EndEvent(
+                    reason=ModelResponseEndReason.SERVICE_UNAVAILABLE,
+                    error=ModelResponseError(
+                        code=ModelResponseEndReason.SERVICE_UNAVAILABLE,
+                        message=e.message,
+                    ),
+                    incomplete_details=None,
+                )
+            elif e.status_code == 401:
+                yield EndEvent(
+                    reason=ModelResponseEndReason.AUTHENTICATION_FAILED,
+                    error=ModelResponseError(
+                        code=ModelResponseEndReason.AUTHENTICATION_FAILED,
+                        message=e.message,
+                    ),
+                    incomplete_details=None,
+                )
+            elif e.status_code == 403:
+                yield EndEvent(
+                    reason=ModelResponseEndReason.PERMISSION_DENIED,
+                    error=ModelResponseError(
+                        code=ModelResponseEndReason.PERMISSION_DENIED,
+                        message=e.message,
+                    ),
+                    incomplete_details=None,
+                )
+            elif e.status_code == 400 or e.status_code == 422:
+                yield EndEvent(
+                    reason=ModelResponseEndReason.INVALID_REQUEST,
+                    error=ModelResponseError(
+                        code=ModelResponseEndReason.INVALID_REQUEST,
+                        message=e.message,
+                    ),
+                    incomplete_details=None,
+                )
+            else:
+                raise
+        except APIConnectionError as e:
+            yield EndEvent(
+                reason=ModelResponseEndReason.CONNECTION_FAILED,
+                error=ModelResponseError(
+                    code=ModelResponseEndReason.CONNECTION_FAILED,
+                    message=e.message,
+                ),
+                incomplete_details=None,
+            )
+        except ReadTimeout:
+            yield EndEvent(
+                reason=ModelResponseEndReason.READ_TIMEOUT,
+                error=ModelResponseError(
+                    code=ModelResponseEndReason.READ_TIMEOUT,
+                    message="Timed out while reading from the model service.",
+                ),
+                incomplete_details=None,
+            )
         finally:
             if events is not None:
                 await events.close()

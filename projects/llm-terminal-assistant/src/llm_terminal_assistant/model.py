@@ -42,6 +42,13 @@ class ModelResponseEndReason(StrEnum):
     FIRST_EVENT_TIMEOUT = "first_event_timeout"
     STREAM_IDLE_TIMEOUT = "stream_idle_timeout"
     REQUEST_DEADLINE_EXCEEDED = "request_deadline_exceeded"
+    RATE_LIMITED = "rate_limited"
+    SERVICE_UNAVAILABLE = "service_unavailable"
+    AUTHENTICATION_FAILED = "authentication_failed"
+    PERMISSION_DENIED = "permission_denied"
+    INVALID_REQUEST = "invalid_request"
+    CONNECTION_FAILED = "connection_failed"
+    READ_TIMEOUT = "read_timeout"
 
 
 @dataclass

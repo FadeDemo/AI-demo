@@ -76,6 +76,59 @@ class RecordingAsyncResponses(RecordingResponses):
 
 
 class OpenAIClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_http_status_errors_map_to_terminal_events(self):
+        from httpx import Request, Response
+        from openai import (
+            AuthenticationError,
+            BadRequestError,
+            InternalServerError,
+            PermissionDeniedError,
+            RateLimitError,
+            UnprocessableEntityError,
+        )
+
+        for status, error_type, expected_reason in (
+            (429, RateLimitError, ModelResponseEndReason.RATE_LIMITED),
+            (503, InternalServerError, ModelResponseEndReason.SERVICE_UNAVAILABLE),
+            (401, AuthenticationError, ModelResponseEndReason.AUTHENTICATION_FAILED),
+            (403, PermissionDeniedError, ModelResponseEndReason.PERMISSION_DENIED),
+            (400, BadRequestError, ModelResponseEndReason.INVALID_REQUEST),
+            (422, UnprocessableEntityError, ModelResponseEndReason.INVALID_REQUEST),
+        ):
+            with self.subTest(status=status):
+                error = error_type(
+                    "Service request failed.",
+                    response=Response(
+                        status, request=Request("POST", "https://example.invalid")
+                    ),
+                    body=None,
+                )
+                create = AsyncMock(side_effect=error)
+                client = object.__new__(OpenAIClient)
+                client.model = "test-model"
+                client.stream_client = SimpleNamespace(
+                    responses=SimpleNamespace(create=create)
+                )
+
+                events = [
+                    event
+                    async for event in client.send_stream(
+                        ModelRequest(input=[], reserved_output_tokens=20)
+                    )
+                ]
+
+                self.assertEqual(
+                    events,
+                    [
+                        EndEvent(
+                            expected_reason,
+                            ModelResponseError(expected_reason, error.message),
+                            None,
+                        )
+                    ],
+                )
+                create.assert_awaited_once()
+
     async def test_connection_timeout_during_creation_reaches_consumer_as_end_reason(
         self,
     ):
@@ -106,16 +159,32 @@ class OpenAIClientTests(unittest.IsolatedAsyncioTestCase):
         client.stream_client.responses.create.assert_awaited_once()
 
     async def test_other_creation_errors_propagate_without_cleanup_masking_them(self):
-        from httpx import ReadTimeout, Request
-        from openai import APITimeoutError
+        from httpx import Request, Response, WriteTimeout
+        from openai import (
+            APITimeoutError,
+            InternalServerError,
+            NotFoundError,
+        )
 
         request = Request("POST", "https://example.invalid")
-        read_error = APITimeoutError(request=request)
-        read_error.__cause__ = ReadTimeout("read timed out")
+        write_error = APITimeoutError(request=request)
+        write_error.__cause__ = WriteTimeout("write timed out")
         for error in (
-            read_error,
+            write_error,
             APITimeoutError(request=request),
             RuntimeError("creation failed"),
+            *(
+                error_type(
+                    "Service request failed.",
+                    response=Response(status, request=request),
+                    body=None,
+                )
+                for status, error_type in (
+                    (404, NotFoundError),
+                    (500, InternalServerError),
+                    (502, InternalServerError),
+                )
+            ),
         ):
             with self.subTest(error=error):
                 client = object.__new__(OpenAIClient)
