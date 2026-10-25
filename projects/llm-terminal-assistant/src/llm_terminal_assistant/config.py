@@ -46,6 +46,27 @@ class RequestTimeoutConfig:
 
 
 @dataclass
+class RequestRetryConfig:
+    max_attempts: int = 3
+    base_delay_seconds: float = 1.0
+    max_delay_seconds: float = 8.0
+
+    def __post_init__(self):
+        if self.max_attempts <= 0:
+            raise ValueError(
+                f"MAX_ATTEMPTS must be a positive integer, got {self.max_attempts}."
+            )
+        if self.base_delay_seconds <= 0 or not math.isfinite(self.base_delay_seconds):
+            raise ValueError(
+                f"BASE_DELAY_SECONDS must be a positive finite number, got {self.base_delay_seconds}."
+            )
+        if self.max_delay_seconds <= 0 or not math.isfinite(self.max_delay_seconds):
+            raise ValueError(
+                f"MAX_DELAY_SECONDS must be a positive finite number, got {self.max_delay_seconds}."
+            )
+
+
+@dataclass
 class ModelConfig:
     api_key: str
     base_url: str
@@ -61,6 +82,7 @@ class ModelConfig:
     tool_loop_limits: ToolLoopLimits = field(default_factory=ToolLoopLimits)
     stream_output_enabled: bool = False
     request_timeout_config: RequestTimeoutConfig | None = None
+    request_retry_config: RequestRetryConfig = field(default_factory=RequestRetryConfig)
 
 
 def read_positive_int_env(name: str) -> int | None:
