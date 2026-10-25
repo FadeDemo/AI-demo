@@ -177,6 +177,93 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(response.usage, usage)
         self.assertEqual(response.tool_calls, [])
 
+    async def test_retry_after_seconds_reach_stream_turn_without_sdk_retries(self):
+        import httpx
+        from openai import AsyncOpenAI
+
+        config = replace(
+            self.config,
+            provider="openai",
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        )
+        for status, expected_reason in (
+            (429, ModelResponseEndReason.RATE_LIMITED),
+            (503, ModelResponseEndReason.SERVICE_UNAVAILABLE),
+        ):
+            for header_value, expected_seconds in (
+                ("5", 5.0),
+                ("0", 0.0),
+                ("1.5", 1.5),
+                ("1e2", 100.0),
+                (None, None),
+                ("", None),
+                ("invalid", None),
+                ("Wed, 21 Oct 2015 07:28:00 GMT", None),
+                ("-1", None),
+                ("-0.5", None),
+                ("nan", None),
+                ("inf", None),
+                ("-inf", None),
+                ("1e309", None),
+            ):
+                with self.subTest(status=status, retry_after=header_value):
+                    headers = (
+                        {} if header_value is None else {"Retry-After": header_value}
+                    )
+
+                    def handle_request(request, *, status=status, headers=headers):
+                        return httpx.Response(
+                            status,
+                            request=request,
+                            headers=headers,
+                            json={"error": {"message": "Service request failed."}},
+                        )
+
+                    send_http = Mock(side_effect=handle_request)
+                    client = OpenAIClient(config)
+                    display_text = Mock()
+                    async with httpx.AsyncClient(
+                        transport=httpx.MockTransport(send_http), trust_env=False
+                    ) as http_client:
+                        # 保留应用传入的重试配置，只替换 HTTP 传输。
+                        def create_sdk_client(*, http_client=http_client, **kwargs):
+                            return AsyncOpenAI(http_client=http_client, **kwargs)
+
+                        with (
+                            patch("openai.AsyncOpenAI", side_effect=create_sdk_client),
+                            patch(
+                                "openai._base_client.anyio.sleep",
+                                new_callable=AsyncMock,
+                            ) as retry_sleep,
+                        ):
+                            try:
+                                response, _ = await send_stream_conversation_turn(
+                                    client=client,
+                                    budgeter=self.budgeter,
+                                    system_message=self.system,
+                                    completed_turns=[],
+                                    current_user_message=self.user,
+                                    reserved_output_tokens=128,
+                                    min_reserved_recent_turns=1,
+                                    display_text=display_text,
+                                )
+                            finally:
+                                await client.aclose()
+
+                    self.assertEqual(response.reason, expected_reason)
+                    self.assertEqual(response.error.code, expected_reason)
+                    self.assertIn("Service request failed.", response.error.message)
+                    self.assertEqual(
+                        response.error.retry_after_seconds, expected_seconds
+                    )
+                    self.assertEqual(response.text, "")
+                    self.assertIsNone(response.incomplete_details)
+                    display_text.assert_not_called()
+                    send_http.assert_called_once()
+                    retry_sleep.assert_not_awaited()
+                    self.assertTrue(http_client.is_closed)
+
     async def test_sdk_connection_failure_and_read_timeout_reach_stream_turn(self):
         from httpx import ReadTimeout, Request
         from openai import APIConnectionError, APITimeoutError

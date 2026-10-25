@@ -1,4 +1,5 @@
 import logging
+import math
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
@@ -85,6 +86,20 @@ class OpenAIClient(ModelClient):
             ]
         return request_options
 
+    def _parse_retry_after(
+        self,
+        retry_after: str | None,
+    ) -> float | None:
+        if retry_after is not None:
+            try:
+                retry_after = float(retry_after)
+                if retry_after < 0 or not math.isfinite(retry_after):
+                    return None
+                return retry_after
+            except ValueError:
+                return None
+        return None
+
     def send(self, request: ModelRequest) -> ModelResponse:
         if self.client is None:
             from openai import OpenAI
@@ -165,7 +180,7 @@ class OpenAIClient(ModelClient):
         if self.stream_client is None:
             from openai import AsyncOpenAI
 
-            self.stream_client = AsyncOpenAI(**self.constructor_kwargs)
+            self.stream_client = AsyncOpenAI(**self.constructor_kwargs, max_retries=0)
         from httpx import ConnectTimeout
         from openai import APITimeoutError
 
@@ -241,20 +256,28 @@ class OpenAIClient(ModelClient):
                 raise
         except APIStatusError as e:
             if e.status_code == 429:
+                retry_after = self._parse_retry_after(
+                    e.response.headers.get("Retry-After")
+                )
                 yield EndEvent(
                     reason=ModelResponseEndReason.RATE_LIMITED,
                     error=ModelResponseError(
                         code=ModelResponseEndReason.RATE_LIMITED,
                         message=e.message,
+                        retry_after_seconds=retry_after,
                     ),
                     incomplete_details=None,
                 )
             elif e.status_code == 503:
+                retry_after = self._parse_retry_after(
+                    e.response.headers.get("Retry-After")
+                )
                 yield EndEvent(
                     reason=ModelResponseEndReason.SERVICE_UNAVAILABLE,
                     error=ModelResponseError(
                         code=ModelResponseEndReason.SERVICE_UNAVAILABLE,
                         message=e.message,
+                        retry_after_seconds=retry_after,
                     ),
                     incomplete_details=None,
                 )

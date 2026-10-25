@@ -215,9 +215,9 @@ class OpenAIClientTests(unittest.IsolatedAsyncioTestCase):
         )
 
         request = ModelRequest(input=[], reserved_output_tokens=20)
-        for streaming in (False, True):
+        for call_order in ((False,), (True,), (False, True), (True, False)):
             with (
-                self.subTest(streaming=streaming),
+                self.subTest(call_order=call_order),
                 patch("openai.OpenAI") as sync_constructor,
                 patch("openai.AsyncOpenAI") as async_constructor,
             ):
@@ -229,25 +229,32 @@ class OpenAIClientTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(client.client)
                 self.assertIsNone(client.stream_client)
 
-                for _ in range(2):
-                    if streaming:
-                        events = [event async for event in client.send_stream(request)]
-                        self.assertIsInstance(events[-1], EndEvent)
-                    else:
-                        self.assertEqual(client.send(request).text, "response")
+                for streaming in call_order:
+                    for _ in range(2):
+                        if streaming:
+                            events = [
+                                event async for event in client.send_stream(request)
+                            ]
+                            self.assertIsInstance(events[-1], EndEvent)
+                        else:
+                            self.assertEqual(client.send(request).text, "response")
 
-                if streaming:
-                    used, unused = async_constructor, sync_constructor
-                    self.assertIs(client.stream_client, used.return_value)
-                    self.assertIsNone(client.client)
-                else:
-                    used, unused = sync_constructor, async_constructor
-                    self.assertIs(client.client, used.return_value)
-                    self.assertIsNone(client.stream_client)
-                used.assert_called_once_with(
-                    api_key=config.api_key, base_url=config.base_url
-                )
-                unused.assert_not_called()
+                for streaming, constructor, sdk_client in (
+                    (False, sync_constructor, client.client),
+                    (True, async_constructor, client.stream_client),
+                ):
+                    if streaming in call_order:
+                        expected_kwargs = {
+                            "api_key": config.api_key,
+                            "base_url": config.base_url,
+                        }
+                        if streaming:
+                            expected_kwargs["max_retries"] = 0
+                        constructor.assert_called_once_with(**expected_kwargs)
+                        self.assertIs(sdk_client, constructor.return_value)
+                    else:
+                        constructor.assert_not_called()
+                        self.assertIsNone(sdk_client)
 
     async def test_aclose_closes_only_created_clients(self):
         config = ModelConfig(

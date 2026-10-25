@@ -55,6 +55,7 @@ class ModelResponseEndReason(StrEnum):
 class ModelResponseError:
     code: str
     message: str
+    retry_after_seconds: float | None = None
 
 
 @dataclass
