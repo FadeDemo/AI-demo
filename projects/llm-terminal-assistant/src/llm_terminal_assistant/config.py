@@ -85,10 +85,10 @@ class ModelConfig:
     request_retry_config: RequestRetryConfig = field(default_factory=RequestRetryConfig)
 
 
-def read_positive_int_env(name: str) -> int | None:
+def read_positive_int_env(name: str, default: int | None = None) -> int | None:
     raw_value = os.getenv(name)
     if raw_value is None:
-        return None
+        return default
     try:
         value = int(raw_value)
     except ValueError as error:
@@ -140,6 +140,11 @@ def load_model_config() -> ModelConfig:
             stream_idle_seconds=read_float_env("STREAM_IDLE_SECONDS", 30.0),
             request_deadline_seconds=read_float_env("REQUEST_DEADLINE_SECONDS", 120.0),
         )
+    request_retry_config = RequestRetryConfig(
+        max_attempts=read_positive_int_env("MAX_ATTEMPTS", 3),
+        base_delay_seconds=read_float_env("BASE_DELAY_SECONDS", 1.0),
+        max_delay_seconds=read_float_env("MAX_DELAY_SECONDS", 8.0),
+    )
     if temperature is not None:
         temperature = float(temperature)
         if not (
@@ -186,4 +191,5 @@ def load_model_config() -> ModelConfig:
         tool_loop_limits=ToolLoopLimits(**tool_loop_limits),
         stream_output_enabled=stream_output_enabled,
         request_timeout_config=request_timeout_config,
+        request_retry_config=request_retry_config,
     )

@@ -8,6 +8,7 @@ from threading import Event
 class RequestStopReason(StrEnum):
     REQUEST_CANCELLED = "request_cancelled"
     REQUEST_DEADLINE_EXCEEDED = "request_deadline_exceeded"
+    INSUFFICIENT_RETRY_TIME = "insufficient_retry_time"
 
 
 class RequestStoppedError(RuntimeError):

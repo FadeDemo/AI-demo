@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from llm_terminal_assistant.config import (
     ModelConfig,
+    RequestRetryConfig,
     RequestTimeoutConfig,
     load_model_config,
 )
@@ -82,6 +83,40 @@ class ModelConfigTests(unittest.TestCase):
             "REQUEST_DEADLINE_SECONDS",
         ):
             for value in ("", " ", "invalid", "0", "-1", "nan", "inf", "-inf"):
+                with (
+                    self.subTest(name=name, value=value),
+                    self.assertRaisesRegex(ValueError, name),
+                ):
+                    self.load_config({name: value})
+
+    def test_missing_retry_settings_use_defaults(self):
+        config = self.load_config()
+
+        self.assertEqual(config.request_retry_config, RequestRetryConfig(3, 1.0, 8.0))
+
+    def test_each_retry_setting_can_be_overridden_without_changing_other_defaults(self):
+        cases = (
+            ("MAX_ATTEMPTS", "1", RequestRetryConfig(1, 1.0, 8.0)),
+            ("BASE_DELAY_SECONDS", "0.25", RequestRetryConfig(3, 0.25, 8.0)),
+            ("MAX_DELAY_SECONDS", "0.5", RequestRetryConfig(3, 1.0, 0.5)),
+        )
+        for name, value, expected in cases:
+            with self.subTest(name=name, value=value):
+                config = self.load_config({name: value})
+
+                self.assertEqual(config.request_retry_config, expected)
+
+    def test_invalid_retry_attempts_identify_the_configuration_item(self):
+        for value in ("", " ", "invalid", "1.5", "1e2", "0", "-1", "nan", "inf"):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "MAX_ATTEMPTS"),
+            ):
+                self.load_config({"MAX_ATTEMPTS": value})
+
+    def test_invalid_retry_delays_identify_the_configuration_item(self):
+        for name in ("BASE_DELAY_SECONDS", "MAX_DELAY_SECONDS"):
+            for value in ("", " ", "invalid", "0", "-1", "nan", "inf", "-inf", "1e309"):
                 with (
                     self.subTest(name=name, value=value),
                     self.assertRaisesRegex(ValueError, name),
