@@ -1,4 +1,4 @@
-from asyncio import CancelledError, timeout
+from asyncio import CancelledError, create_task, shield, timeout
 from collections.abc import AsyncGenerator, Callable
 
 from llm_terminal_assistant.config import RequestTimeoutConfig
@@ -106,7 +106,13 @@ async def consume_stream(
     except CancelledError:
         reason = ModelResponseEndReason.REQUEST_CANCELLED
     finally:
-        await stream.aclose()
+        cancel_task = create_task(stream.aclose())
+        try:
+            await shield(cancel_task)
+        except CancelledError:
+            reason = ModelResponseEndReason.REQUEST_CANCELLED
+            error = None
+            await cancel_task
     total_seconds = clock() - start_at
     text = "".join(text_part)
     if reason is None:

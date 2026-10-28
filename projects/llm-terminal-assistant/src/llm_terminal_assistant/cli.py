@@ -1,7 +1,10 @@
 import asyncio
 import logging
-from collections.abc import Callable, Iterator
+import random
+import uuid
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from threading import Event
 from time import monotonic
 
@@ -19,6 +22,7 @@ from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import (
     ModelConfig,
+    RequestRetryConfig,
     RequestTimeoutConfig,
     load_model_config,
 )
@@ -34,6 +38,7 @@ from llm_terminal_assistant.model import (
     ModelRequest,
     ModelResponse,
     ModelResponseEndReason,
+    ModelResponseError,
 )
 from llm_terminal_assistant.request_control import (
     RequestStoppedError,
@@ -41,7 +46,13 @@ from llm_terminal_assistant.request_control import (
     check_request_cancelled,
     check_request_deadline,
 )
+from llm_terminal_assistant.request_retry import (
+    calculate_retry_delay,
+    can_retry_response,
+    wait_before_retry,
+)
 from llm_terminal_assistant.stream.consumer import consume_stream
+from llm_terminal_assistant.stream.timing import StreamResponseTiming
 from llm_terminal_assistant.terminal_output import TerminalLogHandler, TerminalOutput
 from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
@@ -121,6 +132,10 @@ def output_response_status(response: ModelResponse) -> None:
         terminal_output.write_line(
             "Timed out while reading from the model service. "
             "The answer may be incomplete."
+        )
+    elif response.reason == ModelResponseEndReason.INSUFFICIENT_RETRY_TIME:
+        terminal_output.write_line(
+            "Insufficient retry time. The request was not retried."
         )
 
 
@@ -293,8 +308,16 @@ async def send_stream_conversation_turn(
     display_text: Callable[[str], None],
     clock: Callable[[], float] = monotonic,
     request_timeout_config: RequestTimeoutConfig | None = None,
+    request_retry_config: RequestRetryConfig,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    uniform: Callable[[float, float], float] = random.uniform,
 ) -> tuple[ModelResponse, HistoryTrimResult]:
     start_at = clock()
+    deadline_at = (
+        start_at + request_timeout_config.request_deadline_seconds
+        if request_timeout_config is not None
+        else None
+    )
     current_turn_input = [current_user_message]
     trim_result = _prepare_conversation_request(
         system_message,
@@ -307,9 +330,115 @@ async def send_stream_conversation_turn(
         temperature,
         top_p,
     )
-    stream = client.send_stream(trim_result.request)
-    model_response = await consume_stream(
-        stream, display_text, start_at, clock, request_timeout_config
+    retry_attempt = 0
+    model_response: ModelResponse | None = None
+    request_id = uuid.uuid4().hex
+    try:
+        while True:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling() > 0:
+                raise asyncio.CancelledError()
+            check_request_deadline(deadline_at=deadline_at, clock=clock)
+            retry_attempt += 1
+            logger.info(
+                "Begin to attempt to send request: request_id=%s, attempt=%s",
+                request_id,
+                retry_attempt,
+            )
+            stream = client.send_stream(trim_result.request)
+            model_response = await consume_stream(
+                stream, display_text, start_at, clock, request_timeout_config
+            )
+            usage = model_response.usage
+            logger.info(
+                "Attempt finished: request_id=%s, attempt=%s, reason=%s, "
+                "input_tokens=%s, output_tokens=%s, total_tokens=%s",
+                request_id,
+                retry_attempt,
+                model_response.reason,
+                usage.input_tokens if usage is not None else None,
+                usage.output_tokens if usage is not None else None,
+                usage.total_tokens if usage is not None else None,
+            )
+            if can_retry_response(model_response, retry_attempt, request_retry_config):
+                parsed_retry_after = None
+                if model_response.error is not None:
+                    parsed_retry_after = model_response.error.retry_after_seconds
+                calculated_delay = calculate_retry_delay(
+                    request_retry_config, retry_attempt, parsed_retry_after, uniform
+                )
+                logger.info(
+                    "Expected to wait for %f seconds: request_id=%s, attempt=%s, reason=%s",
+                    calculated_delay,
+                    request_id,
+                    retry_attempt,
+                    model_response.reason,
+                )
+                await wait_before_retry(calculated_delay, deadline_at, clock, sleep)
+            else:
+                break
+    except RequestStoppedError as error:
+        if error.reason == RequestStopReason.REQUEST_DEADLINE_EXCEEDED:
+            reason = ModelResponseEndReason.REQUEST_DEADLINE_EXCEEDED
+            error = ModelResponseError(
+                code=reason,
+                message="The overall request deadline was exceeded.",
+            )
+            if model_response is not None:
+                timing = replace(
+                    model_response.timing, total_seconds=clock() - start_at
+                )
+                model_response = replace(
+                    model_response,
+                    reason=reason,
+                    error=error,
+                    timing=timing,
+                )
+            else:
+                timing = StreamResponseTiming(
+                    total_seconds=clock() - start_at,
+                )
+                model_response = ModelResponse(
+                    text="", reason=reason, error=error, timing=timing, usage=None
+                )
+        elif error.reason == RequestStopReason.INSUFFICIENT_RETRY_TIME:
+            reason = ModelResponseEndReason.INSUFFICIENT_RETRY_TIME
+            error = ModelResponseError(
+                code=reason,
+                message="Insufficient retry time. The request was not retried.",
+            )
+            if model_response is not None:
+                timing = replace(
+                    model_response.timing, total_seconds=clock() - start_at
+                )
+                model_response = replace(
+                    model_response,
+                    reason=reason,
+                    error=error,
+                    timing=timing,
+                )
+            else:
+                timing = StreamResponseTiming(
+                    total_seconds=clock() - start_at,
+                )
+                model_response = ModelResponse(
+                    text="", reason=reason, error=error, timing=timing, usage=None
+                )
+    except asyncio.CancelledError:
+        reason = ModelResponseEndReason.REQUEST_CANCELLED
+        error = None
+        timing = replace(model_response.timing, total_seconds=clock() - start_at)
+        model_response = replace(
+            model_response, reason=reason, error=error, timing=timing
+        )
+    logger.info(
+        "Request finished: request_id=%s, attempts=%s, reason=%s, "
+        "ttft_seconds=%s, total_seconds=%s",
+        request_id,
+        retry_attempt,
+        model_response.reason,
+        model_response.timing.ttft_seconds,
+        model_response.timing.total_seconds,
     )
     return model_response, trim_result
 
@@ -397,6 +526,7 @@ async def _run_stream_turn_with_cancel(
                 top_p=config.top_p,
                 display_text=print_text_delta,
                 request_timeout_config=config.request_timeout_config,
+                request_retry_config=config.request_retry_config,
             )
         )
         return await request_task

@@ -32,7 +32,11 @@ from llm_terminal_assistant.cli import (
     send_stream_conversation_turn,
     talk,
 )
-from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
+from llm_terminal_assistant.config import (
+    ModelConfig,
+    RequestRetryConfig,
+    RequestTimeoutConfig,
+)
 from llm_terminal_assistant.conversation import ConversationTurn
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
@@ -145,6 +149,7 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
         ):
             response, trim_result = await send_stream_conversation_turn(
                 client=client,
+                request_retry_config=RequestRetryConfig(max_attempts=1),
                 budgeter=self.budgeter,
                 system_message=self.system,
                 completed_turns=history,
@@ -240,6 +245,9 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
                             try:
                                 response, _ = await send_stream_conversation_turn(
                                     client=client,
+                                    request_retry_config=RequestRetryConfig(
+                                        max_attempts=1
+                                    ),
                                     budgeter=self.budgeter,
                                     system_message=self.system,
                                     completed_turns=[],
@@ -289,6 +297,7 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
 
                 response, _ = await send_stream_conversation_turn(
                     client=client,
+                    request_retry_config=RequestRetryConfig(max_attempts=1),
                     budgeter=self.budgeter,
                     system_message=self.system,
                     completed_turns=[],
@@ -342,6 +351,7 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
 
                 response, _ = await send_stream_conversation_turn(
                     client=client,
+                    request_retry_config=RequestRetryConfig(max_attempts=1),
                     budgeter=self.budgeter,
                     system_message=self.system,
                     completed_turns=[],
@@ -409,6 +419,7 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
                     ) as send_stream:
                         response, trim_result = await send_stream_conversation_turn(
                             client=client,
+                            request_retry_config=RequestRetryConfig(max_attempts=1),
                             budgeter=self.budgeter,
                             system_message=self.system,
                             completed_turns=[],
@@ -468,6 +479,7 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
             ):
                 response, _ = await send_stream_conversation_turn(
                     client=client,
+                    request_retry_config=RequestRetryConfig(max_attempts=1),
                     budgeter=self.budgeter,
                     system_message=self.system,
                     completed_turns=[],
@@ -497,7 +509,7 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(reason=reason, first_text=first_text):
                     await exercise(reason, first_text)
 
-    async def test_total_deadline_includes_preparation_and_stops_before_first_read(
+    async def test_total_deadline_includes_preparation_and_stops_before_stream_creation(
         self,
     ):
         async def exercise(preparation_seconds):
@@ -529,9 +541,11 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
                     side_effect=timed_encode,
                 ),
                 patch.object(client, "send_stream", side_effect=record_stream),
+                self.assertLogs("llm_terminal_assistant.cli", level="INFO") as captured,
             ):
                 response, _ = await send_stream_conversation_turn(
                     client=client,
+                    request_retry_config=RequestRetryConfig(max_attempts=1),
                     budgeter=self.budgeter,
                     system_message=self.system,
                     completed_turns=[],
@@ -548,13 +562,32 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(response.error.code, "request_deadline_exceeded")
             self.assertEqual(client.requests, [])
-            self.assertEqual(len(streams), 1)
-            self.assertIsNone(streams[0].ag_frame)
+            self.assertEqual(streams, [])
             display.assert_not_called()
             self.assertEqual(response.text, "")
             self.assertIsNone(response.usage)
             self.assertIsNone(response.timing.ttft_seconds)
             self.assertEqual(response.timing.total_seconds, preparation_seconds)
+            messages = [record.getMessage() for record in captured.records]
+            final_logs = [
+                message
+                for message in messages
+                if message.startswith("Request finished:")
+            ]
+            self.assertEqual(len(final_logs), 1)
+            self.assertEqual(final_logs[0], messages[-1])
+            self.assertRegex(final_logs[0], r"request_id=[0-9a-f]{32},")
+            self.assertIn(
+                "attempts=0, reason=request_deadline_exceeded, "
+                f"ttft_seconds=None, total_seconds={preparation_seconds}",
+                final_logs[0],
+            )
+            self.assertFalse(
+                any(
+                    "Begin to attempt to send request:" in message
+                    for message in messages
+                )
+            )
 
         for preparation_seconds in (5.0, 6.0):
             with self.subTest(preparation_seconds=preparation_seconds):
@@ -592,6 +625,7 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(client, "send_stream", side_effect=active_stream):
             response, _ = await send_stream_conversation_turn(
                 client=client,
+                request_retry_config=RequestRetryConfig(max_attempts=1),
                 budgeter=self.budgeter,
                 system_message=self.system,
                 completed_turns=[],
@@ -682,6 +716,7 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
                 async with asyncio.timeout(5.0):
                     response, _ = await send_stream_conversation_turn(
                         client=client,
+                        request_retry_config=RequestRetryConfig(max_attempts=1),
                         budgeter=self.budgeter,
                         system_message=self.system,
                         completed_turns=[],
@@ -730,6 +765,7 @@ class StreamConversationTurnTests(unittest.IsolatedAsyncioTestCase):
         ):
             await send_stream_conversation_turn(
                 client=client,
+                request_retry_config=RequestRetryConfig(max_attempts=1),
                 budgeter=self.budgeter,
                 system_message=self.system,
                 completed_turns=[],
@@ -756,6 +792,7 @@ class TalkTests(unittest.IsolatedAsyncioTestCase):
             model="fake-model",
             model_profile=FAKE_MODEL_PROFILE,
             default_reserved_output_tokens=128,
+            request_retry_config=RequestRetryConfig(max_attempts=1),
         )
         self.encoder = Mock(wraps=FakeModelRequestEncoder())
         self.budgeter = Budgeter(

@@ -49,6 +49,7 @@ class ModelResponseEndReason(StrEnum):
     INVALID_REQUEST = "invalid_request"
     CONNECTION_FAILED = "connection_failed"
     READ_TIMEOUT = "read_timeout"
+    INSUFFICIENT_RETRY_TIME = "insufficient_retry_time"
 
 
 @dataclass
