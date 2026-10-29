@@ -4,7 +4,7 @@ type: index
 area: llm
 status: learning
 created: 2026-08-10
-updated: 2026-10-08
+updated: 2026-10-29
 tags:
   - llm
   - answers
@@ -20,3 +20,4 @@ tags:
 - [Prompt 设计练习回答](prompt-design.md)
 - [结构化输出练习回答](structured-output.md)
 - [工具调用练习回答](tool-calling.md)
+- [流式输出与可靠性练习回答](streaming-and-reliability.md)
