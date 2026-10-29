@@ -21,6 +21,7 @@
 - 将应用请求中的 temperature 和 top-p 映射到 OpenAI Responses API 的 `temperature` 和 `top_p` 请求选项，并提供单变量批量实验入口。
 - 提供基于 JSON Schema Draft 2020-12 的学习卡片数据契约，并用真实 Schema 验证器完成默认离线测试。
 - 提供学习卡片的 JSON 解析、Schema 校验、来源业务规则校验和项目类型转换流水线；失败日志只包含错误类别、字段路径和请求 ID。
+- 提供独立的内存草稿幂等组件，通过本地测试模拟创建结果未送达调用方，并验证同键重放只创建一份草稿。
 - 使用固定 revision 的 DeepSeek-V4.1-Flash-1017 tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
 
@@ -45,6 +46,7 @@ src/llm_terminal_assistant/
 ├── client_factory.py
 ├── config.py
 ├── conversation.py
+├── draft_store.py
 ├── message.py
 ├── model.py
 ├── prompt_experiment.py
@@ -69,6 +71,7 @@ tests/
 ├── test_budgeter.py
 ├── test_budgeter_factory.py
 ├── test_conversation.py
+├── test_draft_store.py
 ├── test_openai_client.py
 ├── test_prompt_experiment.py
 ├── test_request_retry.py
@@ -85,6 +88,7 @@ tests/
 - `client_factory.py`：根据 provider 延迟导入并创建适配器。
 - `config.py`：加载项目根目录 `.env` 和进程环境变量。
 - `conversation.py`：完整问答轮次、候选请求组装、工具结果回传和历史裁剪策略。
+- `draft_store.py` 保存内存草稿、按幂等键复用已完成结果，并拒绝同键不同正文的请求。
 - `message.py`、`model.py`：服务商无关的消息、请求、响应、usage 和工具请求结构。
 - `prompt_experiment.py`：组合零样本或少样本 Prompt 与固定评测集，执行独立请求并保存待人工评判的实验记录。
 - `request_control.py`：模型调用和工具流程共用的取消信号、总期限检查及停止原因。
@@ -411,6 +415,18 @@ REQUEST_DEADLINE_SECONDS=120 uv run llm-terminal-assistant
 如果取消或到期发生在同步模型调用、工具执行期间，当前调用仍需先结束，应用才能在随后的检查点停止。停止后不会展示该轮尚未交付的模型正文，也不再执行后续工具或发送后续模型请求；已完成的工具不会被撤销。取消显示 `Request was cancelled.`，总期限耗尽显示 `The overall request deadline was exceeded.`，随后可以继续提问。
 
 正常完成、异常、超时和取消都会执行相应的本地清理：提供方流关闭、键盘监听解除、终端模式恢复、Esc 解析计时器撤销。非流式外层协程被取消时，会先设置停止信号并等工作线程结束，再向外传递取消。
+
+## 内存草稿幂等练习
+
+组件入口是 `InMemoryDraftStore.create_draft(idempotency_key, content)`。调用方为一次逻辑操作选定幂等键，重放时复用该键和正文。组件拒绝空正文，首次创建时生成草稿 ID 并保存结果；同键同正文返回已有草稿，同键不同正文抛出 `IdempotencyConflictError`。新键即使携带相同正文，也会创建另一份草稿。实例字典 `drafts` 按幂等键保存 `Draft`，其中保留草稿 ID 和原始正文。
+
+创建结果丢失实验位于 `tests/test_draft_store.py`。测试函数扮演发起业务操作的应用，`InMemoryDraftStore` 扮演执行写入的业务组件，`LoseFirstResponseTransport` 模拟两者之间的请求与结果传递。替身先调用存储组件，待草稿创建并保存、取得返回的 `Draft` 后抛出 `TimeoutError`，使调用方未能拿到创建结果。调用方随后通过同一个替身复用原键和正文，两次调用都实际进入存储组件；测试检查首次异常后草稿已经保存、两次调用只创建一份草稿，以及重放返回的 ID 和正文与已保存结果一致。
+
+这里模拟丢失的是草稿创建操作的返回结果。实验没有调用模型或访问网络，只验证同一进程内依次调用的内存行为，不接入终端工具注册表。在项目目录运行下列命令，验证首次创建、空正文拒绝、同键重放、内容冲突、新键创建、存储实例隔离和创建结果丢失后的重放。
+
+```shell
+uv run python -m unittest discover -s tests -p 'test_draft_store.py' -v
+```
 
 ## 验证
 
