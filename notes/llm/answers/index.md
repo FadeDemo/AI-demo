@@ -4,7 +4,7 @@ type: index
 area: llm
 status: learning
 created: 2026-08-10
-updated: 2026-10-29
+updated: 2026-10-30
 tags:
   - llm
   - answers
@@ -21,3 +21,4 @@ tags:
 - [结构化输出练习回答](structured-output.md)
 - [工具调用练习回答](tool-calling.md)
 - [流式输出与可靠性练习回答](streaming-and-reliability.md)
+- [安全、评测与可观测性练习回答](safety-evaluation-observability.md)
