@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import random
-import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -40,6 +39,7 @@ from llm_terminal_assistant.model import (
     ModelResponseEndReason,
     ModelResponseError,
 )
+from llm_terminal_assistant.observability import observe_request
 from llm_terminal_assistant.request_control import (
     RequestStoppedError,
     RequestStopReason,
@@ -150,9 +150,10 @@ def model_response_to_assistant_message(response: ModelResponse) -> Message:
     return Message(role="assistant", content=response.text)
 
 
-def log_model_request_summary(request: ModelRequest) -> None:
+def log_model_request_summary(request: ModelRequest, request_id: str) -> None:
     logger.info(
-        "Model request: input_item_count=%d message_count=%d tool_call_count=%d tool_result_count=%d tool_definition_count=%d",
+        "ModelRequest[%s]: input_item_count=%d message_count=%d tool_call_count=%d tool_result_count=%d tool_definition_count=%d",
+        request_id,
         len(request.input),
         sum(isinstance(item, Message) for item in request.input),
         sum(isinstance(item, ToolCallRequest) for item in request.input),
@@ -172,6 +173,8 @@ def _prepare_conversation_request(
     temperature: float | None = None,
     top_p: float | None = None,
     tools: list[ToolDefinition] | None = None,
+    *,
+    request_id: str,
 ) -> HistoryTrimResult:
     trim_result = trim_history(
         system_message=system_message,
@@ -187,13 +190,14 @@ def _prepare_conversation_request(
     )
     budget_result = trim_result.budget_result
     logger.info(
-        "Budget check passed: estimated_input_tokens=%d reserved_output_tokens=%d safety_margin_tokens=%d remaining_tokens=%d",
+        "ModelRequest[%s]: Budget check passed: estimated_input_tokens=%d reserved_output_tokens=%d safety_margin_tokens=%d remaining_tokens=%d",
+        request_id,
         budget_result.estimated_input_tokens,
         budget_result.reserved_output_tokens,
         budget_result.safety_margin_tokens,
         budget_result.remaining_tokens,
     )
-    log_model_request_summary(trim_result.request)
+    log_model_request_summary(trim_result.request, request_id)
     return trim_result
 
 
@@ -216,81 +220,100 @@ def send_conversation_turn(
     clock: Callable[[], float] = monotonic,
     request_timeout_config: RequestTimeoutConfig | None = None,
 ) -> tuple[ModelResponse, HistoryTrimResult]:
-    start_at = clock()
-    deadline_at = (
-        start_at + request_timeout_config.request_deadline_seconds
-        if request_timeout_config is not None
-        else None
-    )
-
-    def trim_and_send(
-        turn_input: list[ModelInputItem],
-        history: list[ConversationTurn],
-    ) -> tuple[ModelResponse, HistoryTrimResult]:
-        trim_result = _prepare_conversation_request(
-            system_message,
-            history,
-            turn_input,
-            reserved_output_tokens,
-            min_reserved_recent_turns,
-            budgeter,
-            reasoning_effort,
-            temperature,
-            top_p,
-            tools,
+    with observe_request(
+        logger,
+        entry="tools",
+        model=client.model,
+        system_prompt=system_message.content,
+        clock=clock,
+    ) as observation:
+        start_at = observation.start_at
+        deadline_at = (
+            start_at + request_timeout_config.request_deadline_seconds
+            if request_timeout_config is not None
+            else None
         )
-        check_request_cancelled(cancel_event)
-        check_request_deadline(deadline_at=deadline_at, clock=clock)
-        response = client.send(trim_result.request)
-        check_request_cancelled(cancel_event)
-        check_request_deadline(deadline_at=deadline_at, clock=clock)
-        return response, trim_result
+        request_id = observation.request_id
 
-    current_turn_input = [current_user_message]
-    model_response, trim_result = trim_and_send(current_turn_input, completed_turns)
-    if (
-        model_response.reason != ModelResponseEndReason.COMPLETED_NORMALLY
-        or not model_response.tool_calls
-    ):
+        def trim_and_send(
+            turn_input: list[ModelInputItem],
+            history: list[ConversationTurn],
+        ) -> tuple[ModelResponse, HistoryTrimResult]:
+            trim_result = _prepare_conversation_request(
+                system_message,
+                history,
+                turn_input,
+                reserved_output_tokens,
+                min_reserved_recent_turns,
+                budgeter,
+                reasoning_effort,
+                temperature,
+                top_p,
+                tools,
+                request_id=request_id,
+            )
+            check_request_cancelled(cancel_event)
+            check_request_deadline(deadline_at=deadline_at, clock=clock)
+            observation.begin_model_call()
+            try:
+                response = client.send(trim_result.request)
+            except Exception:
+                observation.reason = "model_call_failed"
+                observation.log_model_call(logger, None)
+                raise
+            observation.log_model_call(logger, response)
+            check_request_cancelled(cancel_event)
+            check_request_deadline(deadline_at=deadline_at, clock=clock)
+            return response, trim_result
+
+        current_turn_input = [current_user_message]
+        model_response, trim_result = trim_and_send(current_turn_input, completed_turns)
+        if (
+            model_response.reason != ModelResponseEndReason.COMPLETED_NORMALLY
+            or not model_response.tool_calls
+        ):
+            observation.reason = model_response.reason
+            return model_response, trim_result
+        if executor is None:
+            raise ValueError("Tool calls were made, but no executor was provided.")
+
+        tool_rounds, model_requests = 0, 1
+        tool_execution_budget = ToolExecutionBudget(
+            max_tool_executions=tool_loop_limits.max_tool_executions
+        )
+        while (
+            model_response.reason == ModelResponseEndReason.COMPLETED_NORMALLY
+            and model_response.tool_calls
+        ):
+            if tool_rounds >= tool_loop_limits.max_tool_rounds:
+                raise ToolLoopStoppedError(
+                    reason=ToolLoopStopReason.MAX_TOOL_ROUNDS_REACHED
+                )
+            if model_requests >= tool_loop_limits.max_model_requests:
+                raise ToolLoopStoppedError(
+                    reason=ToolLoopStopReason.MAX_MODEL_REQUESTS_REACHED
+                )
+            model_request = trim_result.request
+            followup_request = build_tool_followup_request(
+                request=model_request,
+                response=model_response,
+                executor=executor,
+                tool_execution_budget=tool_execution_budget,
+                cancel_event=cancel_event,
+                clock=clock,
+                deadline_at=deadline_at,
+                request_id=request_id,
+            )
+            current_turn_start = len(model_request.input) - len(current_turn_input)
+            current_turn_input = followup_request.input[current_turn_start:]
+            model_response, trim_result = trim_and_send(
+                current_turn_input,
+                trim_result.retained_completed_turns,
+            )
+            tool_rounds += 1
+            model_requests += 1
+        observation.reason = model_response.reason
         return model_response, trim_result
-    if executor is None:
-        raise ValueError("Tool calls were made, but no executor was provided.")
-
-    tool_rounds, model_requests = 0, 1
-    tool_execution_budget = ToolExecutionBudget(
-        max_tool_executions=tool_loop_limits.max_tool_executions
-    )
-    while (
-        model_response.reason == ModelResponseEndReason.COMPLETED_NORMALLY
-        and model_response.tool_calls
-    ):
-        if tool_rounds >= tool_loop_limits.max_tool_rounds:
-            raise ToolLoopStoppedError(
-                reason=ToolLoopStopReason.MAX_TOOL_ROUNDS_REACHED
-            )
-        if model_requests >= tool_loop_limits.max_model_requests:
-            raise ToolLoopStoppedError(
-                reason=ToolLoopStopReason.MAX_MODEL_REQUESTS_REACHED
-            )
-        model_request = trim_result.request
-        followup_request = build_tool_followup_request(
-            request=model_request,
-            response=model_response,
-            executor=executor,
-            tool_execution_budget=tool_execution_budget,
-            cancel_event=cancel_event,
-            clock=clock,
-            deadline_at=deadline_at,
-        )
-        current_turn_start = len(model_request.input) - len(current_turn_input)
-        current_turn_input = followup_request.input[current_turn_start:]
-        model_response, trim_result = trim_and_send(
-            current_turn_input,
-            trim_result.retained_completed_turns,
-        )
-        tool_rounds += 1
-        model_requests += 1
-    return model_response, trim_result
 
 
 async def send_stream_conversation_turn(
@@ -312,135 +335,130 @@ async def send_stream_conversation_turn(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     uniform: Callable[[float, float], float] = random.uniform,
 ) -> tuple[ModelResponse, HistoryTrimResult]:
-    start_at = clock()
-    deadline_at = (
-        start_at + request_timeout_config.request_deadline_seconds
-        if request_timeout_config is not None
-        else None
-    )
-    current_turn_input = [current_user_message]
-    trim_result = _prepare_conversation_request(
-        system_message,
-        completed_turns,
-        current_turn_input,
-        reserved_output_tokens,
-        min_reserved_recent_turns,
-        budgeter,
-        reasoning_effort,
-        temperature,
-        top_p,
-    )
-    retry_attempt = 0
-    model_response: ModelResponse | None = None
-    request_id = uuid.uuid4().hex
-    try:
-        while True:
-            task = asyncio.current_task()
-            if task is not None and task.cancelling() > 0:
-                raise asyncio.CancelledError()
-            check_request_deadline(deadline_at=deadline_at, clock=clock)
-            retry_attempt += 1
-            logger.info(
-                "Begin to attempt to send request: request_id=%s, attempt=%s",
-                request_id,
-                retry_attempt,
-            )
-            stream = client.send_stream(trim_result.request)
-            model_response = await consume_stream(
-                stream, display_text, start_at, clock, request_timeout_config
-            )
-            usage = model_response.usage
-            logger.info(
-                "Attempt finished: request_id=%s, attempt=%s, reason=%s, "
-                "input_tokens=%s, output_tokens=%s, total_tokens=%s",
-                request_id,
-                retry_attempt,
-                model_response.reason,
-                usage.input_tokens if usage is not None else None,
-                usage.output_tokens if usage is not None else None,
-                usage.total_tokens if usage is not None else None,
-            )
-            if can_retry_response(model_response, retry_attempt, request_retry_config):
-                parsed_retry_after = None
-                if model_response.error is not None:
-                    parsed_retry_after = model_response.error.retry_after_seconds
+    with observe_request(
+        logger,
+        entry="stream",
+        model=client.model,
+        system_prompt=system_message.content,
+        clock=clock,
+    ) as observation:
+        start_at = observation.start_at
+        request_id = observation.request_id
+        deadline_at = (
+            start_at + request_timeout_config.request_deadline_seconds
+            if request_timeout_config is not None
+            else None
+        )
+        trim_result = _prepare_conversation_request(
+            system_message,
+            completed_turns,
+            [current_user_message],
+            reserved_output_tokens,
+            min_reserved_recent_turns,
+            budgeter,
+            reasoning_effort,
+            temperature,
+            top_p,
+            request_id=request_id,
+        )
+        model_response: ModelResponse | None = None
+        try:
+            while True:
+                task = asyncio.current_task()
+                if task is not None and task.cancelling() > 0:
+                    raise asyncio.CancelledError()
+                check_request_deadline(deadline_at=deadline_at, clock=clock)
+                attempt = observation.begin_model_call()
+                logger.info(
+                    "Begin to attempt to send request: request_id=%s, attempt=%s",
+                    request_id,
+                    attempt,
+                    extra={
+                        "event": "model_call_started",
+                        "request_id": request_id,
+                        "model_call_index": attempt,
+                        "attempt": attempt,
+                    },
+                )
+                try:
+                    stream = client.send_stream(trim_result.request)
+                    model_response = await consume_stream(
+                        stream, display_text, start_at, clock, request_timeout_config
+                    )
+                except asyncio.CancelledError:
+                    observation.log_model_call(
+                        logger,
+                        None,
+                        attempt=attempt,
+                        failure_reason="request_cancelled",
+                    )
+                    raise
+                except Exception:
+                    observation.reason = "model_call_failed"
+                    observation.log_model_call(logger, None, attempt=attempt)
+                    raise
+                observation.log_model_call(logger, model_response, attempt=attempt)
+                if not can_retry_response(
+                    model_response, attempt, request_retry_config
+                ):
+                    break
+                parsed_retry_after = (
+                    model_response.error.retry_after_seconds
+                    if model_response.error is not None
+                    else None
+                )
                 calculated_delay = calculate_retry_delay(
-                    request_retry_config, retry_attempt, parsed_retry_after, uniform
+                    request_retry_config, attempt, parsed_retry_after, uniform
                 )
                 logger.info(
                     "Expected to wait for %f seconds: request_id=%s, attempt=%s, reason=%s",
                     calculated_delay,
                     request_id,
-                    retry_attempt,
+                    attempt,
                     model_response.reason,
+                    extra={
+                        "event": "retry_wait",
+                        "request_id": request_id,
+                        "attempt": attempt,
+                        "reason": model_response.reason,
+                        "planned_delay_seconds": calculated_delay,
+                    },
                 )
                 await wait_before_retry(calculated_delay, deadline_at, clock, sleep)
+        except (RequestStoppedError, asyncio.CancelledError) as stopped:
+            if isinstance(stopped, asyncio.CancelledError):
+                reason = ModelResponseEndReason.REQUEST_CANCELLED
+                error = None
             else:
-                break
-    except RequestStoppedError as error:
-        if error.reason == RequestStopReason.REQUEST_DEADLINE_EXCEEDED:
-            reason = ModelResponseEndReason.REQUEST_DEADLINE_EXCEEDED
-            error = ModelResponseError(
-                code=reason,
-                message="The overall request deadline was exceeded.",
-            )
-            if model_response is not None:
-                timing = replace(
-                    model_response.timing, total_seconds=clock() - start_at
+                reason = ModelResponseEndReason(stopped.reason.value)
+                error = ModelResponseError(
+                    code=reason,
+                    message={
+                        ModelResponseEndReason.REQUEST_DEADLINE_EXCEEDED: "The overall request deadline was exceeded.",
+                        ModelResponseEndReason.INSUFFICIENT_RETRY_TIME: "Insufficient retry time. The request was not retried.",
+                        ModelResponseEndReason.REQUEST_CANCELLED: "The request was cancelled.",
+                    }[reason],
                 )
+            if model_response is None:
+                model_response = ModelResponse(
+                    text="",
+                    reason=reason,
+                    error=error,
+                    usage=None,
+                    timing=StreamResponseTiming(total_seconds=clock() - start_at),
+                )
+            else:
                 model_response = replace(
                     model_response,
                     reason=reason,
                     error=error,
-                    timing=timing,
+                    timing=replace(
+                        model_response.timing, total_seconds=clock() - start_at
+                    ),
                 )
-            else:
-                timing = StreamResponseTiming(
-                    total_seconds=clock() - start_at,
-                )
-                model_response = ModelResponse(
-                    text="", reason=reason, error=error, timing=timing, usage=None
-                )
-        elif error.reason == RequestStopReason.INSUFFICIENT_RETRY_TIME:
-            reason = ModelResponseEndReason.INSUFFICIENT_RETRY_TIME
-            error = ModelResponseError(
-                code=reason,
-                message="Insufficient retry time. The request was not retried.",
-            )
-            if model_response is not None:
-                timing = replace(
-                    model_response.timing, total_seconds=clock() - start_at
-                )
-                model_response = replace(
-                    model_response,
-                    reason=reason,
-                    error=error,
-                    timing=timing,
-                )
-            else:
-                timing = StreamResponseTiming(
-                    total_seconds=clock() - start_at,
-                )
-                model_response = ModelResponse(
-                    text="", reason=reason, error=error, timing=timing, usage=None
-                )
-    except asyncio.CancelledError:
-        reason = ModelResponseEndReason.REQUEST_CANCELLED
-        error = None
-        timing = replace(model_response.timing, total_seconds=clock() - start_at)
-        model_response = replace(
-            model_response, reason=reason, error=error, timing=timing
-        )
-    logger.info(
-        "Request finished: request_id=%s, attempts=%s, reason=%s, "
-        "ttft_seconds=%s, total_seconds=%s",
-        request_id,
-        retry_attempt,
-        model_response.reason,
-        model_response.timing.ttft_seconds,
-        model_response.timing.total_seconds,
-    )
-    return model_response, trim_result
+        observation.reason = model_response.reason
+        observation.ttft_seconds = model_response.timing.ttft_seconds
+        return model_response, trim_result
 
 
 def print_text_delta(delta: str) -> None:
@@ -633,7 +651,7 @@ async def talk(client: ModelClient, config: ModelConfig, budgeter: Budgeter):
             logger.error("Tool loop stopped due to: %s", error.reason.value)
             continue
         except ValueError:
-            logger.exception("Invalid conversation configuration.")
+            logger.error("Invalid conversation configuration.")
             return
         if (
             model_response.reason == ModelResponseEndReason.COMPLETED_NORMALLY
@@ -675,17 +693,17 @@ def main():
     try:
         config = load_model_config()
     except ValueError:
-        logger.exception("Error loading model configuration.")
+        logger.error("Error loading model configuration.")
         return
     try:
         budgeter = create_budgeter(config)
     except ValueError:
-        logger.exception("Error creating budgeter.")
+        logger.error("Error creating budgeter.")
         return
     try:
         client = create_model_client(config)
     except ValueError:
-        logger.exception("Error creating model client.")
+        logger.error("Error creating model client.")
         return
     try:
         client.validate_reasoning_effort(
@@ -693,7 +711,7 @@ def main():
             config.model_profile.allowed_reasoning_efforts,
         )
     except ValueError:
-        logger.exception("Invalid reasoning effort configuration.")
+        logger.error("Invalid reasoning effort configuration.")
         return
     asyncio.run(run_conversation(client, config, budgeter))
 

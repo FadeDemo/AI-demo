@@ -20,7 +20,7 @@
 - 为每轮工具流程设置工具回传轮数、模型请求次数和实际工具执行次数的独立上限，触发保护时记录停止原因并允许继续提问。
 - 将应用请求中的 temperature 和 top-p 映射到 OpenAI Responses API 的 `temperature` 和 `top_p` 请求选项，并提供单变量批量实验入口。
 - 提供基于 JSON Schema Draft 2020-12 的学习卡片数据契约，并用真实 Schema 验证器完成默认离线测试。
-- 提供学习卡片的 JSON 解析、Schema 校验、来源业务规则校验和项目类型转换流水线；失败日志只包含错误类别、字段路径和请求 ID。
+- 提供学习卡片的 JSON 解析、Schema 校验、来源业务规则校验和项目类型转换流水线；验证日志记录通过状态或失败类别、字段路径和请求 ID，不记录正文或异常回溯。
 - 提供独立的内存草稿幂等组件，通过本地测试模拟创建结果未送达调用方，并验证同键重放只创建一份草稿。
 - 使用固定 revision 的 DeepSeek-V4.1-Flash-1017 tokenizer 统计中文、英文、JSON 和 Python 代码样本的原始文本 Token 数。
 - 提供显式的 `fake-model` 合成模型，使 fake 客户端可以在不安装真实 tokenizer、不读取模型缓存和不访问网络的情况下运行。
@@ -387,6 +387,38 @@ PROVIDER=faked MODEL=fake-model STREAM_OUTPUT_ENABLED=true \
 - 本轮最终结果：只记录一次，包含实际尝试总数 `attempts`、最终 `reason`、`ttft_seconds` 和 `total_seconds`。首次发送前总期限已耗尽时，`attempts=0`；没有首个正文时，TTFT 为 `None`。
 
 上述日志仅记录这些元数据，不复制完整 Prompt、正文、凭据或原始异常信息。
+
+## 运行记录与日志最小化
+
+正文流式入口和完整响应的工具入口共用 `observability.py` 中的单轮记录。应用在请求准备之前创建请求 ID 并开始计时，模型调用和工具回传沿用这个 ID；下一轮提问重新创建。每次实际调用客户端的 `send()` 或 `send_stream()` 才递增模型调用序号，预算拒绝和发送前取消不增加调用次数。
+
+以下字段均由应用定义。Python 日志记录通过 `extra` 携带可按字段读取的元数据，终端使用文本格式显示摘要、调用结果和工具结果。日志类别由 `event` 区分，汇总时只选对应类别，避免重复累计。
+
+| 记录类别            | 字段与含义                                                                                                                                                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request_summary`   | 每轮收尾写一次。`request_id` 是应用请求 ID；`entry` 为 `stream` 或 `tools`，分别对应正文流式和完整响应入口；`model` 是配置中的模型名；`prompt_version` 标识应用系统指令版本。                                                                                 |
+| `request_summary`   | `status` 区分 `success`、`failed`、`cancelled`、`incomplete`；`reason` 保存响应结束原因、请求停止原因或固定失败类别。预算拒绝、工具循环停止和抛出的异常也有摘要。                                                                                             |
+| `request_summary`   | `model_calls` 是本轮应用可见的模型调用次数；`retries` 只统计流式入口实际发起的额外尝试，工具回传不算重试。兼容字段 `attempts` 在流式入口等于尝试总数，在完整响应入口为 `None`。                                                                               |
+| `request_summary`   | `total_seconds` 是从准备请求前到本轮处理收尾的耗时，包含重试等待、工具处理和流关闭；`ttft_seconds` 沿用前文的首个非空正文展示口径，单位均为秒。`ttft_status` 为 `observed`、`missing` 或 `not_applicable`，分别表示已观测、流式没有正文、完整响应入口不适用。 |
+| `model_call`        | 每次调用结束或抛出异常后记录一次。`request_id`、从 1 开始的 `model_call_index`、`reason` 关联本轮与调用；`input_tokens`、`output_tokens`、`total_tokens` 仅属于该次调用。流式还保留从 1 开始的 `attempt`。                                                    |
+| `tool_result`       | `request_id`、工具协议的 `tool_call_id`、`tool_name`、`status` 和 `category`。工具名仅从注册表对应的受控名称中选择，未知名称统一为 `unregistered`；参数、结果正文和错误说明不进入日志。                                                                       |
+| `validation_result` | 仅在已有学习卡片验证流水线实际运行时产生。`request_id`、`status` 表达通过或失败；失败时保留 `category` 和 `field_path`，区分解析、Schema 与业务规则层次。终端对话没有运行该流水线时不产生通过事件。                                                           |
+
+`prompt_version` 使用应用系统指令文本的 SHA-256 摘要，同样的指令得到同样的版本，修改指令后版本随之变化。用户资料和历史正文不参与版本计算；它不是整个模型请求的版本，也不涵盖工具定义或生成参数。比较实验仍须单独固定并记录这些设置。日志不保存系统指令原文。
+
+用量单位为 Token。某次调用未返回用量时，三个用量字段均为 `None`；真实零值仍为 `0`。最终摘要的同名字段只汇总每次调用一次，`usage_complete` 说明是否取得所有调用的用量，`unknown_usage_calls` 记录缺失次数。全部未知时合计为 `None`；部分已知时是已知小计，不能据此声称费用完整。没有发起调用时合计为 `0`，统计完整。使用摘要汇总后，不再把各次调用用量加一遍。
+
+上述次数以应用调用客户端方法为边界，不能据此推断同步 SDK 内部的 HTTP 尝试数或远程账单。正常结果和最终摘要使用 INFO，工具注册表或参数拒绝使用 WARNING，工具执行异常和同步模型调用抛出异常使用 ERROR。同步调用的原异常仍按已有契约向上传递，日志只保留固定类别 `model_call_failed`。应用自身的配置错误日志不附带原始异常或回溯。
+
+在项目目录运行以下离线验证，无需认证或网络请求。
+
+```shell
+uv run python -m unittest discover -s tests -p 'test_observability.py' -v
+uv run python -m unittest discover -s tests -p 'test_conversation.py' -v
+uv run python -m unittest discover -s tests -p 'test_structured_output_pipeline.py' -v
+```
+
+这些测试由终端使用的单轮入口驱动，检查正常流式完成、失败后重试、等待超时、取消、合法工具执行及恶意结果后的未注册请求。可控时钟和等待器验证耗时与累计值，不进行真实退避等待。人工标记放入用户资料、模型正文、工具结果、未知工具名和错误详情，测试检查格式化后的日志文本没有这些标记、虚构密钥或邮箱，并检查测试认证凭据没有进入模型消息。正文展示回调单独断言；完整终端转储仍可能包含面向用户的正文，不能直接当作经过最小化处理的日志。
 
 ## 超时与取消
 

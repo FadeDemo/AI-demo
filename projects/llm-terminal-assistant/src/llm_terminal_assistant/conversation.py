@@ -98,6 +98,7 @@ def build_tool_followup_request(
     cancel_event: Event | None = None,
     clock: Callable[[], float],
     deadline_at: float | None,
+    request_id: str,
 ) -> ModelRequest:
     if response.reason != ModelResponseEndReason.COMPLETED_NORMALLY:
         raise ValueError(
@@ -117,6 +118,8 @@ def build_tool_followup_request(
         check_request_cancelled(cancel_event)
         check_request_deadline(deadline_at=deadline_at, clock=clock)
         followup_request.input.append(
-            executor.execute_call(tool_call, tool_execution_budget)
+            executor.execute_call(
+                tool_call, tool_execution_budget, request_id=request_id
+            )
         )
     return followup_request

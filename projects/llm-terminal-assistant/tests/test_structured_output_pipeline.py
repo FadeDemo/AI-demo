@@ -1,4 +1,5 @@
 import json
+import logging
 import unittest
 
 from llm_terminal_assistant.structured_output.errors import (
@@ -79,6 +80,45 @@ class StructuredOutputPipelineTests(unittest.TestCase):
                 source_ids=["lesson-01"],
             ),
         )
+
+    def test_validation_logs_keep_outcomes_without_model_values_or_tracebacks(self):
+        private_text = "STRUCTURED_CANARY sk-fake-card owner@example.invalid"
+        valid = {**valid_study_card(), "summary": private_text}
+        invalid_values = (
+            private_text,
+            json.dumps({**valid, "questions": private_text}),
+            json.dumps({**valid, "source_ids": [private_text]}),
+        )
+        with self.assertLogs(
+            "llm_terminal_assistant.structured_output.pipeline", level="INFO"
+        ) as logs:
+            build_study_card(json.dumps(valid), {"lesson-01"}, "validation-test")
+            for value in invalid_values:
+                with self.assertRaises(StructuredOutputError):
+                    build_study_card(value, {"lesson-01"}, "validation-test")
+        self.assertEqual(
+            [record.status for record in logs.records],
+            ["passed", "failed", "failed", "failed"],
+        )
+        self.assertEqual(
+            [record.category for record in logs.records[1:]],
+            [
+                ErrorCategory.PARSE_ERROR,
+                ErrorCategory.SCHEMA_VALIDATION_ERROR,
+                ErrorCategory.BUSINESS_RULE_VALIDATION_ERROR,
+            ],
+        )
+        rendered = "\n".join(
+            logging.Formatter("%(levelname)s %(message)s").format(record)
+            for record in logs.records
+        )
+        for private_value in private_text.split():
+            self.assertNotIn(private_value, rendered)
+        self.assertNotIn("Traceback", rendered)
+        for record in logs.records:
+            self.assertEqual(record.event, "validation_result")
+            self.assertEqual(record.request_id, "validation-test")
+            self.assertIsNone(record.exc_info)
 
     def test_rejects_bad_json_before_returning_project_type(self):
         self.assert_pipeline_error(

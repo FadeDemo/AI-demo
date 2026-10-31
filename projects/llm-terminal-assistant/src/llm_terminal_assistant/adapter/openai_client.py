@@ -107,7 +107,7 @@ class OpenAIClient(ModelClient):
             self.client = OpenAI(**self.constructor_kwargs)
         request_options = self._build_request_options(request)
         openai_response = self.client.responses.create(**request_options)
-        logger.debug("Using model: %s", openai_response.model)
+        logger.debug("Using model: %s", self.model)
         reason, error, incomplete_details = self.derive_end_reason(openai_response)
         return ModelResponse(
             text=openai_response.output_text,
@@ -232,7 +232,7 @@ class OpenAIClient(ModelClient):
                         incomplete_details=incomplete_details,
                     )
                 else:
-                    logger.warning("Event type %s not supported", event.type)
+                    logger.warning("Unsupported stream event ignored.")
         except APITimeoutError as e:
             if isinstance(e.__cause__, ConnectTimeout):
                 yield EndEvent(

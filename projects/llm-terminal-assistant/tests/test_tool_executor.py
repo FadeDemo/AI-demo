@@ -135,6 +135,7 @@ class ToolCallExecutionTests(unittest.TestCase):
         result = executor.execute_call(
             ToolCallRequest("call-1", "example_tool", '{"value":21}'),
             budget=budget,
+            request_id="component-test",
         )
 
         self.assertEqual(self.decode_result(result), {"status": "ok"})
@@ -143,6 +144,7 @@ class ToolCallExecutionTests(unittest.TestCase):
             executor.execute_call(
                 ToolCallRequest("call-2", "example_tool", '{"value":42}'),
                 budget=budget,
+                request_id="component-test",
             )
 
         self.assertEqual(
@@ -176,7 +178,9 @@ class ToolCallExecutionTests(unittest.TestCase):
                 budget = ToolExecutionBudget(max_tool_executions=1)
 
                 result = executor.execute_call(
-                    ToolCallRequest("call-1", name, arguments), budget=budget
+                    ToolCallRequest("call-1", name, arguments),
+                    budget=budget,
+                    request_id="component-test",
                 )
 
                 self.assertEqual(
@@ -188,6 +192,7 @@ class ToolCallExecutionTests(unittest.TestCase):
                 valid_result = executor.execute_call(
                     ToolCallRequest("call-1", "example_tool", '{"value":21}'),
                     budget=budget,
+                    request_id="component-test",
                 )
 
                 self.assertEqual(self.decode_result(valid_result), {"status": "ok"})
@@ -217,6 +222,7 @@ class ToolCallExecutionTests(unittest.TestCase):
                     result = executor.execute_call(
                         ToolCallRequest("call-1", "example_tool", '{"value":21}'),
                         budget=budget,
+                        request_id="component-test",
                     )
 
                 self.assertEqual(
@@ -227,6 +233,7 @@ class ToolCallExecutionTests(unittest.TestCase):
                     executor.execute_call(
                         ToolCallRequest("call-2", "example_tool", '{"value":42}'),
                         budget=budget,
+                        request_id="component-test",
                     )
 
                 self.assertEqual(
@@ -243,7 +250,7 @@ class ToolCallExecutionTests(unittest.TestCase):
                 executor = make_executor(handler)
                 call = ToolCallRequest("call-1", "example_tool", '{"value":21}')
 
-                result = executor.execute_call(call)
+                result = executor.execute_call(call, request_id="component-test")
 
                 self.assertEqual(self.decode_result(result), output)
                 self.assertEqual(handler.calls, [{"value": 21}])
@@ -258,7 +265,8 @@ class ToolCallExecutionTests(unittest.TestCase):
                 handler = RecordingHandler()
 
                 result = make_executor(handler).execute_call(
-                    ToolCallRequest("call-1", "example_tool", arguments)
+                    ToolCallRequest("call-1", "example_tool", arguments),
+                    request_id="component-test",
                 )
 
                 self.assertEqual(
@@ -278,7 +286,8 @@ class ToolCallExecutionTests(unittest.TestCase):
                 handler = RecordingHandler()
 
                 result = make_executor(handler).execute_call(
-                    ToolCallRequest("call-1", "example_tool", arguments)
+                    ToolCallRequest("call-1", "example_tool", arguments),
+                    request_id="component-test",
                 )
 
                 self.assertEqual(
@@ -300,7 +309,8 @@ class ToolCallExecutionTests(unittest.TestCase):
                 expected_error = executor.execute("example_tool", arguments).error
 
                 result = executor.execute_call(
-                    ToolCallRequest("call-1", "example_tool", json.dumps(arguments))
+                    ToolCallRequest("call-1", "example_tool", json.dumps(arguments)),
+                    request_id="component-test",
                 )
 
                 self.assertEqual(
@@ -318,7 +328,8 @@ class ToolCallExecutionTests(unittest.TestCase):
         handler = RecordingHandler()
 
         result = make_executor(handler).execute_call(
-            ToolCallRequest("call-1", "missing_tool", '{"value":21}')
+            ToolCallRequest("call-1", "missing_tool", '{"value":21}'),
+            request_id="component-test",
         )
 
         self.assertEqual(
@@ -336,7 +347,8 @@ class ToolCallExecutionTests(unittest.TestCase):
         handler = RecordingHandler(error=InvalidToolArgumentsError("Rejected value"))
 
         result = make_executor(handler).execute_call(
-            ToolCallRequest("call-1", "example_tool", '{"value":21}')
+            ToolCallRequest("call-1", "example_tool", '{"value":21}'),
+            request_id="component-test",
         )
 
         self.assertEqual(
@@ -359,7 +371,8 @@ class ToolCallExecutionTests(unittest.TestCase):
             "llm_terminal_assistant.tools.executor", level="ERROR"
         ) as logs:
             result = executor.execute_call(
-                ToolCallRequest("call-1", "example_tool", '{"value":21}')
+                ToolCallRequest("call-1", "example_tool", '{"value":21}'),
+                request_id="component-test",
             )
 
         self.assertEqual(

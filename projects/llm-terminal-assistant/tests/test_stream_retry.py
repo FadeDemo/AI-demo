@@ -170,7 +170,16 @@ class StreamRetryTests(unittest.IsolatedAsyncioTestCase):
         request_id = fields["request_id"]
         self.assertRegex(request_id, r"^[0-9a-f]{32}$")
         self.assertEqual(
-            fields,
+            {
+                key: fields[key]
+                for key in (
+                    "request_id",
+                    "attempts",
+                    "reason",
+                    "ttft_seconds",
+                    "total_seconds",
+                )
+            },
             {
                 "request_id": request_id,
                 "attempts": str(attempts),
@@ -181,6 +190,22 @@ class StreamRetryTests(unittest.IsolatedAsyncioTestCase):
         )
         for attempt in self.attempt_log_fields(captured):
             self.assertEqual(attempt["request_id"], request_id)
+        preparation_messages = [
+            record.getMessage()
+            for record in captured.records
+            if "Budget check passed:" in record.getMessage()
+            or "input_item_count=" in record.getMessage()
+        ]
+        self.assertTrue(
+            any("Budget check passed:" in message for message in preparation_messages)
+        )
+        self.assertTrue(
+            any("input_item_count=" in message for message in preparation_messages)
+        )
+        for message in preparation_messages:
+            match = re.match(r"ModelRequest\[([0-9a-f]{32})\]:", message)
+            self.assertIsNotNone(match)
+            self.assertEqual(match[1], request_id)
 
     async def test_attempt_logs_follow_execution_without_recording_payloads(self):
         prompt = "TEST_PROMPT_NOT_FOR_LOGS"
@@ -271,12 +296,14 @@ class StreamRetryTests(unittest.IsolatedAsyncioTestCase):
                     "input_tokens": "None",
                     "output_tokens": "None",
                     "total_tokens": "None",
+                    "model_call_index": "1",
                 },
                 {
                     **fields[3],
                     "input_tokens": "20",
                     "output_tokens": "5",
                     "total_tokens": "25",
+                    "model_call_index": "2",
                 },
             ],
         )
@@ -321,6 +348,7 @@ class StreamRetryTests(unittest.IsolatedAsyncioTestCase):
                             "input_tokens": str(input_tokens),
                             "output_tokens": str(output_tokens),
                             "total_tokens": str(total_tokens),
+                            "model_call_index": "1",
                         }
                     ],
                 )

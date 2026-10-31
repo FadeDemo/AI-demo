@@ -10,6 +10,7 @@ from llm_terminal_assistant.tools.errors import (
     InvalidToolArgumentsError,
     ToolExecutionError,
     ToolExecutionErrorCategory,
+    ToolLoopStoppedError,
     UnknownToolError,
 )
 from llm_terminal_assistant.tools.loop import ToolExecutionBudget
@@ -65,7 +66,6 @@ class ToolExecutor:
         if budget is not None:
             budget.consume()
         try:
-            logger.info("Executing tool: tool_name=%s", tool_name)
             output: ToolOutput = tool.handler(arguments)
             return ToolExecutionResult(output=output)
         except InvalidToolArgumentsError as e:
@@ -76,7 +76,6 @@ class ToolExecutor:
                 )
             )
         except Exception:
-            logger.error("Execution of tool %s failed", tool_name)
             return ToolExecutionResult(
                 error=ToolExecutionError(
                     category=ToolExecutionErrorCategory.EXECUTION_FAILED,
@@ -96,27 +95,79 @@ class ToolExecutor:
         )
 
     def execute_call(
-        self, call: ToolCallRequest, budget: ToolExecutionBudget | None = None
+        self,
+        call: ToolCallRequest,
+        budget: ToolExecutionBudget | None = None,
+        *,
+        request_id: str,
     ) -> ToolCallResult:
         try:
             arguments = json.loads(call.arguments)
         except json.JSONDecodeError:
+            self._log_call(
+                call, request_id, ToolExecutionErrorCategory.INVALID_ARGUMENTS
+            )
             return self._error_call_result(
                 call.call_id,
                 ToolExecutionErrorCategory.INVALID_ARGUMENTS,
                 "Tool arguments must be valid JSON.",
             )
         if not isinstance(arguments, dict):
+            self._log_call(
+                call, request_id, ToolExecutionErrorCategory.INVALID_ARGUMENTS
+            )
             return self._error_call_result(
                 call.call_id,
                 ToolExecutionErrorCategory.INVALID_ARGUMENTS,
                 "Tool arguments must be a JSON object.",
             )
-        result: ToolExecutionResult = self.execute(call.name, arguments, budget)
+        try:
+            result = self.execute(call.name, arguments, budget)
+        except ToolLoopStoppedError as error:
+            self._log_call(call, request_id, error.reason.value)
+            raise
         if result.error is not None:
+            self._log_call(call, request_id, result.error.category)
             return self._error_call_result(
                 call.call_id,
                 result.error.category,
                 result.error.message,
             )
-        return ToolCallResult(call_id=call.call_id, output=json.dumps(result.output))
+        response = ToolCallResult(
+            call_id=call.call_id, output=json.dumps(result.output)
+        )
+        self._log_call(call, request_id, None)
+        return response
+
+    def _log_call(
+        self,
+        call: ToolCallRequest,
+        request_id: str,
+        category: str | None,
+    ) -> None:
+        tool_name = call.name if call.name in self._validators else "unregistered"
+        if category is None:
+            level, status = logging.INFO, "success"
+        elif category == ToolExecutionErrorCategory.EXECUTION_FAILED:
+            level, status = logging.ERROR, "failed"
+        else:
+            level, status = logging.WARNING, "rejected"
+        fields = {
+            "event": "tool_result",
+            "request_id": request_id,
+            "tool_call_id": call.call_id,
+            "tool_name": tool_name,
+            "status": status,
+            "category": category,
+        }
+        logger.log(
+            level,
+            "Tool finished: request_id=%s, tool_call_id=%s, tool_name=%s, "
+            "status=%s, category=%s",
+            request_id,
+            call.call_id,
+            tool_name,
+            status,
+            category,
+            extra=fields,
+        )

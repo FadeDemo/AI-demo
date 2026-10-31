@@ -42,10 +42,27 @@ def build_study_card(
         validate_business_rules(data, allowed_source_ids)
     except StructuredOutputError as e:
         logger.error(
-            "category=%s, field_path=%s, request_id=%s",
+            "Validation finished: category=%s, field_path=%s, request_id=%s, status=failed",
             e.category,
             e.field_path if e.field_path else "N/A",
             request_id,
+            extra={
+                "event": "validation_result",
+                "request_id": request_id,
+                "status": "failed",
+                "category": e.category,
+                "field_path": e.field_path if e.field_path else "N/A",
+            },
         )
         raise
-    return StudyCard(**data)
+    card = StudyCard(**data)
+    logger.info(
+        "Validation finished: request_id=%s, status=passed",
+        request_id,
+        extra={
+            "event": "validation_result",
+            "request_id": request_id,
+            "status": "passed",
+        },
+    )
+    return card
