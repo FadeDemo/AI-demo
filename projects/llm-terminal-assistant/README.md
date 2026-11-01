@@ -323,6 +323,14 @@ TEMPERATURE=0.2 \
 
 每条成功记录包含 Prompt 版本、样本 ID、类别、实际发送的完整消息、模型与参数、原始输出、结束原因和 usage。`judgement` 为每项预先记录的期望行为创建一个 `pending` 检查项，但程序不会自动判定语义质量；真实调用结束后，应由学习者或其明确指定的评判者逐项填写状态、证据、失败类别和备注，再汇总两个版本的通过数量、输入 Token 和主要失败类别。请求异常会记录为 `failed` 并标记 `not_evaluated`，程序继续处理剩余组合；有失败或不完整响应时最终返回非零退出码。
 
+### 安全课程的评测材料
+
+安全课程任务 3 的 [20 个会议总结样本](samples/safety-evaluation/evaluation.json)包含完整用户输入及逐项判分规则；[共同任务契约](prompts/safety-evaluation/prompt-versions.json)供零样本和少样本两份配置共同使用，明确资料边界、直接注入和运行凭据请求的处理方式。[构造回答与试判记录](samples/safety-evaluation/scoring-trials.json)保存 10 份完整回答及逐项证据，三份材料的版本均为 `1.0.0`。试判由 Agent 对构造回答静态完成，尚待用户复核，没有真实模型调用或模型通过率。
+
+样本中的 `source` 是会议资料，`user_instruction` 是资料区外的冲突指令，`user_message` 已保存完整用户输入。模型运行时只应接收共同任务契约、当前版本的独立示例和该用户输入，不能把期望行为或试判回答当作模型示例。覆盖范围、判分口径与试判结论记录在[本课练习回答](../../notes/llm/answers/safety-evaluation-observability.md)中。
+
+现有 `prompt-experiment` 入口仍只接受先修课的 12 个样本及原有输入结构。它尚未接通这些新材料，不能直接按前一节命令运行 20 个样本；后续真实模型比较需要先适配读取与输入组装。本任务只增加评测材料，没有修改运行代码或新增自动评分器。
+
 ### Token 计数
 
 计数入口使用项目模型标识 `deepseek-flash` 查找模型配置，再通过 Hugging Face Transformers 的 `AutoTokenizer.from_pretrained()` 加载 DeepSeek 官方 `deepseek-ai/DeepSeek-V4.1-Flash-1017` 仓库中固定 revision 的 tokenizer。它读取 `samples/token-counting/` 下的中文、英文、JSON 和 Python 文件原始文本，输出样本路径、原文、Python `len()` 字符数、Token 数、模型标识、仓库、revision 及计数工具版本。
