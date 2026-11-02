@@ -94,6 +94,28 @@ class ModelConfigTests(unittest.TestCase):
 
         self.assertEqual(config.request_retry_config, RequestRetryConfig(3, 1.0, 8.0))
 
+    def test_missing_sdk_retry_setting_preserves_sdk_default(self):
+        self.assertIsNone(self.load_config().sdk_max_retries)
+
+    def test_sdk_retries_allow_zero_and_remain_independent_of_application_attempts(
+        self,
+    ):
+        for value in (0, 3):
+            with self.subTest(value=value):
+                config = self.load_config(
+                    {"SDK_MAX_RETRIES": str(value), "MAX_ATTEMPTS": "2"}
+                )
+                self.assertEqual(config.sdk_max_retries, value)
+                self.assertEqual(config.request_retry_config.max_attempts, 2)
+
+    def test_invalid_sdk_retries_identify_the_configuration_item(self):
+        for value in ("", " ", "invalid", "1.5", "1e2", "-1", "nan", "inf"):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "SDK_MAX_RETRIES"),
+            ):
+                self.load_config({"SDK_MAX_RETRIES": value})
+
     def test_each_retry_setting_can_be_overridden_without_changing_other_defaults(self):
         cases = (
             ("MAX_ATTEMPTS", "1", RequestRetryConfig(1, 1.0, 8.0)),

@@ -51,6 +51,8 @@ class OpenAIClient(ModelClient):
             timeout = Timeout(DEFAULT_TIMEOUT)
             timeout.connect = config.request_timeout_config.connect_seconds
             self.constructor_kwargs["timeout"] = timeout
+        if config.sdk_max_retries is not None:
+            self.constructor_kwargs["max_retries"] = config.sdk_max_retries
 
     def _build_request_options(self, request: ModelRequest) -> dict[str, object]:
         request_options: dict[str, object] = {
@@ -180,7 +182,9 @@ class OpenAIClient(ModelClient):
         if self.stream_client is None:
             from openai import AsyncOpenAI
 
-            self.stream_client = AsyncOpenAI(**self.constructor_kwargs, max_retries=0)
+            self.stream_client = AsyncOpenAI(
+                **(self.constructor_kwargs | {"max_retries": 0})
+            )
         from httpx import ConnectTimeout
         from openai import APITimeoutError
 

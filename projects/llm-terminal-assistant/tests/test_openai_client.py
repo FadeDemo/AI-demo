@@ -1,8 +1,10 @@
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from llm_terminal_assistant.adapter.openai_client import OpenAIClient
+from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
 from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
@@ -255,6 +257,48 @@ class OpenAIClientTests(unittest.IsolatedAsyncioTestCase):
                     else:
                         constructor.assert_not_called()
                         self.assertIsNone(sdk_client)
+
+    async def test_factory_applies_configured_sdk_retries_only_to_sync_client(self):
+        config = ModelConfig(
+            api_key="test-key",
+            base_url="https://example.invalid",
+            model="deepseek-flash",
+            model_profile=DEEPSEEK_V41_FLASH_1017,
+            provider="openai",
+        )
+        request = ModelRequest(input=[], reserved_output_tokens=20)
+        for retries in (0, 3):
+            for stream_first in (False, True):
+                with (
+                    self.subTest(retries=retries, stream_first=stream_first),
+                    patch("openai.OpenAI") as sync_constructor,
+                    patch("openai.AsyncOpenAI") as async_constructor,
+                ):
+                    sync_constructor.return_value.responses = RecordingResponses()
+                    async_constructor.return_value.responses = RecordingAsyncResponses()
+                    client = create_model_client(
+                        replace(config, sdk_max_retries=retries)
+                    )
+                    for streaming in (stream_first, not stream_first):
+                        if streaming:
+                            events = [
+                                event async for event in client.send_stream(request)
+                            ]
+                            self.assertIsInstance(events[-1], EndEvent)
+                        else:
+                            self.assertEqual(client.send(request).text, "response")
+
+                    sync_constructor.assert_called_once_with(
+                        api_key=config.api_key,
+                        base_url=config.base_url,
+                        max_retries=retries,
+                    )
+                    async_constructor.assert_called_once_with(
+                        api_key=config.api_key,
+                        base_url=config.base_url,
+                        max_retries=0,
+                    )
+                    self.assertEqual(client.constructor_kwargs["max_retries"], retries)
 
     async def test_aclose_closes_only_created_clients(self):
         config = ModelConfig(

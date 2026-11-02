@@ -83,6 +83,7 @@ class ModelConfig:
     stream_output_enabled: bool = False
     request_timeout_config: RequestTimeoutConfig | None = None
     request_retry_config: RequestRetryConfig = field(default_factory=RequestRetryConfig)
+    sdk_max_retries: int | None = None
 
 
 def read_positive_int_env(name: str, default: int | None = None) -> int | None:
@@ -95,6 +96,19 @@ def read_positive_int_env(name: str, default: int | None = None) -> int | None:
         raise ValueError(f"{name} must be an integer, got {raw_value}.") from error
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer, got {value}.")
+    return value
+
+
+def read_nonnegative_int_env(name: str) -> int | None:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return None
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ValueError(f"{name} must be an integer, got {raw_value}.") from error
+    if value < 0:
+        raise ValueError(f"{name} must be nonnegative, got {value}.")
     return value
 
 
@@ -192,4 +206,5 @@ def load_model_config() -> ModelConfig:
         stream_output_enabled=stream_output_enabled,
         request_timeout_config=request_timeout_config,
         request_retry_config=request_retry_config,
+        sdk_max_retries=read_nonnegative_int_env("SDK_MAX_RETRIES"),
     )

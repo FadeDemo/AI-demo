@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -31,6 +32,11 @@ EXPECTED_CATEGORY_COUNTS = {
     "missing": 1,
     "embedded_command": 2,
 }
+SAFETY_CATEGORY_COUNTS = {
+    **EXPECTED_CATEGORY_COUNTS,
+    "direct_injection": 4,
+    "credential_request": 4,
+}
 MessageRole = Literal["system", "user", "assistant"]
 
 
@@ -40,6 +46,8 @@ class EvaluationSample:
     category: str
     source: str
     expected_behaviors: tuple[str, ...]
+    user_message: str | None = None
+    checks: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -122,7 +130,31 @@ def load_evaluation_samples(path: Path) -> list[EvaluationSample]:
             field=f"Evaluation sample {sample_id} source",
             allow_empty=True,
         )
+        user_message = None
+        checks = ()
         raw_expectations = raw_sample.get("expected_behaviors")
+        if raw_document.get("dataset_id") == "meeting-summary-safety":
+            user_message = _required_non_empty_string(
+                raw_sample.get("user_message"),
+                field=f"Evaluation sample {sample_id} user_message",
+            )
+            raw_checks = raw_sample.get("checks")
+            if (
+                not isinstance(raw_checks, list)
+                or not raw_checks
+                or any(not isinstance(check, dict) for check in raw_checks)
+            ):
+                raise ValueError(f"Evaluation sample {sample_id} checks are required.")
+            check_ids = [
+                _required_non_empty_string(check.get("id"), field="Check id")
+                for check in raw_checks
+            ]
+            if len(set(check_ids)) != len(check_ids):
+                raise ValueError(
+                    f"Evaluation sample {sample_id} check ids must be unique."
+                )
+            checks = tuple(raw_checks)
+            raw_expectations = [check.get("expectation") for check in checks]
         if not isinstance(raw_expectations, list) or not raw_expectations:
             raise ValueError(
                 f"Evaluation sample {sample_id} expected_behaviors must be a "
@@ -141,6 +173,8 @@ def load_evaluation_samples(path: Path) -> list[EvaluationSample]:
                 category=category,
                 source=source,
                 expected_behaviors=expectations,
+                user_message=user_message,
+                checks=checks,
             )
         )
 
@@ -149,18 +183,25 @@ def load_evaluation_samples(path: Path) -> list[EvaluationSample]:
 
 
 def validate_evaluation_samples(samples: Sequence[EvaluationSample]) -> None:
-    if len(samples) != 12:
+    has_complete_inputs = [sample.user_message is not None for sample in samples]
+    if any(has_complete_inputs) and not all(has_complete_inputs):
+        raise ValueError("Evaluation samples must not mix input formats.")
+    expected_counts = (
+        SAFETY_CATEGORY_COUNTS if any(has_complete_inputs) else EXPECTED_CATEGORY_COUNTS
+    )
+    expected_total = sum(expected_counts.values())
+    if len(samples) != expected_total:
         raise ValueError(
-            f"Exactly 12 evaluation samples are required; got {len(samples)}."
+            f"Exactly {expected_total} evaluation samples are required; got {len(samples)}."
         )
     sample_ids = [sample.sample_id for sample in samples]
     if len(set(sample_ids)) != len(sample_ids):
         raise ValueError("Evaluation sample ids must be unique.")
     category_counts = Counter(sample.category for sample in samples)
-    if category_counts != EXPECTED_CATEGORY_COUNTS:
+    if category_counts != expected_counts:
         raise ValueError(
             "Evaluation category counts must be "
-            f"{EXPECTED_CATEGORY_COUNTS}; got {dict(category_counts)}."
+            f"{expected_counts}; got {dict(category_counts)}."
         )
 
 
@@ -319,7 +360,11 @@ def build_messages(
     messages.append(
         Message(
             role=layout.current_input_role,
-            content=render_input(definition.input_template, sample.source),
+            content=(
+                sample.user_message
+                if sample.user_message is not None
+                else render_input(definition.input_template, sample.source)
+            ),
         )
     )
     return messages
@@ -347,11 +392,12 @@ def _pending_judgement(sample: EvaluationSample) -> dict[str, Any]:
         "status": "pending",
         "checks": [
             {
+                **(sample.checks[index] if sample.checks else {}),
                 "expectation": expectation,
                 "status": "pending",
                 "evidence": "",
             }
-            for expectation in sample.expected_behaviors
+            for index, expectation in enumerate(sample.expected_behaviors)
         ],
         "failure_categories": [],
         "notes": "",
@@ -368,6 +414,8 @@ def run_experiment(
     write_record: Callable[[dict[str, Any]], None],
     experiment_id: str | None = None,
     timestamp_factory: Callable[[], datetime] | None = None,
+    version_ids: Sequence[str] | None = None,
+    clock: Callable[[], float] = perf_counter,
 ) -> ExperimentSummary:
     validate_evaluation_samples(samples)
     validate_prompt_definition(definition)
@@ -376,6 +424,16 @@ def run_experiment(
         config=config,
         max_output_tokens=max_output_tokens,
     )
+    versions = definition.versions
+    if version_ids is not None:
+        known_ids = {version.version_id for version in versions}
+        if (
+            not version_ids
+            or len(set(version_ids)) != len(version_ids)
+            or not set(version_ids) <= known_ids
+        ):
+            raise ValueError("Selected Prompt version ids must be unique and known.")
+        versions = tuple(v for v in versions if v.version_id in version_ids)
 
     experiment_id = experiment_id or str(uuid4())
     timestamp_factory = timestamp_factory or (lambda: datetime.now(UTC))
@@ -383,7 +441,7 @@ def run_experiment(
     succeeded = 0
     failed = 0
 
-    for version in definition.versions:
+    for version in versions:
         for sample in samples:
             attempted += 1
             messages = build_messages(definition, version, sample)
@@ -413,7 +471,10 @@ def run_experiment(
                     "max_output_tokens": max_output_tokens,
                 },
                 "judgement": _pending_judgement(sample),
+                "ttft_seconds": None,
+                "ttft_status": "not_applicable_non_streaming",
             }
+            started_at = clock()
             try:
                 response = client.send(request)
             except Exception as error:
@@ -423,7 +484,8 @@ def run_experiment(
                     {
                         "status": "failed",
                         "error_type": type(error).__name__,
-                        "error": str(error),
+                        "error": "Model request failed; see error_type.",
+                        "usage": None,
                     }
                 )
             else:
@@ -439,7 +501,11 @@ def run_experiment(
                         "status": ("succeeded" if completed_normally else "incomplete"),
                         "output": response.text,
                         "finish_reason": response.reason,
-                        "usage": asdict(response.usage),
+                        "usage": (
+                            asdict(response.usage)
+                            if response.usage is not None
+                            else None
+                        ),
                         "error_details": (
                             asdict(response.error)
                             if response.error is not None
@@ -452,6 +518,7 @@ def run_experiment(
                         ),
                     }
                 )
+            record["latency_seconds"] = clock() - started_at
             write_record(record)
 
     return ExperimentSummary(
@@ -486,6 +553,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="New JSONL result path. Existing files are never overwritten.",
     )
     parser.add_argument(
+        "--version",
+        action="append",
+        help="Run only this Prompt version; repeat to select multiple versions.",
+    )
+    parser.add_argument(
         "--max-output-tokens",
         type=int,
         default=16_384,
@@ -496,6 +568,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    client = None
     try:
         config = load_model_config()
         samples = load_evaluation_samples(args.evaluation)
@@ -531,10 +604,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 definition=definition,
                 max_output_tokens=args.max_output_tokens,
                 write_record=write_record,
+                version_ids=args.version,
             )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"Prompt experiment failed: {error}", file=sys.stderr)
         return 2
+    finally:
+        if client is not None and client.client is not None:
+            client.client.close()
 
     print(
         f"Finished: attempted={summary.attempted} succeeded={summary.succeeded} "
