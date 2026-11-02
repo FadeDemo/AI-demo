@@ -4,7 +4,7 @@ type: roadmap
 area: ai
 status: learning
 created: 2026-07-20
-updated: 2026-08-10
+updated: 2026-11-02
 tags:
   - ai
   - rag
@@ -148,6 +148,8 @@ Agent 开发                  AI Infra / 推理服务
 ---
 
 ## 5. 第 2 阶段：RAG 的最小理论前置（第 2 周）
+
+逐课讲解、离线交互实验和练习验收见 [RAG 检索基础](rag/index.md)。课程先完成短文档上的关键词与向量检索比较，再介绍排名融合、近似索引和重排，为后续 RAG 实战准备。
 
 ### 5.1 Embedding 与向量检索
 

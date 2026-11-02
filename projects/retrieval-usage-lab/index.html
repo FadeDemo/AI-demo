@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>检索基础交互实验</title>
+    <script src="lab.js" defer></script>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #203029;
+        background: #f5f5ef;
+        font-synthesis: none;
+        --green: #176c51;
+        --blue: #345bc3;
+        --muted: #58675f;
+        --line: #d6ddd4;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        width: min(1080px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 48px 0;
+      }
+      header {
+        margin-bottom: 36px;
+      }
+      h1 {
+        margin: 10px 0 16px;
+        font-size: clamp(30px, 5vw, 48px);
+        letter-spacing: -0.035em;
+      }
+      h2 {
+        margin: 6px 0 14px;
+        font-size: clamp(23px, 3vw, 30px);
+      }
+      h3 {
+        margin: 0 0 12px;
+        font-size: 17px;
+      }
+      p,
+      li {
+        line-height: 1.7;
+      }
+      p {
+        margin: 0 0 14px;
+      }
+      a {
+        color: var(--green);
+        text-underline-offset: 4px;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 0.92em;
+        overflow-wrap: anywhere;
+      }
+      .eyebrow {
+        color: var(--green);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+      }
+      .intro {
+        max-width: 760px;
+        color: var(--muted);
+      }
+      nav {
+        display: flex;
+        gap: 12px 24px;
+        flex-wrap: wrap;
+        margin-top: 22px;
+      }
+      nav a {
+        padding: 8px 0;
+      }
+      section {
+        padding: 32px 0 38px;
+        border-top: 1px solid var(--line);
+        scroll-margin-top: 12px;
+      }
+      .section-intro {
+        max-width: 780px;
+        color: var(--muted);
+      }
+      .two-column {
+        display: grid;
+        grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr);
+        gap: 32px;
+        align-items: start;
+        margin-top: 24px;
+      }
+      .controls {
+        display: grid;
+        gap: 20px;
+      }
+      label {
+        display: block;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .label-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+      output {
+        color: var(--green);
+        font-variant-numeric: tabular-nums;
+      }
+      input,
+      select,
+      button {
+        font: inherit;
+      }
+      input[type="range"] {
+        width: 100%;
+        min-height: 32px;
+        margin: 0;
+        accent-color: var(--green);
+      }
+      select {
+        width: 100%;
+        min-height: 44px;
+        padding: 8px;
+        border: 1px solid #a7b7ac;
+        border-radius: 6px;
+        background: #fff;
+        color: inherit;
+      }
+      .check-label {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 44px;
+        font-weight: 500;
+      }
+      input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        margin: 0;
+        accent-color: var(--green);
+      }
+      button {
+        min-height: 44px;
+        padding: 8px 12px;
+        border: 1px solid #b3c3b7;
+        border-radius: 6px;
+        background: #fff;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        background: #e8eee8;
+      }
+      button:disabled {
+        color: #909a94;
+        border-color: #dde1dc;
+        cursor: default;
+      }
+      :focus-visible {
+        outline: 3px solid #345bc3;
+        outline-offset: 3px;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .prompt {
+        padding-left: 14px;
+        border-left: 3px solid #94b8a2;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin: 18px 0;
+      }
+      .stat {
+        background: #fff;
+        border: 1px solid #dce3db;
+        border-radius: 8px;
+        padding: 16px 12px;
+      }
+      .stat-label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .stat-value {
+        margin: 8px 0 0;
+        font-size: clamp(19px, 3vw, 27px);
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+      .plot {
+        width: 100%;
+        min-width: 0;
+      }
+      .plot svg {
+        display: block;
+        width: 100%;
+        height: 280px;
+      }
+      .plot text {
+        font-family: inherit;
+        font-size: 13px;
+        fill: var(--muted);
+      }
+      .plot .vector-label {
+        font-size: 14px;
+        font-weight: 600;
+        fill: #203029;
+      }
+      .plot .grid {
+        stroke: #dce2d9;
+        stroke-width: 1;
+      }
+      .plot .axis {
+        stroke: #9aa89d;
+        stroke-width: 1;
+      }
+      .formula {
+        margin: 14px 0;
+        padding: 12px 0;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+      .ranking {
+        padding: 0;
+        margin: 20px 0;
+        list-style: none;
+        display: grid;
+        gap: 8px;
+      }
+      .ranking li {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 12px;
+        border-left: 3px solid transparent;
+        background: #eeefe8;
+      }
+      .ranking li[data-included="true"] {
+        border-left-color: var(--green);
+        background: #e2ebe1;
+      }
+      .rank-position {
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+      }
+      .document-title {
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+      .document-meta {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .move-buttons {
+        display: flex;
+        gap: 6px;
+      }
+      .move-buttons button {
+        padding-inline: 10px;
+        font-size: 14px;
+      }
+      .metrics-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+        gap: 30px;
+        align-items: start;
+      }
+      .metrics-summary {
+        padding-top: 20px;
+      }
+      .metrics-summary .stats {
+        margin-top: 0;
+      }
+      .table-scroll {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 18px;
+        font-size: 14px;
+      }
+      caption {
+        text-align: left;
+        color: var(--muted);
+        padding-bottom: 10px;
+      }
+      th,
+      td {
+        padding: 12px 10px;
+        border-bottom: 1px solid var(--line);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      .fusion-first {
+        background: #e2ebe1;
+        font-weight: 600;
+      }
+      .inline-controls {
+        max-width: 520px;
+        margin-top: 22px;
+      }
+      .source-rankings {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 28px;
+        margin: 18px 0;
+      }
+      footer {
+        padding-top: 22px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 14px;
+      }
+      noscript p {
+        padding: 14px;
+        background: #fff3cf;
+      }
+
+      @media (max-width: 760px) {
+        .two-column,
+        .metrics-layout {
+          grid-template-columns: 1fr;
+          gap: 18px;
+        }
+        .metrics-summary {
+          padding-top: 0;
+        }
+        main {
+          width: calc(100% - 32px);
+          padding-top: 28px;
+        }
+      }
+
+      @media (max-width: 420px) {
+        .stats {
+          gap: 6px;
+        }
+        .stat {
+          padding: 12px 8px;
+        }
+        .stat-label {
+          font-size: 12px;
+        }
+        .stat-value {
+          font-size: 19px;
+        }
+        .ranking li {
+          grid-template-columns: 22px minmax(0, 1fr);
+          gap: 6px 10px;
+        }
+        .move-buttons {
+          grid-column: 2;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">RAG 检索基础 · 离线实验</div>
+        <h1>动手改一次，看看排名怎么变</h1>
+        <p class="intro">
+          用滑块和固定资料观察相似度、检索指标与排名融合。所有数值都在页面里计算，没有调用模型。这里的教学数据用于核对公式，真实检索效果需要另做语料实验。
+        </p>
+        <nav aria-label="实验导航">
+          <a href="#vectors">01 向量与相似度</a>
+          <a href="#metrics">02 排名与指标</a>
+          <a href="#fusion">03 两份排名的融合</a>
+          <a href="../../notes/rag/index.md">返回课程目录</a>
+        </nav>
+      </header>
+      <noscript
+        ><p>开启 JavaScript 后可以调整参数。课程正文保留了公式与手算例题，可直接阅读。</p></noscript
+      >
+
+      <section id="vectors" aria-labelledby="vectors-heading">
+        <div class="eyebrow">实验 01</div>
+        <h2 id="vectors-heading">方向一样，长度不同会怎样</h2>
+        <p class="section-intro">
+          问题向量 q 固定为 [1, 0]。先保持方向为 60 度，把文档向量长度从 1 调到
+          2，再观察三种计算。箭头表示当前参与计算的向量。
+        </p>
+        <div class="two-column">
+          <div class="controls">
+            <div>
+              <div class="label-row">
+                <label for="angle">文档向量的方向</label
+                ><output id="angle-value" for="angle">60°</output>
+              </div>
+              <input id="angle" type="range" min="0" max="180" step="1" value="60" />
+            </div>
+            <div>
+              <div class="label-row">
+                <label for="length">归一化前的长度</label
+                ><output id="length-value" for="length">1.00</output>
+              </div>
+              <input id="length" type="range" min="0" max="2.5" step="0.25" value="1" />
+            </div>
+            <label class="check-label"
+              ><input id="normalize" type="checkbox" />先把非零文档向量归一化</label
+            >
+            <p class="hint prompt">
+              归一化会把长度变成 1，方向保留。将长度设为 0，检查页面怎样处理无法定义的余弦。
+            </p>
+            <div><button id="reset-vectors" type="button">恢复向量示例</button></div>
+          </div>
+          <div>
+            <div class="plot" id="vector-board">
+              <svg id="vector-plot" role="img" aria-labelledby="vector-plot-title vector-plot-desc">
+                <title id="vector-plot-title">问题向量与文档向量</title>
+                <desc id="vector-plot-desc">
+                  开启 JavaScript 后，箭头会按当前方向与长度绘制。问题向量为一零。
+                </desc>
+              </svg>
+            </div>
+            <div aria-live="polite" aria-atomic="true">
+              <div class="stats">
+                <div class="stat">
+                  <div class="stat-label">余弦相似度</div>
+                  <div class="stat-value" id="cosine-value">0.5000</div>
+                </div>
+                <div class="stat">
+                  <div class="stat-label">点积</div>
+                  <div class="stat-value" id="dot-value">0.5000</div>
+                </div>
+                <div class="stat">
+                  <div class="stat-label">欧氏距离</div>
+                  <div class="stat-value" id="distance-value">1.0000</div>
+                </div>
+              </div>
+              <p class="hint" id="vector-detail">文档向量由角度和长度给定。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="metrics" aria-labelledby="metrics-heading">
+        <div class="eyebrow">实验 02</div>
+        <h2 id="metrics-heading">找回几篇，与第一篇排在哪里</h2>
+        <p class="section-intro">
+          教学问题是“请求超时后，怎样限制重试并记录尝试”。相关性已预先指定，d2 和 d4
+          提供所需资料。移动文档只改变排名，不改变相关标记。
+        </p>
+        <div class="metrics-layout">
+          <div>
+            <div class="controls">
+              <div>
+                <div class="label-row">
+                  <label for="top-k">只查看前 K 篇</label
+                  ><output id="k-value" for="top-k">K = 3</output>
+                </div>
+                <input id="top-k" type="range" min="1" max="5" step="1" value="3" />
+              </div>
+              <div>
+                <label class="label-row" for="answer-case">人工标注的情形</label>
+                <select id="answer-case">
+                  <option value="answerable">资料里有答案</option>
+                  <option value="unanswerable">另一个问题在资料里没有答案</option>
+                </select>
+              </div>
+            </div>
+            <ol class="ranking" id="ranking-list" aria-label="文档排名"></ol>
+            <button id="reset-ranking" type="button">恢复初始排名</button>
+          </div>
+          <div class="metrics-summary" aria-live="polite" aria-atomic="true">
+            <div class="stats">
+              <div class="stat">
+                <div class="stat-label" id="recall-label">Recall@3</div>
+                <div class="stat-value" id="recall-value">0.5000</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label" id="precision-label">Precision@3</div>
+                <div class="stat-value" id="precision-value">0.3333</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label" id="rr-label">RR@3</div>
+                <div class="stat-value" id="rr-value">0.5000</div>
+              </div>
+            </div>
+            <p id="ranking-detail">前 3 篇命中 1 篇相关资料，第一篇相关资料位于第 2。</p>
+            <p class="formula" id="ranking-formula">
+              Recall = 1 / 2，Precision = 1 / 3，RR = 1 / 2
+            </p>
+            <p class="hint" id="case-detail">
+              这里只计算一个问题的 RR。多个有答案问题分别计算后取平均，才得到 MRR。
+            </p>
+            <p class="hint prompt">
+              把 d4 移进前 3，同时让 d2 仍排在第 2。观察 Recall 提高时，RR 是否也提高。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="fusion" aria-labelledby="fusion-heading">
+        <div class="eyebrow">实验 03</div>
+        <h2 id="fusion-heading">让两份排名各贡献一次分数</h2>
+        <p class="section-intro">
+          RRF 只看文档在各自列表中的位置。每一路贡献 1 / (c + 位置)，位置从 1 开始，缺席一路则贡献
+          0。它没有比较两路原始分数。
+        </p>
+        <div class="source-rankings">
+          <p>词法排名 <code>[A, B, C, D, E]</code></p>
+          <p>向量排名 <code>[D, B, C, A, F]</code></p>
+        </div>
+        <div class="inline-controls">
+          <div class="label-row">
+            <label for="rrf-c">平滑常数 c</label><output id="c-value" for="rrf-c">1</output>
+          </div>
+          <input id="rrf-c" type="range" min="1" max="60" step="1" value="1" />
+        </div>
+        <div class="table-scroll">
+          <table>
+            <caption>
+              每篇文档的两路贡献与合计，按未舍入的合计降序排列
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">文档</th>
+                <th scope="col">词法贡献</th>
+                <th scope="col">向量贡献</th>
+                <th scope="col">合计</th>
+              </tr>
+            </thead>
+            <tbody id="fusion-body"></tbody>
+          </table>
+        </div>
+        <div aria-live="polite" aria-atomic="true">
+          <p class="formula" id="fusion-order">融合顺序为 A、D、B、C、E、F。</p>
+        </div>
+        <p class="hint prompt">
+          把 c 从 1 调到 60，看看 B 是否仍排在 A 后面。E、F
+          各缺席一路，只能取得一次贡献。并列按文档编号升序排列。
+        </p>
+      </section>
+
+      <footer>
+        <p>
+          这些操作核对计算关系，不代表真实模型的语义空间，也不预测哪种检索在你的资料上更好。继续阅读<a
+            href="../../notes/rag/retrieval-evaluation.md"
+            >检索评测</a
+          >与<a href="../../notes/rag/lexical-and-hybrid-search.md">词法检索与排名融合</a>。
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -4,7 +4,7 @@ type: index
 area: ai
 status: learning
 created: 2026-07-20
-updated: 2026-08-10
+updated: 2026-11-02
 tags:
   - ai
   - index
@@ -20,6 +20,7 @@ tags:
 - [Python 工程基础](python/index.md)：学习文件处理、虚拟环境和包管理，补齐 RAG 的编程前置。
 - [通用工程基础](engineering/index.md)：学习日志与基础测试，让程序的问题可定位、修改可验证。
 - [LLM 使用基础](llm/index.md)：学习消息、上下文、生成参数、Prompt、结构化输出、工具调用、可靠性、安全和评测。
+- [RAG 检索基础](rag/index.md)涵盖文档准备、关键词与向量检索，以及固定问题上的检索评测。
 - [代码项目目录](../projects/README.md)：查看与学习路线配套的实践项目。
 
 ## 当前学习重点
