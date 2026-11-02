@@ -2,7 +2,7 @@
 title: 安全、评测与可观测性
 type: concept
 area: llm
-status: learning
+status: completed
 created: 2026-08-05
 updated: 2026-11-02
 tags:
