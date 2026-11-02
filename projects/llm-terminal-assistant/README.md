@@ -127,30 +127,31 @@ uv sync --extra token-counting
 
 程序从项目根目录的 `.env` 或当前进程环境读取以下变量：
 
-| 变量                       | 含义                                                              |
-| -------------------------- | ----------------------------------------------------------------- |
-| `PROVIDER`                 | 客户端类型：`faked` 或 `openai`                                   |
-| `API_KEY`                  | 远程模型服务凭据；fake 模式不会使用                               |
-| `BASE_URL`                 | OpenAI Responses API 或兼容服务的基础 URL                         |
-| `MODEL`                    | 请求使用的模型标识或显式的 `fake-model`                           |
-| `REASONING_EFFORT`         | OpenAI Responses API 的 reasoning effort；省略时不发送            |
-| `TEMPERATURE`              | OpenAI Responses API 的 `temperature`；省略时不发送               |
-| `TOP_P`                    | OpenAI Responses API 的 `top_p`；省略时不发送                     |
-| `MAX_TOOL_ROUNDS`          | 每轮最大工具回传轮数；默认 3                                      |
-| `MAX_MODEL_REQUESTS`       | 每轮最大模型请求次数，包含首次请求；默认 4                        |
-| `MAX_TOOL_EXECUTIONS`      | 每轮最大实际工具执行次数；默认 8                                  |
-| `STREAM_OUTPUT_ENABLED`    | 回答正文流式展示开关；默认 `false`，设为 `true` 开启              |
-| `CONNECT_SECONDS`          | OpenAI 或兼容接口的 SDK 连接超时，单位为秒；启用超时配置后默认 10 |
-| `FIRST_EVENT_SECONDS`      | 流式首事件等待上限，单位为秒；启用超时配置后默认 30               |
-| `STREAM_IDLE_SECONDS`      | 流式相邻有效事件之间的等待上限，单位为秒；启用超时配置后默认 30   |
-| `REQUEST_DEADLINE_SECONDS` | 本轮总期限的时间预算，单位为秒；启用超时配置后默认 120            |
-| `MAX_ATTEMPTS`             | 流式请求的最大尝试次数，包含首次发送；默认 3，设为 1 关闭应用重试 |
-| `BASE_DELAY_SECONDS`       | 第一次重试的随机退避上界，单位为秒；默认 1.0                      |
-| `MAX_DELAY_SECONDS`        | 客户端退避上界的上限，单位为秒；默认 8.0，不缩短服务端等待提示    |
+| 变量                       | 含义                                                                      |
+| -------------------------- | ------------------------------------------------------------------------- |
+| `PROVIDER`                 | 客户端类型：`faked` 或 `openai`                                           |
+| `API_KEY`                  | 远程模型服务凭据；fake 模式不会使用                                       |
+| `BASE_URL`                 | OpenAI Responses API 或兼容服务的基础 URL                                 |
+| `MODEL`                    | 请求使用的模型标识或显式的 `fake-model`                                   |
+| `REASONING_EFFORT`         | OpenAI Responses API 的 reasoning effort；省略时不发送                    |
+| `TEMPERATURE`              | OpenAI Responses API 的 `temperature`；省略时不发送                       |
+| `TOP_P`                    | OpenAI Responses API 的 `top_p`；省略时不发送                             |
+| `SDK_MAX_RETRIES`          | 同步 OpenAI SDK 的最大重试次数；非负整数，0 禁用，未设置时沿用 SDK 默认值 |
+| `MAX_TOOL_ROUNDS`          | 每轮最大工具回传轮数；默认 3                                              |
+| `MAX_MODEL_REQUESTS`       | 每轮最大模型请求次数，包含首次请求；默认 4                                |
+| `MAX_TOOL_EXECUTIONS`      | 每轮最大实际工具执行次数；默认 8                                          |
+| `STREAM_OUTPUT_ENABLED`    | 回答正文流式展示开关；默认 `false`，设为 `true` 开启                      |
+| `CONNECT_SECONDS`          | OpenAI 或兼容接口的 SDK 连接超时，单位为秒；启用超时配置后默认 10         |
+| `FIRST_EVENT_SECONDS`      | 流式首事件等待上限，单位为秒；启用超时配置后默认 30                       |
+| `STREAM_IDLE_SECONDS`      | 流式相邻有效事件之间的等待上限，单位为秒；启用超时配置后默认 30           |
+| `REQUEST_DEADLINE_SECONDS` | 本轮总期限的时间预算，单位为秒；启用超时配置后默认 120                    |
+| `MAX_ATTEMPTS`             | 流式请求的最大尝试次数，包含首次发送；默认 3，设为 1 关闭应用重试         |
+| `BASE_DELAY_SECONDS`       | 第一次重试的随机退避上界，单位为秒；默认 1.0                              |
+| `MAX_DELAY_SECONDS`        | 客户端退避上界的上限，单位为秒；默认 8.0，不缩短服务端等待提示            |
 
 四项超时变量均未设置时，`request_timeout_config` 为 `None`，不启用这组应用超时控制，远程 SDK 自身的默认超时仍然生效。设置其中任意一项后，未设置的其余项采用表中的默认值。显式设置必须是大于零的有限数值；空值、零、负数、NaN 和无穷大均会被拒绝。键盘取消不依赖这些超时变量，具体行为见[超时与取消](#超时与取消)。
 
-三项重试变量属于应用自己的配置，与超时配置独立加载；均未设置时也采用表中的默认值。`MAX_ATTEMPTS` 必须为正整数，两项退避参数必须为大于零的有限数值。它们目前只控制回答正文流式入口的应用级重试；未启用总期限时，仍有尝试次数限制，但没有应用设置的本轮总时间上限。
+`MAX_ATTEMPTS`、`BASE_DELAY_SECONDS` 和 `MAX_DELAY_SECONDS` 属于应用自己的配置，与超时配置独立加载；均未设置时也采用表中的默认值。`MAX_ATTEMPTS` 必须为正整数，两项退避参数必须为大于零的有限数值。它们目前只控制回答正文流式入口的应用级重试；未启用总期限时，仍有尝试次数限制，但没有应用设置的本轮总时间上限。
 
 本地 `.env` 不应提交。示例值必须使用占位符：
 
@@ -314,6 +315,7 @@ BASE_URL=https://api.example.com/v1 \
 MODEL=deepseek-flash \
 REASONING_EFFORT=high \
 TEMPERATURE=0.2 \
+SDK_MAX_RETRIES=0 \
 ./scripts/run-prompt-experiment.sh \
   --max-output-tokens 16384 \
   --output prompt-results/zero-vs-few-shot-xxx.jsonl
@@ -329,7 +331,13 @@ TEMPERATURE=0.2 \
 
 样本中的 `source` 是会议资料，`user_instruction` 是资料区外的冲突指令，`user_message` 已保存完整用户输入。模型运行时只应接收共同任务契约、当前版本的独立示例和该用户输入，不能把期望行为或试判回答当作模型示例。覆盖范围、判分口径与试判结论记录在[本课练习回答](../../notes/llm/answers/safety-evaluation-observability.md)中。
 
-现有 `prompt-experiment` 入口仍只接受先修课的 12 个样本及原有输入结构。它尚未接通这些新材料，不能直接按前一节命令运行 20 个样本；后续真实模型比较需要先适配读取与输入组装。本任务只增加评测材料，没有修改运行代码或新增自动评分器。
+`prompt-experiment` 已接通这 20 个样本，原样发送 `user_message`，不会将资料外指令重新包进资料区。通过 `--version zero-shot` 可以只运行基线；不传 `--version` 时仍运行配置中的两个版本。每条记录另含非流式调用耗时，用量缺失时保留 `null`。实验入口与其他入口使用同一套 `ModelConfig` 读取和客户端工厂，不再单独覆盖 SDK 重试设置。评测命令显式设置 `SDK_MAX_RETRIES=0` 关闭 SDK 自动重试；未设置时沿用 SDK 默认值。网络超时沿用已有客户端配置与 SDK 默认值。
+
+2026-11-01 已完成一次[真实基线评测](prompt-results/safety-baseline-2026-11-01/report.md)，目录内分别保存调用前计划、20 条原始响应与 99 项判分证据。Agent 判定该轮全部通过，语义结论待用户审核。报告包含固定请求设置、估算价格口径、后续运行命令和独立的离线安全检查结果。
+
+2026-11-02 已保存[减少额外缺失说明的候选配置](prompts/safety-evaluation/candidate-missing-fields-v1.json)，配置版本为 `1.1.0`，选定条目仍为 `zero-shot`。它完整保留共同契约，只追加缺失说明范围的表达指引。指定该文件作为 `--prompts` 并选择 `--version zero-shot` 即可组装候选消息。修改依据与预期影响见[候选记录](../../notes/llm/answers/safety-evaluation-observability.md#任务-4-的候选-prompt)。
+
+同日已用当前统一入口完成[基线与候选比较](prompt-results/safety-comparison-2026-11-02/report.md)，两组各运行全部 20 个样本，均为 99 项检查通过。候选减少了额外缺失说明，但总用量和估算费用增加，耗时指标有升有降；报告分别说明表达效果与效率结果，没有将正文变短视为整体更优。候选配置保留创建时的准备元数据，实际调用记录与判分保存在比较目录中。
 
 ### Token 计数
 
@@ -384,7 +392,9 @@ PROVIDER=faked MODEL=fake-model STREAM_OUTPUT_ENABLED=true \
 
 ### SDK 内置重试
 
-`adapter/openai_client.py` 为流式调用创建 OpenAI Python SDK 的 `AsyncOpenAI` 客户端时，明确设置 `max_retries=0`。流式请求的尝试次数、退避等待和停止由应用统一控制，避免 SDK 内置重试产生额外的未计数尝试。非流式调用使用独立的同步 `OpenAI` 客户端，保留其默认重试配置，未接入这里的应用级网络重试循环。
+`load_model_config()` 将应用环境变量 `SDK_MAX_RETRIES` 读取到 `ModelConfig.sdk_max_retries`，`adapter/openai_client.py` 创建同步 OpenAI Python SDK 客户端时，将该值传给 SDK 的 `max_retries`。未设置环境变量时，该字段为 `None`，客户端不覆盖 SDK 默认值。终端对话、采样实验和 Prompt 实验均通过客户端工厂读取这份配置。所有 SDK 重试设置均从配置对象取得，`OpenAIClient` 的构造方法只接收 `config`。
+
+流式调用创建 `AsyncOpenAI` 客户端时仍固定设置 `max_retries=0`，环境变量不能打开流式 SDK 内部重试。流式请求的尝试次数、退避等待和停止由应用的 `RequestRetryConfig` 控制，避免 SDK 内置重试产生额外的未计数尝试。同步 SDK 重试与应用重试分开配置，非流式调用仍未接入应用级网络重试循环。
 
 ### 重试日志
 
