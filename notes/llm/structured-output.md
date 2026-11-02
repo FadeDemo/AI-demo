@@ -2,9 +2,9 @@
 title: 结构化输出
 type: concept
 area: llm
-status: learning
+status: completed
 created: 2026-08-05
-updated: 2026-09-17
+updated: 2026-11-02
 tags:
   - llm
   - json-schema

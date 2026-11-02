@@ -2,9 +2,9 @@
 title: 结构化输出练习回答
 type: answer
 area: llm
-status: learning
+status: completed
 created: 2026-09-03
-updated: 2026-09-17
+updated: 2026-11-02
 tags:
   - llm
   - json-schema
