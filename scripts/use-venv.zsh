@@ -673,7 +673,6 @@ check_cursor_requirements() {
   return 1
 }
 
-
 begin_cursor_repair_transaction() {
   prepare_runtime_state
   local temporary_root="$USE_VENV_STATE_DIRECTORY"
@@ -1854,14 +1853,10 @@ on run argv
         tell application "System Events"
             tell process processName
                 if (count of windows) is 0 then error "Target editor has no workspace window"
-                if processName is "Cursor" then
-                    -- Cursor can expose an auxiliary AXDialog before its IDE window.
-                    set targetWindow to value of attribute "AXMainWindow"
-                    if name of targetWindow does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
-                    perform action "AXRaise" of targetWindow
-                else
-                    if name of front window does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
-                end if
+                -- Accessibility window order can differ from the selected IDE window.
+                set targetWindow to value of attribute "AXMainWindow"
+                if name of targetWindow does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
+                perform action "AXRaise" of targetWindow
             end tell
         end tell
 
@@ -2089,14 +2084,10 @@ on run argv
         tell application "System Events"
             tell process processName
                 if (count of windows) is 0 then error "Target editor has no workspace window"
-                if processName is "Cursor" then
-                    -- Cursor can expose an auxiliary AXDialog before its IDE window.
-                    set targetWindow to value of attribute "AXMainWindow"
-                    if name of targetWindow does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
-                    perform action "AXRaise" of targetWindow
-                else
-                    if name of front window does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
-                end if
+                -- Accessibility window order can differ from the selected IDE window.
+                set targetWindow to value of attribute "AXMainWindow"
+                if name of targetWindow does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
+                perform action "AXRaise" of targetWindow
             end tell
         end tell
 
@@ -2232,7 +2223,10 @@ on run argv
         tell application "System Events"
             tell process processName
                 if (count of windows) is 0 then error "Target editor has no workspace window"
-                if name of front window does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
+                -- Accessibility window order can differ from the selected IDE window.
+                set targetWindow to value of attribute "AXMainWindow"
+                if name of targetWindow does not contain workspaceName then error "Target editor window does not match workspace " & workspaceName
+                perform action "AXRaise" of targetWindow
             end tell
         end tell
 
@@ -2877,7 +2871,6 @@ if [[ "$requested_editor" == cursor || "$requested_editor" == both ]]; then
   prepare_runtime_state
   runtime_state migrate "$USE_VENV_WORKSPACE_DIRECTORY" || exit 1
 fi
-
 
 if [[ "$requested_editor" == "cursor" || "$requested_editor" == "both" ]]; then
   check_cursor_requirements || exit 1
