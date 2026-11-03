@@ -7,27 +7,27 @@
     }
   },
   "ruff.configurationPreference": "filesystemFirst",
-  "python-envs.workspaceSearchPaths": ["./projects/llm-terminal-assistant/.venv"],
+  "python-envs.workspaceSearchPaths": ["./projects/rag-knowledge-base/.venv"],
   "python-envs.pythonProjects": [
     {
-      "path": "projects/llm-terminal-assistant",
+      "path": "projects/rag-knowledge-base",
       "envManager": "ms-python.python:venv",
       "packageManager": "ms-python.python:pip"
     }
   ],
   "python.terminal.executeInFileDir": false,
-  "terminal.integrated.cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
-  "python.analysis.extraPaths": ["${workspaceFolder}/projects/llm-terminal-assistant/src"],
-  "pylint.interpreter": ["${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"],
-  "autopep8.interpreter": ["${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"],
-  "isort.interpreter": ["${workspaceFolder}/projects/llm-terminal-assistant/.venv/bin/python"],
-  "python.testing.cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
+  "terminal.integrated.cwd": "${workspaceFolder}/projects/rag-knowledge-base",
+  "python.analysis.extraPaths": ["${workspaceFolder}/projects/rag-knowledge-base/src"],
+  "pylint.interpreter": ["${workspaceFolder}/projects/rag-knowledge-base/.venv/bin/python"],
+  "autopep8.interpreter": ["${workspaceFolder}/projects/rag-knowledge-base/.venv/bin/python"],
+  "isort.interpreter": ["${workspaceFolder}/projects/rag-knowledge-base/.venv/bin/python"],
+  "python.testing.cwd": "${workspaceFolder}/projects/rag-knowledge-base",
   "python.testing.unittestEnabled": true,
   "python.testing.pytestEnabled": false,
   "python.testing.unittestArgs": ["-v", "-s", "tests", "-p", "test_*.py"],
   "python.testing.pytestArgs": [],
-  "pylint.cwd": "${workspaceFolder}/projects/llm-terminal-assistant",
+  "pylint.cwd": "${workspaceFolder}/projects/rag-knowledge-base",
   "python.useEnvironmentsExtension": true,
   "python.terminal.activateEnvironment": true,
-  "cursorpyright.analysis.extraPaths": ["${workspaceFolder}/projects/llm-terminal-assistant/src"]
+  "cursorpyright.analysis.extraPaths": ["${workspaceFolder}/projects/rag-knowledge-base/src"]
 }

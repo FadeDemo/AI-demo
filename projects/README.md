@@ -38,20 +38,20 @@ projects/
 
 ## 已有项目
 
-| 项目                                                                     | 目标                                             | 状态   |
-| ------------------------------------------------------------------------ | ------------------------------------------------ | ------ |
-| [python](python/README.md)                                               | 统一保存 Python 课程的可运行示例、测试和样本数据 | 可运行 |
-| [engineering-foundations](engineering-foundations/README.md)             | 演示可定位日志、基础测试和日志级别交互实验       | 可运行 |
-| [package-management-comparison](package-management-comparison/README.md) | 对照 pip 与 uv 的依赖管理和环境恢复工作流        | 可运行 |
-| [llm-usage-lab](llm-usage-lab/README.md)                                 | 交互演示上下文预算、temperature 和 top-p         | 可运行 |
-| [retrieval-usage-lab](retrieval-usage-lab/README.md)                     | 交互演示向量相似度、检索指标和排名融合           | 可运行 |
-| [llm-terminal-assistant](llm-terminal-assistant/README.md)               | 演示模型适配层、两轮消息历史和安全请求日志       | 可运行 |
+| 项目                                                                     | 目标                                             | 状态           |
+| ------------------------------------------------------------------------ | ------------------------------------------------ | -------------- |
+| [python](python/README.md)                                               | 统一保存 Python 课程的可运行示例、测试和样本数据 | 可运行         |
+| [engineering-foundations](engineering-foundations/README.md)             | 演示可定位日志、基础测试和日志级别交互实验       | 可运行         |
+| [package-management-comparison](package-management-comparison/README.md) | 对照 pip 与 uv 的依赖管理和环境恢复工作流        | 可运行         |
+| [llm-usage-lab](llm-usage-lab/README.md)                                 | 交互演示上下文预算、temperature 和 top-p         | 可运行         |
+| [retrieval-usage-lab](retrieval-usage-lab/README.md)                     | 交互演示向量相似度、检索指标和排名融合           | 可运行         |
+| [llm-terminal-assistant](llm-terminal-assistant/README.md)               | 演示模型适配层、两轮消息历史和安全请求日志       | 可运行         |
+| [rag-knowledge-base](rag-knowledge-base/README.md)                       | 按课程逐步实现文档读取、检索与评测               | 已实现文档读取 |
 
 ## 计划中的项目
 
 | 项目                  | 目标                                     | 状态   |
 | --------------------- | ---------------------------------------- | ------ |
-| `rag-knowledge-base`  | 构建带引用、评测和可观测性的中文知识库   | 计划中 |
 | `repository-agent`    | 实现有工具权限与人工审批的代码仓库助手   | 计划中 |
 | `inference-benchmark` | 比较模型服务的延迟、吞吐、显存与量化配置 | 计划中 |
 

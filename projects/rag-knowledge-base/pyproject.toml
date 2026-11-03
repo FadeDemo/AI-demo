@@ -1,0 +1,14 @@
+[project]
+name = "rag-knowledge-base"
+version = "0.1.0"
+description = "RAG 检索基础课程的实践项目"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+rag-knowledge-base = "rag_knowledge_base.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.22,<0.10.0"]
+build-backend = "uv_build"
