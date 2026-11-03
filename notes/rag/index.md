@@ -2,9 +2,9 @@
 title: RAG 检索基础
 type: index
 area: rag
-status: planned
+status: learning
 created: 2026-11-02
-updated: 2026-11-02
+updated: 2026-11-03
 tags:
   - rag
   - retrieval
