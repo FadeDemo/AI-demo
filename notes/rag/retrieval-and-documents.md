@@ -2,9 +2,9 @@
 title: 文档与关键词检索
 type: concept
 area: rag
-status: learning
+status: completed
 created: 2026-11-02
-updated: 2026-11-03
+updated: 2026-11-07
 tags:
   - rag
   - retrieval
