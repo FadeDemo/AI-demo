@@ -2,9 +2,9 @@
 title: 向量与相似度
 type: concept
 area: rag
-status: learning
+status: completed
 created: 2026-11-02
-updated: 2026-11-08
+updated: 2026-11-09
 tags:
   - rag
   - vector
