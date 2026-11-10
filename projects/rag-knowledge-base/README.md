@@ -20,6 +20,8 @@ rag-knowledge-base/
 │       ├── cli.py
 │       ├── document.py
 │       ├── document_loader.py
+│       ├── embedding.py
+│       ├── similarity.py
 │       └── keyword_retrieval.py
 ├── data/
 │   ├── README.md
@@ -40,11 +42,13 @@ rag-knowledge-base/
 
 `keyword_retrieval.py` 提供词项切分、单篇文档计分与批量关键词检索函数。`tokenize` 统一查询与文档文本的切分规则，`score_document` 统计查询词项与文档标题、正文词项的共同项数量。`search_keywords` 接收文档列表、查询和正整数 K，返回按分数降序、同分按编号升序排列的前 K 个正分结果，每项包含文档对象和分数。空查询或无匹配时返回空列表，无效 K 抛出 `ValueError`。
 
+`embedding.py` 提供问题、单篇文档和批量文档编码，使用 Sentence Transformers 模型生成向量。两侧编码结果都要通过有效性与模型声明维度的检查，批量结果按文档编号保存。文档编码前会检查包含前缀、标题和正文的完整输入长度。`similarity.py` 提供单条向量检查、带输入检查的余弦比较，以及供已校验输入使用的纯计算函数。
+
 练习文档放在 `data/docs/`，出处和使用范围记录在[语料说明](data/README.md)，测试放在 `tests/`。
 
 ## 环境与运行
 
-项目使用 Python 3.13 和 uv，目前没有第三方运行依赖。打包工具为 `uv_build`，由 uv 在同步环境时处理。在项目目录中执行以下命令。
+项目使用 Python 3.13 和 uv，运行依赖包括 NumPy 与 Sentence Transformers。打包工具为 `uv_build`，由 uv 在同步环境时处理。在项目目录中执行以下命令。
 
 ```shell
 uv sync --locked
@@ -113,7 +117,7 @@ print([document.doc_id for document in documents])
 uv run python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-当前共有 48 项测试，覆盖单文件和目录读取、正文清理、子目录遍历、文件筛选、编号稳定性、空文件日志，以及读取和解码失败。命令行测试从模块入口启动子进程，验证列表、按编号查看、关键词检索、帮助信息和失败退出。测试自行构造练习文件。
+默认套件发现 72 项测试，其中 71 项通过，1 项真实模型集成测试按默认设置跳过。离线测试覆盖单文件和目录读取、正文清理、子目录遍历、文件筛选、编号稳定性、空文件日志，以及读取和解码失败。命令行测试从模块入口启动子进程，验证列表、按编号查看、关键词检索、帮助信息和失败退出。测试自行构造练习文件。
 
 命令行检索测试从查询开始，实际加载测试文件并检查排名、分数和展示字段，覆盖默认参数、同分排序、K 超过匹配数、K 为 1、空查询、无匹配与空目录。错误用例检查无效 K、不支持的方法，以及查询与按编号查看互斥时的错误类别和退出状态。
 
@@ -122,6 +126,16 @@ uv run python -m unittest discover -s tests -p 'test_*.py' -v
 单篇文档计分测试直接调用函数，验证课程样例分数、标题和正文共同计分、重复词项只计一次，以及标题与正文之间不会拼接出词项。空查询词项或无匹配时得 0 分，编号和来源不参与计分。
 
 批量检索测试直接调用 `search_keywords`，验证课程样例排名、零分过滤、前 K 项截取、同分排序、空查询、无匹配和空文档集合，并检查无效 K 在查询或文档集合为空时仍会报错。
+
+编码测试使用模型替身，覆盖问题与文档的前缀、归一化参数、输出格式、输入长度边界、编号对应、非法向量拒绝和模型声明维度的变化。余弦测试覆盖计算精度、方向关系、不同维度与非法输入。
+
+真实模型集成测试放在 `tests/test_embedding_integration.py`。在项目目录显式启用后，测试先编码三篇固定文档和三条问题，再准备完整语料。
+
+```shell
+RAG_RUN_REAL_EMBEDDING_TESTS=1 uv run python -m unittest discover -s tests -p 'test_embedding_integration.py' -v
+```
+
+测试固定模型修订并使用 CPU，首次运行会下载模型文件到仓库根目录的 `.cache/huggingface/`。模型已缓存时，可添加 Hugging Face Hub 的 `HF_HUB_OFFLINE=1` 设置离线复测。模型配置、实际维度和运行结果见[Embedding 与逐篇检索任务 1 验收记录](../../notes/rag/answers/embeddings-and-search.md)。
 
 任务验收与试查观察见[文档与关键词检索练习回答](../../notes/rag/answers/retrieval-and-documents.md)。
 

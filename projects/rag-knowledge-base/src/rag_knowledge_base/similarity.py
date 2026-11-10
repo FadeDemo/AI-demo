@@ -4,17 +4,24 @@ from collections.abc import Sequence
 import numpy as np
 
 
+def cosine_similarity_unchecked(a, b) -> float:
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
 def cosine_similarity(a: Sequence[int | float], b: Sequence[int | float]) -> float:
-    if not a or not b:
-        raise ValueError("Vectors cannot be empty")
+    validate_vector(a)
+    validate_vector(b)
     if len(a) != len(b):
         raise ValueError("Vectors must have the same length")
-    if any(not isinstance(x, (int, float)) or isinstance(x, bool) for x in a) or any(
-        not isinstance(x, (int, float)) or isinstance(x, bool) for x in b
-    ):
-        raise ValueError("Vectors must contain only numbers")
-    if any(not math.isfinite(x) or not math.isfinite(y) for (x, y) in zip(a, b)):
-        raise ValueError("Vectors must contain only finite numbers")
-    if not np.any(a) or not np.any(b):
-        raise ValueError("Vectors cannot be zero vectors")
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    return cosine_similarity_unchecked(a, b)
+
+
+def validate_vector(vector: Sequence[int | float]) -> None:
+    if not vector:
+        raise ValueError("Vector cannot be empty")
+    if any(not isinstance(x, (int, float)) or isinstance(x, bool) for x in vector):
+        raise ValueError("Vector must contain only numbers")
+    if any(not math.isfinite(x) for x in vector):
+        raise ValueError("Vector must contain only finite numbers")
+    if not np.any(vector):
+        raise ValueError("Vector cannot be zero vector")

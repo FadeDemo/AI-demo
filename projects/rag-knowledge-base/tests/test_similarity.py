@@ -2,13 +2,21 @@
 
 import math
 import unittest
+from unittest.mock import patch
 
-from rag_knowledge_base.similarity import cosine_similarity
+from rag_knowledge_base.similarity import cosine_similarity, cosine_similarity_unchecked
 
 ABS_TOLERANCE = 1e-6
 
 
 class CosineSimilarityTests(unittest.TestCase):
+    def test_unchecked_calculation_uses_prevalidated_vectors(self) -> None:
+        with patch("rag_knowledge_base.similarity.validate_vector") as validator:
+            result = cosine_similarity_unchecked([3, 4], [1, 0])
+
+        self.assertAlmostEqual(result, 0.6, delta=ABS_TOLERANCE)
+        validator.assert_not_called()
+
     def test_same_perpendicular_and_opposite_directions(self) -> None:
         for other, expected in (([1, 0], 1.0), ([0, 1], 0.0), ([-1, 0], -1.0)):
             with self.subTest(other=other):
@@ -79,7 +87,7 @@ class CosineSimilarityTests(unittest.TestCase):
                 cosine_similarity(a, b)
 
     def test_rejects_nonnumeric_components_on_either_side(self) -> None:
-        for value in ("3", None):
+        for value in ("3", None, True):
             for a, b in (([value, 0], [1, 0]), ([1, 0], [value, 0])):
                 with self.subTest(a=a, b=b), self.assertRaises(ValueError):
                     cosine_similarity(a, b)
