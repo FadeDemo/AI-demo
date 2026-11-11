@@ -4,7 +4,7 @@ type: answer
 area: rag
 status: learning
 created: 2026-11-10
-updated: 2026-11-10
+updated: 2026-11-11
 tags:
   - rag
   - embedding
@@ -14,7 +14,7 @@ tags:
 
 # Embedding 与逐篇检索练习记录
 
-本文记录[Embedding 与逐篇检索](../embeddings-and-search.md)任务 1 的编码实现、离线测试和真实模型运行结果。配套代码位于 [RAG Knowledge Base 项目](../../../projects/rag-knowledge-base/README.md)。
+本文记录[Embedding 与逐篇检索](../embeddings-and-search.md)任务 1、任务 2 的实现验收、离线测试、真实模型运行结果及两种检索方法的试查观察。配套代码位于 [RAG Knowledge Base 项目](../../../projects/rag-knowledge-base/README.md)。
 
 ## 任务 1 验收结果
 
@@ -46,7 +46,7 @@ tags:
 
 ## 离线测试
 
-默认套件发现 72 项测试，其中 71 项通过，1 项真实模型集成测试按默认设置跳过。编码组件的离线测试使用能记录调用的模型替身，替身同时提供编码结果、分词结果和声明的输出维度。
+任务 1 验收时，默认套件发现 72 项测试，其中 71 项通过，1 项真实模型集成测试按默认设置跳过。编码组件的离线测试使用能记录调用的模型替身，替身同时提供编码结果、分词结果和声明的输出维度。
 
 非法编码结果的测试检查具体错误类别，并确认测试输入实际经过了编码调用。维度切换用例将替身声明的输出维度改为 3，问题和文档都能正常返回三维向量。
 
@@ -91,4 +91,95 @@ RAG_RUN_REAL_EMBEDDING_TESTS=1 .venv/bin/python -m unittest discover -s tests -p
 
 ```shell
 RAG_RUN_REAL_EMBEDDING_TESTS=1 HF_HUB_OFFLINE=1 .venv/bin/python -m unittest discover -s tests -p 'test_embedding_integration.py' -v
+```
+
+## 任务 2 验收结果
+
+2026-11-11 完成任务 2 验收。
+
+- 同一命令行入口通过 `--method keyword` 或 `--method vector` 选择方法。两种方法都展示文档编号、标题、完整正文、来源和分数，按分数降序排列，同分按编号升序排列，再取前 K 项。
+- `--query` 可以重复提供。向量分支在查询循环前加载模型、生成整批文档向量，每个问题复用这批向量。多个问题的结果按查询标题分组，单问题调用继续使用原有展示格式。
+- 空白查询和空语料返回空结果，查询编码调用次数为零。非法 K、文档编号集合不符，以及编码结果为零向量、含非有限数值或维度不符等情况，都有离线测试验证错误原因和执行边界。
+- 默认离线套件发现 89 项测试，88 项通过，1 项真实模型集成测试按默认设置跳过。三项多问题入口测试验证各组的编号、分数和展示字段，并记录模型调用，确认三条正常查询只加载一次模型、每篇文档只编码一次。
+- 真实语料试查沿用任务 1 的三个问题，K 取 5。关键词和向量方法各通过一次命令行调用处理三个问题，向量调用一次准备 50 篇文档后连续查询。两次调用均正常退出，30 条结果涉及 17 篇原文，返回的标题、正文和来源均与原文一致。
+
+## 任务 2 真实语料对比
+
+本次向量试查使用上文记录的固定模型修订、CPU 和归一化设置，通过本地缓存离线运行。运行环境版本与任务 1 相同。每种方法分别保留前五项，关键词分数是共同词项个数，向量分数是余弦相似度。下表中的向量分数保留六位小数，排名沿用程序输出。
+
+### 试查 1　请求一直没有返回怎么办？
+
+| 方法   | 排名 | 文档                                                                                                        | 分数     |
+| ------ | ---- | ----------------------------------------------------------------------------------------------------------- | -------- |
+| 关键词 | 1    | [context/request-budget.md](../../../projects/rag-knowledge-base/data/docs/context/request-budget.md)       | 2        |
+| 关键词 | 2    | [engineering/timing-logs.md](../../../projects/rag-knowledge-base/data/docs/engineering/timing-logs.md)     | 2        |
+| 关键词 | 3    | [output/schema-validation.md](../../../projects/rag-knowledge-base/data/docs/output/schema-validation.md)   | 2        |
+| 关键词 | 4    | [requests/fake-client.md](../../../projects/rag-knowledge-base/data/docs/requests/fake-client.md)           | 2        |
+| 关键词 | 5    | [context/context-window.md](../../../projects/rag-knowledge-base/data/docs/context/context-window.md)       | 1        |
+| 向量   | 1    | [超时.md](../../../projects/rag-knowledge-base/data/docs/超时.md)                                           | 0.891825 |
+| 向量   | 2    | [requests/retryable-errors.md](../../../projects/rag-knowledge-base/data/docs/requests/retryable-errors.md) | 0.888998 |
+| 向量   | 3    | [requests/retry-limit.md](../../../projects/rag-knowledge-base/data/docs/requests/retry-limit.md)           | 0.887992 |
+| 向量   | 4    | [requests/finish-reason.md](../../../projects/rag-knowledge-base/data/docs/requests/finish-reason.md)       | 0.887345 |
+| 向量   | 5    | [output/stream-failure.md](../../../projects/rag-knowledge-base/data/docs/output/stream-failure.md)         | 0.885196 |
+
+关键词前四名都只有两个共同词项。`context/request-budget.md` 与问题共同包含“请求”和“没有”，内容讲的是发送前预算检查。`output/schema-validation.md` 命中“求一”和“返回”，其中“求一”来自“要求一个”，全文讨论结构校验。这些匹配没有提供等待请求返回时的处理办法。
+
+向量方法找到了超时、错误分类与重试上限的资料。`超时.md` 只给出有限重试的原则，第二、第三名进一步说明重试条件、剩余时间和停止条件。第四名讲响应结束后的判断，第五名讲已经展示部分正文后的中断，与持续没有返回的情形关系较弱。直接说明连接、首个事件和后续事件等待上限的 `requests/request-timeout.md` 在本问题的两种结果中都排在前五名之外。[等待上限原文](../../../projects/rag-knowledge-base/data/docs/requests/request-timeout.md)
+
+### 试查 2　怎样记录请求耗时？
+
+| 方法   | 排名 | 文档                                                                                                                      | 分数     |
+| ------ | ---- | ------------------------------------------------------------------------------------------------------------------------- | -------- |
+| 关键词 | 1    | [日志.md](../../../projects/rag-knowledge-base/data/docs/日志.md)                                                         | 5        |
+| 关键词 | 2    | [engineering/timing-logs.md](../../../projects/rag-knowledge-base/data/docs/engineering/timing-logs.md)                   | 3        |
+| 关键词 | 3    | [context/history-growth.md](../../../projects/rag-knowledge-base/data/docs/context/history-growth.md)                     | 2        |
+| 关键词 | 4    | [context/request-budget.md](../../../projects/rag-knowledge-base/data/docs/context/request-budget.md)                     | 2        |
+| 关键词 | 5    | [engineering/credential-redaction.md](../../../projects/rag-knowledge-base/data/docs/engineering/credential-redaction.md) | 2        |
+| 向量   | 1    | [日志.md](../../../projects/rag-knowledge-base/data/docs/日志.md)                                                         | 0.918480 |
+| 向量   | 2    | [engineering/timing-logs.md](../../../projects/rag-knowledge-base/data/docs/engineering/timing-logs.md)                   | 0.910735 |
+| 向量   | 3    | [超时.md](../../../projects/rag-knowledge-base/data/docs/超时.md)                                                         | 0.888958 |
+| 向量   | 4    | [requests/request-timeout.md](../../../projects/rag-knowledge-base/data/docs/requests/request-timeout.md)                 | 0.883229 |
+| 向量   | 5    | [requests/rate-limit.md](../../../projects/rag-knowledge-base/data/docs/requests/rate-limit.md)                           | 0.879957 |
+
+两种方法的前两名一致。`日志.md` 简要说明记录请求耗时与超时类别，`engineering/timing-logs.md` 进一步说明首段耗时从何时计算、总耗时是否包含重试等待，以及没有展示正文的失败请求怎样记录首段耗时。第二篇提供了更具体的实现依据。[耗时记录原文](../../../projects/rag-knowledge-base/data/docs/engineering/timing-logs.md)
+
+后续结果各有偏离。关键词方法带回历史增长、请求预算和日志脱敏，向量方法带回超时重试、等待范围和限流。这些资料与请求处理有关，正文提供的耗时记录规则较少。
+
+### 试查 3　发送前怎样检查上下文长度？
+
+| 方法   | 排名 | 文档                                                                                                    | 分数     |
+| ------ | ---- | ------------------------------------------------------------------------------------------------------- | -------- |
+| 关键词 | 1    | [预算.md](../../../projects/rag-knowledge-base/data/docs/预算.md)                                       | 8        |
+| 关键词 | 2    | [context/context-window.md](../../../projects/rag-knowledge-base/data/docs/context/context-window.md)   | 4        |
+| 关键词 | 3    | [context/history-growth.md](../../../projects/rag-knowledge-base/data/docs/context/history-growth.md)   | 3        |
+| 关键词 | 4    | [context/request-budget.md](../../../projects/rag-knowledge-base/data/docs/context/request-budget.md)   | 3        |
+| 关键词 | 5    | [context/history-pruning.md](../../../projects/rag-knowledge-base/data/docs/context/history-pruning.md) | 2        |
+| 向量   | 1    | [预算.md](../../../projects/rag-knowledge-base/data/docs/预算.md)                                       | 0.922306 |
+| 向量   | 2    | [context/context-window.md](../../../projects/rag-knowledge-base/data/docs/context/context-window.md)   | 0.885303 |
+| 向量   | 3    | [requests/finish-reason.md](../../../projects/rag-knowledge-base/data/docs/requests/finish-reason.md)   | 0.873025 |
+| 向量   | 4    | [requests/retry-limit.md](../../../projects/rag-knowledge-base/data/docs/requests/retry-limit.md)       | 0.872654 |
+| 向量   | 5    | [context/request-budget.md](../../../projects/rag-knowledge-base/data/docs/context/request-budget.md)   | 0.872427 |
+
+两种方法的前两名仍然一致。`预算.md` 给出发送前检查长度的原则，`context/context-window.md` 说明一次请求应为活跃输入和计划输出分配容量。`context/request-budget.md` 则说明资料或历史变化后，要检查实际准备发送的最终请求，它在关键词结果中排第四，在向量结果中排第五。[最终请求预算检查原文](../../../projects/rag-knowledge-base/data/docs/context/request-budget.md)
+
+关键词方法第三名的历史增长、第五名的历史裁剪也涉及输入长度变化和预算处理。向量方法第三、第四名分别讲结束原因和重试次数上限，与发送前的上下文长度检查关系较弱。本问题中，关键词方法后几名提供的资料更贴近检查目标。
+
+## 任务 2 复现命令
+
+以下命令均在配套项目目录执行，每种方法的一次调用包含同样的三个问题。
+
+```shell
+.venv/bin/python -m rag_knowledge_base data/docs --method keyword --k 5 \
+  --query "请求一直没有返回怎么办？" \
+  --query "怎样记录请求耗时？" \
+  --query "发送前怎样检查上下文长度？"
+```
+
+模型已经缓存时，使用下面的命令复现向量试查。
+
+```shell
+HF_HUB_OFFLINE=1 .venv/bin/python -m rag_knowledge_base data/docs --method vector --k 5 \
+  --query "请求一直没有返回怎么办？" \
+  --query "怎样记录请求耗时？" \
+  --query "发送前怎样检查上下文长度？"
 ```
