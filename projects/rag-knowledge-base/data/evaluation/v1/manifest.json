@@ -1,0 +1,223 @@
+{
+  "dataset_id": "retrieval-evaluation-v1",
+  "created": "2026-11-12",
+  "annotator": "Codex",
+  "annotation_method": "逐题核对完整语料原文",
+  "relevance_rule": "文档含有回答问题所需的明确依据时标为相关，多部分问题可由多篇文档分别提供依据。",
+  "corpus_root": "../../docs",
+  "document_count": 50,
+  "query_file": "queries.json",
+  "query_count": 20,
+  "category_counts": {
+    "common": 6,
+    "paraphrase": 6,
+    "identifier": 4,
+    "unanswerable": 4
+  },
+  "answerable_query_count": 16,
+  "unanswerable_query_count": 4,
+  "query_file_sha256": "a8b59918e2c985452351702dc0b8ea78fe051f34deda96a8215abdb985249e01",
+  "documents": [
+    {
+      "doc_id": "context/context-window.md",
+      "sha256": "52a7c06550b1a2bc6c73453c38231ab08d91663169698a7f5d4bd00067ab5bd0"
+    },
+    {
+      "doc_id": "context/history-growth.md",
+      "sha256": "6e69f104436f6a6b0fc12147ba19b2b1fbcc06e2198719b3c8603b3ae7c5f45b"
+    },
+    {
+      "doc_id": "context/history-pruning.md",
+      "sha256": "7ee02842001ff1acf3a67c826debbab9c047998c02987ab7e51e55edc25eb449"
+    },
+    {
+      "doc_id": "context/output-reserve.md",
+      "sha256": "534db50f3a2bd768af0a91db9ef6dbfdff3a7c80c4d67463ef92a1e7e9e1ece4"
+    },
+    {
+      "doc_id": "context/request-budget.md",
+      "sha256": "35ede915bfb76bc13b6668b0edc76f8c5f8978bfb4777c9c0bf960c5df899da7"
+    },
+    {
+      "doc_id": "context/sampling-temperature.md",
+      "sha256": "57955b216f3c52f4e3c9890684adceb311572b50a07e6f84b19f9184fc05819d"
+    },
+    {
+      "doc_id": "context/token-count.md",
+      "sha256": "b0f16f433491bad67e5680c2f5f177ae05caf65049c7df8f1029d96cdcd04072"
+    },
+    {
+      "doc_id": "context/top-p.md",
+      "sha256": "6fa75aa5464199ad143a6952355d4b72d8e6c4173bbefc01e2ab38bd29fcf27d"
+    },
+    {
+      "doc_id": "engineering/config-environment.md",
+      "sha256": "e8e4518e3071d7920c88d99877e34fff67486bdae0eb77af2785dd734b19f552"
+    },
+    {
+      "doc_id": "engineering/credential-redaction.md",
+      "sha256": "a04279b78a7dbac3cd099898912ce5104bcdd1afc4dfc2ed587d03de42038393"
+    },
+    {
+      "doc_id": "engineering/integration-test.md",
+      "sha256": "191669a8f26d6869a5cb36f1deeff98d54cec6a7a9df1a12a208300e88e0ce66"
+    },
+    {
+      "doc_id": "engineering/log-level.md",
+      "sha256": "167a5da75af757869cef7c9e5d5b7e30c6951a449750d3e4e5b057d39a4f66e2"
+    },
+    {
+      "doc_id": "engineering/prompt-injection.md",
+      "sha256": "e737762565ee62279d8c6e403aae6ce07100d4115ab54c9787285ae3867634de"
+    },
+    {
+      "doc_id": "engineering/request-id.md",
+      "sha256": "f39a5acd059aac3d6f1a36e1d69f2f02213531426dac4bd253be9837e5d270b9"
+    },
+    {
+      "doc_id": "engineering/stdout-stderr.md",
+      "sha256": "3018b0513050d39cf0502008ea556bfd0410d105a6b8c2c31af30e75c74b670d"
+    },
+    {
+      "doc_id": "engineering/test-fixture.md",
+      "sha256": "1cf98c2f3e163a7ddcb9a2f611fc37468b56ae3be50f46619d1f82887e39c77d"
+    },
+    {
+      "doc_id": "engineering/timing-logs.md",
+      "sha256": "6211ca281a6f67824344841a8b98296ecf1469cfdc701b89de761a171cdc262e"
+    },
+    {
+      "doc_id": "engineering/unit-test.md",
+      "sha256": "d3c170b80c6323f6e36170edfa52301df6d9f97924fb3dbb16d00b0b2a1f1450"
+    },
+    {
+      "doc_id": "output/json-parse.md",
+      "sha256": "f81d32016b9d90d6e49540c9a437899439f2620f821d63e1e48dbecad626da05"
+    },
+    {
+      "doc_id": "output/partial-output.md",
+      "sha256": "786f6b66eae223b620fbce1d18d86b4142e9feeb392b78cbf6db32dd987c9ad6"
+    },
+    {
+      "doc_id": "output/schema-validation.md",
+      "sha256": "7f6609050ae0a4bd872a5427c8e614658771756b5bd355f3465312ca699c16bf"
+    },
+    {
+      "doc_id": "output/stream-failure.md",
+      "sha256": "c303504b7223545a6d83eceb9d5f035ba0bd0408b6a9ab66c2e10d7f75efb05d"
+    },
+    {
+      "doc_id": "output/streamed-text.md",
+      "sha256": "0296b5f095900cbc6c2a31d9fad8135d4e9af553d3d786bee177ef346d9d0a7e"
+    },
+    {
+      "doc_id": "output/structured-output.md",
+      "sha256": "4f71ddf6d8c3648122e216f56ea1c8888adbeca07e98c1f4f25e52adbefc2ae6"
+    },
+    {
+      "doc_id": "output/tool-arguments.md",
+      "sha256": "3f7db2e1f1aa62f4da9073c14bc34bba7a587cdb267f85bccfc551238292f89e"
+    },
+    {
+      "doc_id": "output/tool-permissions.md",
+      "sha256": "b28a1994a55b55876887eefdf2bf760abeff22512630b9d62fe8bbcaafe213e1"
+    },
+    {
+      "doc_id": "output/tool-round-limit.md",
+      "sha256": "4cdca9c7d64b4675925936920513290043fb0db206db0b4c273354067da8c1f1"
+    },
+    {
+      "doc_id": "python/absolute-import.md",
+      "sha256": "4d5c7ccc6bb17b82dddbd37d832195cb7fe682ad6fd720a0478ca69668758a37"
+    },
+    {
+      "doc_id": "python/dependency-lock.md",
+      "sha256": "b4043447320490d82c8485fce4260fd76fe706f15af03420f19a166f1de0448f"
+    },
+    {
+      "doc_id": "python/interpreter-path.md",
+      "sha256": "dd041323927d1da016e81d39cf7edc5d49ebf0023c6546eaeb2f3d2d718d40c9"
+    },
+    {
+      "doc_id": "python/package-init.md",
+      "sha256": "ade64d0f5dc3866e69cf9e2853e5c7dbe2e961fd1701f96f6b3804b64fc8fe28"
+    },
+    {
+      "doc_id": "python/project-dependencies.md",
+      "sha256": "4c3304763724d160c8a3b2a1b228ce356b1686a96cdbf6266446da9d2200c49c"
+    },
+    {
+      "doc_id": "python/relative-path.md",
+      "sha256": "e0cedbcbca8c721180f052c13db3837ae6304f1be43fa7d7847f382468eef76d"
+    },
+    {
+      "doc_id": "python/src-layout.md",
+      "sha256": "e871b206ae4c9018f6611c5ca61b0bce73f7035090688c6b99dbdf442ce94608"
+    },
+    {
+      "doc_id": "python/utf8-files.md",
+      "sha256": "02d3a51be41399f5e18c15ec0a35ed4cfe30b3cdb5a0d03048e83abc4bd67005"
+    },
+    {
+      "doc_id": "python/uv-sync.md",
+      "sha256": "75b450552e4df803d6515a5f836f7a669c432bac00da663fbcf448386cec2ab4"
+    },
+    {
+      "doc_id": "python/virtual-environment.md",
+      "sha256": "0f79c3e8a047c0948e9ceb070946c8daa14d3f60d255898b79c9231e384fa6ae"
+    },
+    {
+      "doc_id": "requests/authentication-error.md",
+      "sha256": "ab9f9993ea8634e411f3491132ca9024cf165b86dc4d4d869ab75ca697b74a6c"
+    },
+    {
+      "doc_id": "requests/fake-client.md",
+      "sha256": "09e0fff3a0865ef20400fd4991c37ed61027a83776ec11b26a76517301df3670"
+    },
+    {
+      "doc_id": "requests/finish-reason.md",
+      "sha256": "d431768721fc6b19978af9abe07c58c1047ab8c04324e16cc4f3b03aa383d8d0"
+    },
+    {
+      "doc_id": "requests/message-roles.md",
+      "sha256": "5dfcf1491a54d0609dae08fa78b97e28247e73c13ce1d46a62ec873b961588d5"
+    },
+    {
+      "doc_id": "requests/rate-limit.md",
+      "sha256": "acafd67b0dcc27283fa00d3bbba0b26e8ac80fa6444cfeb9d7306965eeca0e2e"
+    },
+    {
+      "doc_id": "requests/request-response.md",
+      "sha256": "58365eabb6d86fac58f06253f6681b8ac53e324bca8881010ae52378cca14385"
+    },
+    {
+      "doc_id": "requests/request-timeout.md",
+      "sha256": "385efcfa7ac70122083143ac09b8db91ceba5712248caa58a935879009db5b47"
+    },
+    {
+      "doc_id": "requests/retry-backoff.md",
+      "sha256": "77c78d76e4009a03e99293fbd378b17522ac5975843a95f9bbd2bb19c55fcfb8"
+    },
+    {
+      "doc_id": "requests/retry-limit.md",
+      "sha256": "f65a0d1368406838b9f23c7a8cec15bc431ef68b072e5449a2809b436b42855d"
+    },
+    {
+      "doc_id": "requests/retryable-errors.md",
+      "sha256": "e9494841b14ad44a479582219b432df685b776e18cf720ebf6894dbb68b00c82"
+    },
+    {
+      "doc_id": "日志.md",
+      "sha256": "60812656ffd143f04326f25de19da479a448f1af1abedbf50fd45beb43e2aa9f"
+    },
+    {
+      "doc_id": "超时.md",
+      "sha256": "6485bb9387375535061be7949ef3262eb84755523016d4be4fe13a250fa940b0"
+    },
+    {
+      "doc_id": "预算.md",
+      "sha256": "14bf7fb4a93d03c44e27998ac90bf0b77003b62932dfd37bea94a5f191ea8dbd"
+    }
+  ],
+  "corpus_git_revision": "475c6c5a2d0ac6a818c8d68ad714a158ccc4b6a5"
+}

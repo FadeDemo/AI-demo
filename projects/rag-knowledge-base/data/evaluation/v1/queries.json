@@ -1,0 +1,304 @@
+[
+  {
+    "query_id": "q01",
+    "category": "common",
+    "text": "最大尝试次数设为三次时，首次发送是否计入，还能再重试几次？",
+    "relevant_doc_ids": ["requests/retry-limit.md"],
+    "reasons": {
+      "requests/retry-limit.md": "明确把首次发送计入最大尝试次数，并给出三次上限对应首次请求加两次重试。"
+    },
+    "evidence": {
+      "requests/retry-limit.md": [
+        "本课程把首次发送也计入最大尝试次数。最大尝试次数为三次时，持续失败最多允许首次请求加两次重试。"
+      ]
+    }
+  },
+  {
+    "query_id": "q02",
+    "category": "common",
+    "text": "请求一直没有新数据时，应分别限制哪些等待阶段，怎样限制整轮处理时间？",
+    "relevant_doc_ids": ["requests/request-timeout.md"],
+    "reasons": {
+      "requests/request-timeout.md": "列出连接、首个事件和后续事件的等待上限，并说明逻辑请求总期限约束整轮处理。"
+    },
+    "evidence": {
+      "requests/request-timeout.md": [
+        "一次模型请求可能在建立连接、等待首个事件或等待后续事件时停住。分别设置等待上限，可以知道超时发生在哪个阶段。",
+        "逻辑请求总期限限制整轮处理时间。请求持续有零散事件到达时，应用仍需检查总期限，并在停止后释放本轮读取资源。"
+      ]
+    }
+  },
+  {
+    "query_id": "q03",
+    "category": "common",
+    "text": "读取 UTF-8 语料后应怎样清理正文，Markdown 标题标记会保留吗？",
+    "relevant_doc_ids": ["python/utf8-files.md"],
+    "reasons": {
+      "python/utf8-files.md": "明确说明统一换行、清除首尾空白，并保留 Markdown 标题标记。"
+    },
+    "evidence": {
+      "python/utf8-files.md": [
+        "本练习用 UTF-8 保存和读取语料。程序读取完整文件内容，统一换行，并清除正文首尾的空白，Markdown 标题标记会保留。"
+      ]
+    }
+  },
+  {
+    "query_id": "q04",
+    "category": "common",
+    "text": "正文已经返回，结束原因显示达到输出上限时，应用应向用户提示什么？",
+    "relevant_doc_ids": ["output/partial-output.md", "requests/finish-reason.md"],
+    "reasons": {
+      "output/partial-output.md": "说明达到输出上限时正文可能缺少后半部分，应用应依据结束原因提示回答不完整。",
+      "requests/finish-reason.md": "明确要求结束原因为输出上限时提示内容可能不完整。"
+    },
+    "evidence": {
+      "output/partial-output.md": [
+        "模型因达到输出上限而结束时，响应可能包含可读文字，但任务结果仍可能缺少后半部分。应用应依据结束原因提示回答不完整。"
+      ],
+      "requests/finish-reason.md": ["结束原因为输出上限时，应明确提示内容可能不完整。"]
+    }
+  },
+  {
+    "query_id": "q05",
+    "category": "common",
+    "text": "模型返回的 JSON 回答，在交给业务消费者前，语法、字段类型和业务规则应怎样检查？",
+    "relevant_doc_ids": [
+      "output/json-parse.md",
+      "output/partial-output.md",
+      "output/schema-validation.md",
+      "output/structured-output.md"
+    ],
+    "reasons": {
+      "output/json-parse.md": "给出先解析 JSON、再检查字段、类型和业务规则的顺序，并说明语法错误需要报告。",
+      "output/partial-output.md": "规定结构化数据经过解析和校验后，业务消费者才接收通过检查的结果。",
+      "output/schema-validation.md": "说明通过 Schema 检查字段、类型和取值，结构检查通过后继续验证业务限制。",
+      "output/structured-output.md": "规定应用先将响应转换成对象，完成格式与业务检查，再交给后续消费者。"
+    },
+    "evidence": {
+      "output/json-parse.md": [
+        "模型返回 JSON 文本后，程序先尝试把它解析成数据对象。少了引号、括号或其他语法错误时，解析会失败，应向调用者报告对应类别。",
+        "成功解析后，还要检查字段、类型和业务规则。语法有效的数据也可能缺少任务所需的信息。"
+      ],
+      "output/partial-output.md": [
+        "结构化数据还需要经过解析和校验，业务消费者只接收通过约定检查的结果。"
+      ],
+      "output/schema-validation.md": [
+        "Schema 描述数据应包含的字段、字段类型和允许的取值。解析结果需要满足这些要求，才能进入依赖该结构的消费步骤。",
+        "业务限制可以在结构检查通过后继续验证。"
+      ],
+      "output/structured-output.md": [
+        "需要程序继续处理的模型输出，应先约定数据结构和通过条件。应用把响应转换成对象，完成格式与业务检查，再交给后续消费者。"
+      ]
+    }
+  },
+  {
+    "query_id": "q06",
+    "category": "common",
+    "text": "工具名已经注册后，参数还要检查哪些内容，执行结果又怎样与调用对应并回传？",
+    "relevant_doc_ids": ["output/tool-arguments.md"],
+    "reasons": {
+      "output/tool-arguments.md": "列出参数类型、必填字段和业务限制检查，并说明用调用标识关联执行结果后由应用回传。"
+    },
+    "evidence": {
+      "output/tool-arguments.md": [
+        "工具名存在时，也要检查参数类型、必填字段和业务限制。",
+        "校验通过的参数才交给对应工具。执行结果通过调用标识与模型提出的请求关联，再由应用按协议回传。"
+      ]
+    }
+  },
+  {
+    "query_id": "q07",
+    "category": "paraphrase",
+    "text": "连续失败的客户端容易挤在同一时刻再发请求，等待该怎样错开，服务端要求等待时又怎样安排？",
+    "relevant_doc_ids": ["requests/rate-limit.md", "requests/retry-backoff.md"],
+    "reasons": {
+      "requests/rate-limit.md": "说明遇到限流时，依据服务端等待提示和本轮时间预算决定等待或停止。",
+      "requests/retry-backoff.md": "说明逐次增长的等待、随机抖动和等待上限，并要求比较客户端等待与服务端提示，采用较大值。"
+    },
+    "evidence": {
+      "requests/rate-limit.md": ["遇到限流后，应用按服务端等待提示和本轮时间预算决定等待或停止。"],
+      "requests/retry-backoff.md": [
+        "退避让连续失败后的等待逐次增长，再加上随机抖动，可以减少多个客户端同时重试的机会。等待应设上限，并受本轮剩余时间约束。",
+        "本课程把客户端算出的随机等待与服务端提示的等待时长比较，采用较大的值。如果等待会耗尽剩余时间，应用就停止重试。"
+      ]
+    }
+  },
+  {
+    "query_id": "q08",
+    "category": "paraphrase",
+    "text": "聊天记录太长，想删掉早先的对话来腾地方，裁剪时必须保留什么，工具往返记录该怎样保持对应？",
+    "relevant_doc_ids": [
+      "context/history-growth.md",
+      "context/history-pruning.md",
+      "output/tool-arguments.md"
+    ],
+    "reasons": {
+      "context/history-growth.md": "要求历史保存策略说明进入下一轮的消息，以及工具请求和结果的对应关系。",
+      "context/history-pruning.md": "说明按较早的对话单元裁剪，保留当前任务规则与输入，并维护工具请求和结果的关联。",
+      "output/tool-arguments.md": "说明执行结果通过调用标识与模型请求关联，提供保持工具往返对应关系的具体依据。"
+    },
+    "evidence": {
+      "context/history-growth.md": [
+        "历史保存策略还需要说明哪些消息进入下一轮，以及工具请求和结果怎样保持对应关系。"
+      ],
+      "context/history-pruning.md": [
+        "历史超出预算时，可以按应用策略移除较早的对话单元，再重新计数。裁剪时要保留当前任务所需的规则与输入，并维护工具请求和结果的关联。"
+      ],
+      "output/tool-arguments.md": ["执行结果通过调用标识与模型提出的请求关联，再由应用按协议回传。"]
+    }
+  },
+  {
+    "query_id": "q09",
+    "category": "paraphrase",
+    "text": "聊天已经显示了一半，后面的读取突然报错，这半截内容和后续重发该怎样处理？",
+    "relevant_doc_ids": ["output/stream-failure.md", "requests/retryable-errors.md"],
+    "reasons": {
+      "output/stream-failure.md": "明确要求保留已展示内容、提示不完整、记录失败类别，并停止自动重试和释放响应资源。",
+      "requests/retryable-errors.md": "说明是否再次发送需要考虑已展示内容，并给出尚未展示正文时允许有限恢复的情形。"
+    },
+    "evidence": {
+      "output/stream-failure.md": [
+        "回答已经展示了一部分时，后续读取仍可能失败。应用应保留已展示的内容，同时明确提示回答不完整并记录失败类别。",
+        "本课程在这种情况下停止自动重试，避免把另一份生成内容接到已有答案后面。停止后还要关闭响应流并释放读取资源。"
+      ],
+      "requests/retryable-errors.md": [
+        "应用根据类别、已展示内容、剩余时间和尝试次数，决定是否允许再次发送。",
+        "本课程允许在尚未展示正文时有限恢复部分超时、限流和临时服务故障。"
+      ]
+    }
+  },
+  {
+    "query_id": "q10",
+    "category": "paraphrase",
+    "text": "每一步抽词之前，怎样把候选的概率分布调得更集中或更分散？",
+    "relevant_doc_ids": ["context/sampling-temperature.md"],
+    "reasons": {
+      "context/sampling-temperature.md": "说明温度改变采样前概率分布的形状，低温度使概率集中，高温度让更多候选有机会被选中。"
+    },
+    "evidence": {
+      "context/sampling-temperature.md": [
+        "temperature 用于调节采样前候选概率分布的形状。较低的温度通常使概率更集中，较高的温度通常让更多候选有机会被选中。"
+      ]
+    }
+  },
+  {
+    "query_id": "q11",
+    "category": "paraphrase",
+    "text": "把要求程序越权办事的文字放进资料里测试时，应检查什么，才能确认它确实触发了权限保护？",
+    "relevant_doc_ids": ["engineering/prompt-injection.md"],
+    "reasons": {
+      "engineering/prompt-injection.md": "要求检查资料中的越权请求是否实际到达保护机制，以及最终停止原因。"
+    },
+    "evidence": {
+      "engineering/prompt-injection.md": [
+        "测试可以在资料中放入越权请求，检查它是否到达保护机制，以及最终停止原因。"
+      ]
+    }
+  },
+  {
+    "query_id": "q12",
+    "category": "paraphrase",
+    "text": "一次没成功又发了几回，日志里该一直沿用哪一个标记，再用什么区分第几回？",
+    "relevant_doc_ids": ["engineering/request-id.md"],
+    "reasons": {
+      "engineering/request-id.md": "明确要求重试期间保留同一请求标识，并用单独的尝试序号区分各次发送。"
+    },
+    "evidence": {
+      "engineering/request-id.md": [
+        "本课程在重试期间保留同一个请求标识，并单独记录尝试序号。根据这些字段，可以核对失败后是否又发起了请求。"
+      ]
+    }
+  },
+  {
+    "query_id": "q13",
+    "category": "identifier",
+    "text": "uv sync 根据哪两个项目文件恢复环境？",
+    "relevant_doc_ids": ["python/uv-sync.md"],
+    "reasons": {
+      "python/uv-sync.md": "明确给出用于恢复环境的两个文件名 pyproject.toml 和 uv.lock，并说明各自保存的内容。"
+    },
+    "evidence": {
+      "python/uv-sync.md": [
+        "本练习把依赖声明保存在 `pyproject.toml`，把解析结果保存在 `uv.lock`。恢复环境时从这些文件出发。"
+      ]
+    }
+  },
+  {
+    "query_id": "q14",
+    "category": "identifier",
+    "text": "运行 python -c \"import sys; print(sys.executable)\" 能查看什么？",
+    "relevant_doc_ids": ["python/interpreter-path.md"],
+    "reasons": {
+      "python/interpreter-path.md": "给出这条完整命令，并说明它用于查看当前终端选择的 Python 解释器。"
+    },
+    "evidence": {
+      "python/interpreter-path.md": [
+        "在项目目录运行 `python -c \"import sys; print(sys.executable)\"`，可以查看当前终端选择的解释器。"
+      ]
+    }
+  },
+  {
+    "query_id": "q15",
+    "category": "identifier",
+    "text": "在本练习中，__init__.py 对 rag_knowledge_base 起什么作用？",
+    "relevant_doc_ids": ["python/package-init.md"],
+    "reasons": {
+      "python/package-init.md": "明确说明 __init__.py 将 rag_knowledge_base 标记为 Python 包。"
+    },
+    "evidence": {
+      "python/package-init.md": [
+        "本练习中的 `__init__.py` 将 `rag_knowledge_base` 标记为一个 Python 包。"
+      ]
+    }
+  },
+  {
+    "query_id": "q16",
+    "category": "identifier",
+    "text": "top-p 怎样按累计概率选出候选集合？",
+    "relevant_doc_ids": ["context/top-p.md"],
+    "reasons": {
+      "context/top-p.md": "说明先按概率排列候选，累计到门槛后保留所需集合，再从集合中采样。"
+    },
+    "evidence": {
+      "context/top-p.md": [
+        "top-p 采样先把候选按概率排列，再累计概率，保留达到门槛所需的候选集合，随后从这个集合中采样。"
+      ]
+    }
+  },
+  {
+    "query_id": "q17",
+    "category": "unanswerable",
+    "text": "这个项目使用的 Embedding 模型的向量维度是多少？",
+    "relevant_doc_ids": [],
+    "reasons": {},
+    "evidence": {},
+    "unanswerable_reason": "这 50 篇语料没有记录 Embedding 模型的名称、修订或向量维度，需要补充模型配置或模型能力说明。"
+  },
+  {
+    "query_id": "q18",
+    "category": "unanswerable",
+    "text": "temperature 的默认数值是多少？",
+    "relevant_doc_ids": [],
+    "reasons": {},
+    "evidence": {},
+    "unanswerable_reason": "语料介绍温度如何影响候选概率分布，没有给出应用或特定模型接口的默认数值，需要补充对应的参数配置或接口说明。"
+  },
+  {
+    "query_id": "q19",
+    "category": "unanswerable",
+    "text": "限流规则规定每分钟最多可发送多少次请求？",
+    "relevant_doc_ids": [],
+    "reasons": {},
+    "evidence": {},
+    "unanswerable_reason": "语料解释速率限制、并发限制和限流后的等待处理，没有提供具体时间窗口及请求次数阈值，需要补充服务端限额或应用的限流配置。"
+  },
+  {
+    "query_id": "q20",
+    "category": "unanswerable",
+    "text": "扫描版 PDF 中的图片文字应怎样识别后导入语料？",
+    "relevant_doc_ids": [],
+    "reasons": {},
+    "evidence": {},
+    "unanswerable_reason": "现有语料说明 UTF-8 文本读取和清理，没有扫描版 PDF 的解析、图片文字识别或转换流程，需要补充 PDF 与 OCR 处理资料。"
+  }
+]
