@@ -2,9 +2,9 @@
 title: Embedding 与逐篇检索
 type: concept
 area: rag
-status: learning
+status: completed
 created: 2026-11-02
-updated: 2026-11-09
+updated: 2026-11-12
 tags:
   - rag
   - embedding
