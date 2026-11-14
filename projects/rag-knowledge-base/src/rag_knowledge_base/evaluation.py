@@ -1,9 +1,11 @@
 import json
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 from rag_knowledge_base.document import Document
+from rag_knowledge_base.keyword_retrieval import search_keywords
 
 
 @dataclass
@@ -100,3 +102,96 @@ def calculate_query_metrics(
         precision=precision,
         rr=rr,
     )
+
+
+@dataclass
+class EvaluationSummary:
+    answerable_count: int
+    unanswerable_count: int
+    mean_recall: float | None
+    mean_precision: float | None
+    mrr: float | None
+
+
+def summarize_query_metrics(
+    metrics: list[QueryMetrics],
+) -> EvaluationSummary:
+    unanswerable_count = 0
+    mean_recall = None
+    mean_precision = 0.0
+    mrr = None
+    for metric in metrics:
+        if metric.recall is None:
+            unanswerable_count += 1
+        else:
+            if mean_recall is None:
+                mean_recall = 0.0
+            if mrr is None:
+                mrr = 0.0
+            mean_recall += metric.recall
+            mean_precision += metric.precision
+            mrr += metric.rr
+    mean_recall = (
+        mean_recall / (len(metrics) - unanswerable_count)
+        if mean_recall is not None and len(metrics) != unanswerable_count
+        else None
+    )
+    mean_precision = (
+        mean_precision / (len(metrics) - unanswerable_count)
+        if len(metrics) != unanswerable_count
+        else None
+    )
+    mrr = (
+        mrr / (len(metrics) - unanswerable_count)
+        if mrr is not None and len(metrics) != unanswerable_count
+        else None
+    )
+    return EvaluationSummary(
+        answerable_count=len(metrics) - unanswerable_count,
+        unanswerable_count=unanswerable_count,
+        mean_recall=mean_recall,
+        mean_precision=mean_precision,
+        mrr=mrr,
+    )
+
+
+@dataclass
+class QueryEvaluation:
+    query: EvaluationQuery
+    search_results: list[tuple[Document, float]]
+    metrics: QueryMetrics
+    elapsed_seconds: float
+
+
+def evaluate_keyword_queries(
+    documents: list[Document],
+    queries: list[EvaluationQuery],
+    k: int,
+) -> tuple[list[QueryEvaluation], EvaluationSummary]:
+    if not isinstance(k, int) or isinstance(k, bool):
+        raise TypeError(f"K must be an integer: {k}")
+    if k <= 0:
+        raise ValueError(f"K must be greater than 0: {k}")
+    query_evaluations = []
+    query_metrics = []
+    for query in queries:
+        start = time.perf_counter()
+        results: list[tuple[Document, int]] = search_keywords(documents, query.text, k)
+        end = time.perf_counter()
+        metrics = calculate_query_metrics(
+            query,
+            [document.doc_id for document, _ in results],
+            k,
+            {document.doc_id for document in documents},
+        )
+        query_evaluations.append(
+            QueryEvaluation(
+                query=query,
+                search_results=results,
+                metrics=metrics,
+                elapsed_seconds=end - start,
+            )
+        )
+        query_metrics.append(metrics)
+    evaluation_summary = summarize_query_metrics(query_metrics)
+    return query_evaluations, evaluation_summary

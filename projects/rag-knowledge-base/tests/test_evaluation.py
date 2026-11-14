@@ -1,17 +1,24 @@
-"""验证评测问题读取、单题指标计算和编号校验。"""
+"""验证评测材料、指标汇总和关键词批量评测流程。"""
 
 import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import Mock, patch
 
+from rag_knowledge_base import evaluation
 from rag_knowledge_base.document import Document
 from rag_knowledge_base.evaluation import (
     EvaluationQuery,
+    EvaluationSummary,
+    QueryEvaluation,
     QueryMetrics,
     calculate_query_metrics,
+    evaluate_keyword_queries,
     load_evaluation_queries,
+    summarize_query_metrics,
 )
+from rag_knowledge_base.keyword_retrieval import search_keywords
 
 
 class EvaluationQueryLoaderTests(unittest.TestCase):
@@ -199,6 +206,183 @@ class QueryMetricsTests(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, "Ranked document ID not found"),
                 ):
                     calculate_query_metrics(query, ranking, 2, self.valid_doc_ids)
+
+
+class EvaluationSummaryTests(unittest.TestCase):
+    def test_counts_queries_and_excludes_unanswerable_scores_from_all_means(
+        self,
+    ) -> None:
+        metrics = [
+            QueryMetrics(1, 1 / 2, 1 / 3, 1 / 2),
+            QueryMetrics(0, 0.0, 0.0, 0.0),
+            QueryMetrics(0, None, 0.0, None),
+        ]
+
+        result = summarize_query_metrics(metrics)
+
+        self.assertEqual(result, EvaluationSummary(2, 1, 1 / 4, 1 / 6, 1 / 4))
+
+    def test_averages_queries_with_equal_weight(self) -> None:
+        metrics = [
+            QueryMetrics(1, 1.0, 1 / 3, 1.0),
+            QueryMetrics(1, 1 / 3, 1 / 3, 1 / 3),
+        ]
+
+        result = summarize_query_metrics(metrics)
+
+        self.assertEqual(result.answerable_count, 2)
+        self.assertEqual(result.unanswerable_count, 0)
+        self.assertAlmostEqual(result.mean_recall, 2 / 3)
+        self.assertAlmostEqual(result.mean_precision, 1 / 3)
+        self.assertAlmostEqual(result.mrr, 2 / 3)
+
+    def test_zero_scoring_answerable_queries_have_zero_means(self) -> None:
+        metrics = [
+            QueryMetrics(0, 0.0, 0.0, 0.0),
+            QueryMetrics(0, None, 0.0, None),
+        ]
+
+        result = summarize_query_metrics(metrics)
+
+        self.assertEqual(result, EvaluationSummary(1, 1, 0.0, 0.0, 0.0))
+
+    def test_all_unanswerable_queries_have_inapplicable_means(self) -> None:
+        metrics = [
+            QueryMetrics(0, None, 0.0, None),
+            QueryMetrics(0, None, 0.0, None),
+        ]
+
+        result = summarize_query_metrics(metrics)
+
+        self.assertEqual(result, EvaluationSummary(0, 2, None, None, None))
+
+    def test_empty_input_has_zero_counts_and_inapplicable_means(self) -> None:
+        result = summarize_query_metrics([])
+
+        self.assertEqual(result, EvaluationSummary(0, 0, None, None, None))
+
+
+class KeywordEvaluationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.budget = Document("预算.md", "预算", "发送前检查上下文长度。", "预算.md")
+        self.log = Document("日志.md", "日志", "记录请求耗时与超时类别。", "日志.md")
+        self.timeout = Document("超时.md", "超时", "请求超时后有限重试。", "超时.md")
+        self.documents = [self.budget, self.log, self.timeout]
+        self.queries = [
+            EvaluationQuery("q02", "请求超时", ["超时.md", "日志.md"]),
+            EvaluationQuery("q01", "上下文", ["预算.md"]),
+            EvaluationQuery("q03", "火山", []),
+            EvaluationQuery("q04", "请求超时上限是多少", []),
+        ]
+
+    def test_runs_real_keyword_search_metrics_and_summary_for_every_query(self) -> None:
+        with patch.object(
+            evaluation.time,
+            "perf_counter",
+            side_effect=[10.0, 10.25, 20.0, 20.5, 30.0, 30.75, 40.0, 41.0],
+        ):
+            records, summary = evaluate_keyword_queries(self.documents, self.queries, 3)
+
+        self.assertEqual(
+            records,
+            [
+                QueryEvaluation(
+                    query=self.queries[0],
+                    search_results=[(self.timeout, 3), (self.log, 2)],
+                    metrics=QueryMetrics(2, 1.0, 2 / 3, 1.0),
+                    elapsed_seconds=0.25,
+                ),
+                QueryEvaluation(
+                    query=self.queries[1],
+                    search_results=[(self.budget, 2)],
+                    metrics=QueryMetrics(1, 1.0, 1 / 3, 1.0),
+                    elapsed_seconds=0.5,
+                ),
+                QueryEvaluation(
+                    query=self.queries[2],
+                    search_results=[],
+                    metrics=QueryMetrics(0, None, 0.0, None),
+                    elapsed_seconds=0.75,
+                ),
+                QueryEvaluation(
+                    query=self.queries[3],
+                    search_results=[(self.timeout, 3), (self.log, 2)],
+                    metrics=QueryMetrics(0, None, 0.0, None),
+                    elapsed_seconds=1.0,
+                ),
+            ],
+        )
+        self.assertEqual(summary, EvaluationSummary(2, 2, 1.0, 0.5, 1.0))
+
+    def test_passes_k_to_both_search_and_metrics(self) -> None:
+        records, summary = evaluate_keyword_queries(self.documents, self.queries[:1], 1)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].search_results, [(self.timeout, 3)])
+        self.assertEqual(records[0].metrics, QueryMetrics(1, 0.5, 1.0, 1.0))
+        self.assertEqual(summary, EvaluationSummary(1, 0, 0.5, 1.0, 1.0))
+
+    def test_empty_batch_returns_empty_records_and_summary(self) -> None:
+        records, summary = evaluate_keyword_queries(self.documents, [], 3)
+
+        self.assertEqual(records, [])
+        self.assertEqual(summary, EvaluationSummary(0, 0, None, None, None))
+
+    def test_invalid_k_is_rejected_before_search_even_for_an_empty_batch(self) -> None:
+        cases = (
+            (0, ValueError),
+            (-1, ValueError),
+            (1.0, TypeError),
+            (1.5, TypeError),
+            (True, TypeError),
+            (False, TypeError),
+            ("3", TypeError),
+            (None, TypeError),
+        )
+
+        with patch.object(evaluation, "search_keywords") as search:
+            for queries in ([], self.queries):
+                for k, error_type in cases:
+                    with (
+                        self.subTest(query_count=len(queries), k=k),
+                        self.assertRaises(error_type),
+                    ):
+                        evaluate_keyword_queries(self.documents, queries, k)
+            search.assert_not_called()
+
+    def test_search_and_metric_errors_propagate(self) -> None:
+        for dependency in ("search_keywords", "calculate_query_metrics"):
+            error = RuntimeError(f"simulated {dependency} failure")
+            with (
+                self.subTest(dependency=dependency),
+                patch.object(evaluation, dependency, side_effect=error) as failing_call,
+                self.assertRaises(RuntimeError) as caught,
+            ):
+                evaluate_keyword_queries(self.documents, self.queries, 3)
+
+            self.assertIs(caught.exception, error)
+            failing_call.assert_called_once()
+
+    def test_times_search_before_metric_calculation_and_summary(self) -> None:
+        tracked = Mock()
+        tracked.clock.side_effect = [10.0, 10.25]
+        tracked.search.side_effect = search_keywords
+        tracked.metrics.side_effect = calculate_query_metrics
+        tracked.summary.side_effect = summarize_query_metrics
+
+        with (
+            patch.object(evaluation.time, "perf_counter", tracked.clock),
+            patch.object(evaluation, "search_keywords", tracked.search),
+            patch.object(evaluation, "calculate_query_metrics", tracked.metrics),
+            patch.object(evaluation, "summarize_query_metrics", tracked.summary),
+        ):
+            records, _ = evaluate_keyword_queries(self.documents, self.queries[:1], 3)
+
+        self.assertEqual(
+            [entry[0] for entry in tracked.mock_calls],
+            ["clock", "search", "clock", "metrics", "summary"],
+        )
+        self.assertEqual(records[0].elapsed_seconds, 0.25)
 
 
 if __name__ == "__main__":
