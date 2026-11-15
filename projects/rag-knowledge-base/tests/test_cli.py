@@ -1,5 +1,6 @@
-"""通过命令行入口验证文档加载、两种检索方法、输出和退出状态。"""
+"""通过命令行入口验证文档加载、检索、批量评测、输出和退出状态。"""
 
+import json
 import re
 import subprocess
 import sys
@@ -11,8 +12,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, call, patch
 
 import numpy as np
-
-from rag_knowledge_base import vector_retrieval
+from rag_knowledge_base import cli, evaluation, vector_retrieval
 from rag_knowledge_base.cli import main
 
 
@@ -50,6 +50,63 @@ class CliTests(unittest.TestCase):
         for name, text in fixtures.items():
             (self.corpus_root / name).write_text(text, encoding="utf-8")
         return fixtures
+
+    def write_evaluation_queries(self) -> Path:
+        queries = [
+            {
+                "query_id": "q01",
+                "text": "请求超时",
+                "relevant_doc_ids": ["超时.md"],
+            },
+            {
+                "query_id": "q02",
+                "text": "预算",
+                "relevant_doc_ids": ["预算.md"],
+            },
+            {"query_id": "q03", "text": "火山", "relevant_doc_ids": []},
+        ]
+        path = self.working_directory / "queries.json"
+        path.write_text(json.dumps(queries, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    def assert_evaluation_output(
+        self,
+        stdout: str,
+        rankings: list[list[tuple[str, float]]],
+        metrics: list[tuple[int, float | None, float, float | None]],
+    ) -> None:
+        groups = re.findall(
+            r"^问题编号是 (\S+)，检索结果是\n(.*?)(?=^问题编号是 |^有答案的问题数量是 |\Z)",
+            stdout,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertEqual([query_id for query_id, _ in groups], ["q01", "q02", "q03"])
+        for (query_id, output), ranking, metric in zip(
+            groups, rankings, metrics, strict=True
+        ):
+            with self.subTest(query_id=query_id):
+                self.assertEqual(
+                    re.findall(r"^编号为 (\S+) 的文档", output, re.MULTILINE),
+                    [doc_id for doc_id, _ in ranking],
+                )
+                self.assertEqual(
+                    [
+                        float(score)
+                        for score in re.findall(r"匹配得分：([^\s]+)", output)
+                    ],
+                    [score for _, score in ranking],
+                )
+                hit_count, recall, precision, rr = metric
+                self.assertIn(
+                    f"命中数是 {hit_count}，recall是 {recall}，"
+                    f"precision是 {precision}，rr是 {rr}",
+                    output,
+                )
+                self.assertRegex(output, r"(?m)^耗时是 [0-9.e+-]+$")
+                if not ranking:
+                    self.assertIn("未找到匹配的文档", output)
+        self.assertIn("有答案的问题数量是 2，无答案的问题数量是 1，", stdout)
+        self.assertRegex(stdout, r"(?m)^准备耗时是 [0-9.e+-]+$")
 
     def run_main(self, *arguments: str) -> tuple[int, str, str]:
         stdout = StringIO()
@@ -133,6 +190,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("keyword", result.stdout)
         self.assertIn("vector", result.stdout)
         self.assertIn("--k", result.stdout)
+        self.assertIn("--evaluate", result.stdout)
+        self.assertIn("评测问题文件", result.stdout)
         self.assertEqual(result.stderr, "")
 
     def test_lookup_prints_matching_document_fields(self) -> None:
@@ -672,6 +731,282 @@ class CliTests(unittest.TestCase):
             ["超时.md", "日志.md"],
         )
         constructor.assert_not_called()
+
+    def test_keyword_evaluation_prints_rankings_metrics_and_summary(self) -> None:
+        self.write_course_corpus()
+        queries_path = self.write_evaluation_queries()
+
+        for k in (1, 3, 5):
+            with self.subTest(k=k):
+                arguments = ["--evaluate", str(queries_path)]
+                if k != 5:
+                    arguments.extend(("--method", "keyword", "--k", str(k)))
+                with patch("sentence_transformers.SentenceTransformer") as constructor:
+                    returncode, stdout, stderr = self.run_main(*arguments)
+
+                self.assertEqual(returncode, 0, stderr)
+                self.assertEqual(stderr, "")
+                self.assert_evaluation_output(
+                    stdout,
+                    [
+                        [("超时.md", 3), ("日志.md", 2)][:k],
+                        [("预算.md", 1)],
+                        [],
+                    ],
+                    [
+                        (1, 1.0, 1 / k, 1.0),
+                        (1, 1.0, 1 / k, 1.0),
+                        (0, None, 0.0, None),
+                    ],
+                )
+                self.assertIn(
+                    f"平均recall是 1.0，平均precision是 {1 / k}，mrr是 1.0",
+                    stdout,
+                )
+                constructor.assert_not_called()
+
+    def test_vector_evaluation_prepares_once_and_prints_each_query_result(self) -> None:
+        fixtures = self.write_course_corpus()
+        queries_path = self.write_evaluation_queries()
+
+        for k in (1, 3, 5):
+            with self.subTest(k=k):
+                model, embeddings_by_input = self.make_vector_model(fixtures)
+                embeddings_by_input["query: 预算"] = np.asarray([-1.0, 0.0])
+                embeddings_by_input["query: 火山"] = np.asarray([0.0, 1.0])
+                with patch(
+                    "sentence_transformers.SentenceTransformer", return_value=model
+                ) as constructor:
+                    returncode, stdout, stderr = self.run_main(
+                        "--evaluate",
+                        str(queries_path),
+                        "--method",
+                        "vector",
+                        "--k",
+                        str(k),
+                    )
+
+                first_metrics = (1, 1.0, 1 / k, 0.5)
+                mean_recall, mean_precision, mrr = 1.0, 1 / k, 0.75
+                if k == 1:
+                    first_metrics = (0, 0.0, 0.0, 0.0)
+                    mean_recall, mean_precision, mrr = 0.5, 0.5, 0.5
+                self.assertEqual(returncode, 0, stderr)
+                self.assertEqual(stderr, "")
+                self.assert_evaluation_output(
+                    stdout,
+                    [
+                        [("日志.md", 1.0), ("超时.md", 1.0), ("预算.md", -1.0)][:k],
+                        [("预算.md", 1.0), ("日志.md", -1.0), ("超时.md", -1.0)][:k],
+                        [("日志.md", 0.0), ("超时.md", 0.0), ("预算.md", 0.0)][:k],
+                    ],
+                    [first_metrics, (1, 1.0, 1 / k, 1.0), (0, None, 0.0, None)],
+                )
+                self.assertIn(
+                    f"平均recall是 {mean_recall}，"
+                    f"平均precision是 {mean_precision}，mrr是 {mrr}",
+                    stdout,
+                )
+                constructor.assert_called_once()
+                self.assertEqual(model.encode.call_count, len(fixtures) + 3)
+                self.assertCountEqual(
+                    model.encode.call_args_list[: len(fixtures)],
+                    [
+                        call(text, normalize_embeddings=True)
+                        for text in embeddings_by_input
+                        if text.startswith("passage: ")
+                    ],
+                )
+                self.assertEqual(
+                    model.encode.call_args_list[len(fixtures) :],
+                    [
+                        call(f"query: {text}", normalize_embeddings=True)
+                        for text in ("请求超时", "预算", "火山")
+                    ],
+                )
+                self.assertEqual(model.tokenizer.call_count, len(fixtures))
+
+    def test_evaluation_preparation_timer_includes_loading_and_stops_before_queries(
+        self,
+    ) -> None:
+        fixtures = self.write_course_corpus()
+        queries_path = self.write_evaluation_queries()
+
+        for method in ("keyword", "vector"):
+            with self.subTest(method=method):
+                model, embeddings_by_input = self.make_vector_model(fixtures)
+                embeddings_by_input["query: 预算"] = np.asarray([-1.0, 0.0])
+                embeddings_by_input["query: 火山"] = np.asarray([0.0, 1.0])
+                tracked = Mock()
+                tracked.clock.side_effect = [
+                    10.0,
+                    20.0,
+                    30.0,
+                    30.25,
+                    40.0,
+                    40.5,
+                    50.0,
+                    50.75,
+                ]
+                tracked.load_documents.side_effect = cli.load_documents
+                tracked.load_queries.side_effect = evaluation.load_evaluation_queries
+                batch_name = f"evaluate_{method}_queries"
+                tracked.batch.side_effect = getattr(evaluation, batch_name)
+                tracked.constructor.return_value = model
+                tracked.attach_mock(model.encode, "encode")
+                with (
+                    patch.object(cli.time, "perf_counter", tracked.clock),
+                    patch.object(cli, "load_documents", tracked.load_documents),
+                    patch.object(
+                        evaluation, "load_evaluation_queries", tracked.load_queries
+                    ),
+                    patch.object(evaluation, batch_name, tracked.batch),
+                    patch(
+                        "sentence_transformers.SentenceTransformer", tracked.constructor
+                    ),
+                ):
+                    returncode, stdout, stderr = self.run_main(
+                        "--evaluate", str(queries_path), "--method", method
+                    )
+
+                self.assertEqual(returncode, 0, stderr)
+                self.assertEqual(stderr, "")
+                self.assertIn("准备耗时是 10.0", stdout)
+                self.assertEqual(
+                    re.findall(r"^耗时是 (\S+)$", stdout, re.MULTILINE),
+                    ["0.25", "0.5", "0.75"],
+                )
+                names = [entry[0] for entry in tracked.mock_calls]
+                clocks = [index for index, name in enumerate(names) if name == "clock"]
+                self.assertLess(clocks[0], names.index("load_documents"))
+                self.assertLess(
+                    names.index("load_documents"), names.index("load_queries")
+                )
+                self.assertLess(names.index("load_queries"), clocks[1])
+                self.assertLess(clocks[1], names.index("batch"))
+                tracked.load_documents.assert_called_once()
+                tracked.load_queries.assert_called_once()
+                tracked.batch.assert_called_once()
+                if method == "vector":
+                    self.assertLess(names.index("constructor"), clocks[1])
+                    encodings = [
+                        index for index, name in enumerate(names) if name == "encode"
+                    ]
+                    self.assertLess(encodings[len(fixtures) - 1], clocks[1])
+                    self.assertGreater(encodings[len(fixtures)], names.index("batch"))
+
+    def test_evaluation_is_mutually_exclusive_with_query_and_document_lookup(
+        self,
+    ) -> None:
+        queries_path = self.write_evaluation_queries()
+        for option, value in (("--query", "请求超时"), ("--doc-id", "超时.md")):
+            for arguments in (
+                ("--evaluate", str(queries_path), option, value),
+                (option, value, "--evaluate", str(queries_path)),
+            ):
+                with self.subTest(arguments=arguments):
+                    returncode, stdout, stderr = self.run_main(*arguments)
+
+                    self.assertEqual(returncode, 2)
+                    self.assertEqual(stdout, "")
+                    self.assertIn("not allowed with argument", stderr)
+                    self.assertIn("--evaluate", stderr)
+                    self.assertIn(option, stderr)
+
+    def test_evaluation_rejects_invalid_k_before_loading(self) -> None:
+        queries_path = self.write_evaluation_queries()
+        for method in ("keyword", "vector"):
+            for k in ("0", "-1", "1.5", "abc"):
+                with self.subTest(method=method, k=k):
+                    with patch.object(cli, "load_documents") as loader:
+                        returncode, stdout, stderr = self.run_main(
+                            "--evaluate",
+                            str(queries_path),
+                            "--method",
+                            method,
+                            "--k",
+                            k,
+                        )
+
+                    self.assertEqual(returncode, 2)
+                    self.assertEqual(stdout, "")
+                    self.assertIn("error:", stderr)
+                    self.assertNotIn("Traceback", stderr)
+                    loader.assert_not_called()
+
+    def test_evaluation_annotation_errors_report_to_stderr_and_exit(self) -> None:
+        self.write_course_corpus()
+        queries_path = self.working_directory / "queries.json"
+        invalid_queries = {"query_id": "q01", "text": "请求超时"}
+        cases = (
+            (None, "Queries file not found"),
+            ("{", "Expecting property name"),
+            (json.dumps([invalid_queries]), "Relevant document IDs are required"),
+            (
+                json.dumps([{**invalid_queries, "relevant_doc_ids": ["missing.md"]}]),
+                "document ID not found",
+            ),
+            (json.dumps([{"query_id": "q01", "relevant_doc_ids": []}]), "'text'"),
+            (json.dumps([None]), "not subscriptable"),
+        )
+        for content, message in cases:
+            with self.subTest(message=message):
+                if content is not None:
+                    queries_path.write_text(content, encoding="utf-8")
+                returncode, stdout, stderr = self.run_main(
+                    "--evaluate", str(queries_path)
+                )
+
+                self.assertEqual(returncode, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn(message, stderr)
+                self.assertNotIn("Traceback", stderr)
+
+    def test_evaluation_runtime_failures_report_to_stderr_and_exit(self) -> None:
+        fixtures = self.write_course_corpus()
+        queries_path = self.write_evaluation_queries()
+        message = "evaluation-runtime-failure"
+        for method, phase, error_type in (
+            ("keyword", "search", RuntimeError),
+            ("vector", "model", RuntimeError),
+            ("vector", "model", ImportError),
+            ("vector", "query", RuntimeError),
+        ):
+            with self.subTest(method=method, phase=phase, error_type=error_type):
+                model, _ = self.make_vector_model(fixtures)
+                model.encode.side_effect = [
+                    np.asarray([1.0, 0.0]) for _ in fixtures
+                ] + [RuntimeError(message)]
+                with (
+                    patch(
+                        "sentence_transformers.SentenceTransformer", return_value=model
+                    ) as constructor,
+                    patch.object(
+                        evaluation, "search_keywords", side_effect=RuntimeError(message)
+                    ) as keyword_search,
+                ):
+                    if phase == "model":
+                        constructor.side_effect = error_type(message)
+                    returncode, stdout, stderr = self.run_main(
+                        "--evaluate", str(queries_path), "--method", method
+                    )
+
+                self.assertEqual(returncode, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn(message, stderr)
+                self.assertNotIn("Traceback", stderr)
+                if method == "keyword":
+                    keyword_search.assert_called_once()
+                    constructor.assert_not_called()
+                else:
+                    constructor.assert_called_once()
+                    keyword_search.assert_not_called()
+                    if phase == "query":
+                        self.assertEqual(model.encode.call_count, len(fixtures) + 1)
+                        self.assertEqual(
+                            model.encode.call_args_list[-1],
+                            call("query: 请求超时", normalize_embeddings=True),
+                        )
 
     def test_missing_root_argument_exits_with_usage_error(self) -> None:
         result = self.run_cli()

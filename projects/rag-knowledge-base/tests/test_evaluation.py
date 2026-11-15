@@ -1,11 +1,12 @@
-"""验证评测材料、指标汇总和关键词批量评测流程。"""
+"""验证评测材料、指标汇总和两种检索的批量评测流程。"""
 
 import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
+import numpy as np
 from rag_knowledge_base import evaluation
 from rag_knowledge_base.document import Document
 from rag_knowledge_base.evaluation import (
@@ -15,10 +16,12 @@ from rag_knowledge_base.evaluation import (
     QueryMetrics,
     calculate_query_metrics,
     evaluate_keyword_queries,
+    evaluate_vector_queries,
     load_evaluation_queries,
     summarize_query_metrics,
 )
 from rag_knowledge_base.keyword_retrieval import search_keywords
+from rag_knowledge_base.vector_retrieval import search_vectors
 
 
 class EvaluationQueryLoaderTests(unittest.TestCase):
@@ -381,6 +384,218 @@ class KeywordEvaluationTests(unittest.TestCase):
         self.assertEqual(
             [entry[0] for entry in tracked.mock_calls],
             ["clock", "search", "clock", "metrics", "summary"],
+        )
+        self.assertEqual(records[0].elapsed_seconds, 0.25)
+
+
+class VectorEvaluationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.timeout = Document("a.md", "超时", "请求超时后有限重试。", "a.md")
+        self.log = Document("b.md", "日志", "记录请求耗时。", "b.md")
+        self.budget = Document("c.md", "预算", "检查上下文长度。", "c.md")
+        self.documents = [self.log, self.budget, self.timeout]
+        self.document_embeddings = {
+            "b.md": [0.6, 0.8],
+            "c.md": [0.0, 1.0],
+            "a.md": [1.0, 0.0],
+        }
+        self.queries = [
+            EvaluationQuery("q02", "请求超时", ["a.md", "b.md"]),
+            EvaluationQuery("q01", "上下文", ["c.md"]),
+            EvaluationQuery("q03", "没有资料的问题", []),
+            EvaluationQuery("q04", " \t", []),
+        ]
+        query_vectors = {
+            "query: 请求超时": [1.0, 0.0],
+            "query: 上下文": [0.0, 1.0],
+            "query: 没有资料的问题": [-1.0, 0.0],
+        }
+        self.model = Mock(spec=["encode", "get_embedding_dimension"])
+        self.model.encode.side_effect = lambda text, **kwargs: np.asarray(
+            query_vectors[text], dtype=np.float32
+        )
+        self.model.get_embedding_dimension.return_value = 2
+
+    def test_runs_query_encoding_ranking_metrics_and_summary(self) -> None:
+        with patch.object(
+            evaluation.time,
+            "perf_counter",
+            side_effect=[10.0, 10.25, 20.0, 20.5, 30.0, 30.75, 40.0, 41.0],
+        ):
+            records, summary = evaluate_vector_queries(
+                self.model, self.documents, self.document_embeddings, self.queries, 3
+            )
+
+        expected_results = [
+            [(self.timeout, 1.0), (self.log, 0.6), (self.budget, 0.0)],
+            [(self.budget, 1.0), (self.log, 0.8), (self.timeout, 0.0)],
+            [(self.budget, 0.0), (self.log, -0.6), (self.timeout, -1.0)],
+            [],
+        ]
+        expected_metrics = [
+            QueryMetrics(2, 1.0, 2 / 3, 1.0),
+            QueryMetrics(1, 1.0, 1 / 3, 1.0),
+            QueryMetrics(0, None, 0.0, None),
+            QueryMetrics(0, None, 0.0, None),
+        ]
+        self.assertEqual(len(records), 4)
+        for record, query, results, metrics, elapsed in zip(
+            records,
+            self.queries,
+            expected_results,
+            expected_metrics,
+            [0.25, 0.5, 0.75, 1.0],
+            strict=True,
+        ):
+            with self.subTest(query_id=query.query_id):
+                self.assertIsInstance(record, QueryEvaluation)
+                self.assertEqual(record.query, query)
+                self.assertEqual(
+                    [document for document, _ in record.search_results],
+                    [document for document, _ in results],
+                )
+                for (_, score), (_, expected_score) in zip(
+                    record.search_results, results, strict=True
+                ):
+                    self.assertAlmostEqual(score, expected_score, delta=1e-6)
+                self.assertEqual(record.metrics, metrics)
+                self.assertEqual(record.elapsed_seconds, elapsed)
+        self.assertEqual(summary, EvaluationSummary(2, 2, 1.0, 0.5, 1.0))
+        self.assertEqual(
+            self.model.encode.call_args_list,
+            [
+                call(f"query: {query.text}", normalize_embeddings=True)
+                for query in self.queries[:3]
+            ],
+        )
+
+    def test_passes_k_to_search_and_metrics_when_k_exceeds_document_count(self) -> None:
+        cases = (
+            (1, [self.timeout], QueryMetrics(1, 0.5, 1.0, 1.0)),
+            (
+                5,
+                [self.timeout, self.log, self.budget],
+                QueryMetrics(2, 1.0, 2 / 5, 1.0),
+            ),
+        )
+        for k, expected_documents, expected_metrics in cases:
+            with self.subTest(k=k):
+                records, summary = evaluate_vector_queries(
+                    self.model,
+                    self.documents,
+                    self.document_embeddings,
+                    self.queries[:1],
+                    k,
+                )
+
+                self.assertEqual(len(records), 1)
+                self.assertEqual(
+                    [document for document, _ in records[0].search_results],
+                    expected_documents,
+                )
+                self.assertEqual(records[0].metrics, expected_metrics)
+                self.assertEqual(
+                    summary,
+                    EvaluationSummary(
+                        1,
+                        0,
+                        expected_metrics.recall,
+                        expected_metrics.precision,
+                        expected_metrics.rr,
+                    ),
+                )
+
+    def test_empty_batch_returns_empty_records_and_summary_without_encoding(
+        self,
+    ) -> None:
+        records, summary = evaluate_vector_queries(
+            self.model, self.documents, self.document_embeddings, [], 3
+        )
+
+        self.assertEqual(records, [])
+        self.assertEqual(summary, EvaluationSummary(0, 0, None, None, None))
+        self.model.encode.assert_not_called()
+
+    def test_invalid_k_raises_even_for_an_empty_batch(self) -> None:
+        cases = (
+            (0, ValueError),
+            (-1, ValueError),
+            (1.0, TypeError),
+            (1.5, TypeError),
+            (True, TypeError),
+            (False, TypeError),
+            ("3", TypeError),
+            (None, TypeError),
+        )
+        for queries in ([], self.queries):
+            for k, error_type in cases:
+                with (
+                    self.subTest(query_count=len(queries), k=k),
+                    self.assertRaises(error_type),
+                ):
+                    evaluate_vector_queries(
+                        self.model, self.documents, self.document_embeddings, queries, k
+                    )
+        self.model.encode.assert_not_called()
+
+    def test_document_embedding_id_mismatch_propagates_before_encoding(self) -> None:
+        embeddings = self.document_embeddings.copy()
+        del embeddings["b.md"]
+
+        with self.assertRaisesRegex(ValueError, "Document IDs do not match"):
+            evaluate_vector_queries(
+                self.model, self.documents, embeddings, self.queries, 3
+            )
+
+        self.model.encode.assert_not_called()
+
+    def test_encoding_and_metric_errors_propagate(self) -> None:
+        for target, dependency in (
+            (self.model, "encode"),
+            (evaluation, "calculate_query_metrics"),
+        ):
+            error = RuntimeError(f"simulated {dependency} failure")
+            with (
+                self.subTest(dependency=dependency),
+                patch.object(target, dependency, side_effect=error) as failing_call,
+                self.assertRaises(RuntimeError) as caught,
+            ):
+                evaluate_vector_queries(
+                    self.model,
+                    self.documents,
+                    self.document_embeddings,
+                    self.queries,
+                    3,
+                )
+
+            self.assertIs(caught.exception, error)
+            failing_call.assert_called_once()
+
+    def test_times_query_encoding_and_search_before_metrics_and_summary(self) -> None:
+        tracked = Mock()
+        tracked.clock.side_effect = [10.0, 10.25]
+        tracked.search.side_effect = search_vectors
+        tracked.metrics.side_effect = calculate_query_metrics
+        tracked.summary.side_effect = summarize_query_metrics
+        tracked.attach_mock(self.model.encode, "encode")
+
+        with (
+            patch.object(evaluation.time, "perf_counter", tracked.clock),
+            patch.object(evaluation, "search_vectors", tracked.search),
+            patch.object(evaluation, "calculate_query_metrics", tracked.metrics),
+            patch.object(evaluation, "summarize_query_metrics", tracked.summary),
+        ):
+            records, _ = evaluate_vector_queries(
+                self.model,
+                self.documents,
+                self.document_embeddings,
+                self.queries[:1],
+                3,
+            )
+
+        self.assertEqual(
+            [entry[0] for entry in tracked.mock_calls],
+            ["clock", "search", "encode", "clock", "metrics", "summary"],
         )
         self.assertEqual(records[0].elapsed_seconds, 0.25)
 

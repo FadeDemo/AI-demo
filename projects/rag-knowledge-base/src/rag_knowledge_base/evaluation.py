@@ -4,8 +4,11 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+from sentence_transformers import SentenceTransformer
+
 from rag_knowledge_base.document import Document
 from rag_knowledge_base.keyword_retrieval import search_keywords
+from rag_knowledge_base.vector_retrieval import search_vectors
 
 
 @dataclass
@@ -177,6 +180,44 @@ def evaluate_keyword_queries(
     for query in queries:
         start = time.perf_counter()
         results: list[tuple[Document, int]] = search_keywords(documents, query.text, k)
+        end = time.perf_counter()
+        metrics = calculate_query_metrics(
+            query,
+            [document.doc_id for document, _ in results],
+            k,
+            {document.doc_id for document in documents},
+        )
+        query_evaluations.append(
+            QueryEvaluation(
+                query=query,
+                search_results=results,
+                metrics=metrics,
+                elapsed_seconds=end - start,
+            )
+        )
+        query_metrics.append(metrics)
+    evaluation_summary = summarize_query_metrics(query_metrics)
+    return query_evaluations, evaluation_summary
+
+
+def evaluate_vector_queries(
+    model: SentenceTransformer,
+    documents: list[Document],
+    document_embeddings: dict[str, list[float]],
+    queries: list[EvaluationQuery],
+    k: int,
+) -> tuple[list[QueryEvaluation], EvaluationSummary]:
+    if not isinstance(k, int) or isinstance(k, bool):
+        raise TypeError(f"K must be an integer: {k}")
+    if k <= 0:
+        raise ValueError(f"K must be greater than 0: {k}")
+    query_evaluations = []
+    query_metrics = []
+    for query in queries:
+        start = time.perf_counter()
+        results: list[tuple[Document, float]] = search_vectors(
+            model, documents, document_embeddings, query.text, k
+        )
         end = time.perf_counter()
         metrics = calculate_query_metrics(
             query,
