@@ -2,9 +2,9 @@
 title: 检索评测
 type: concept
 area: rag
-status: learning
+status: completed
 created: 2026-11-02
-updated: 2026-11-12
+updated: 2026-11-16
 tags:
   - rag
   - evaluation
