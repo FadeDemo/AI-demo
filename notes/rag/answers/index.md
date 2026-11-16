@@ -4,7 +4,7 @@ type: index
 area: rag
 status: learning
 created: 2026-11-07
-updated: 2026-11-10
+updated: 2026-11-16
 tags:
   - rag
   - answers
@@ -19,3 +19,4 @@ tags:
 - [文档与关键词检索练习回答](retrieval-and-documents.md)
 - [向量与相似度知识检查](vectors-and-similarity.md)
 - [Embedding 与逐篇检索练习记录](embeddings-and-search.md)
+- [检索评测练习记录](retrieval-evaluation.md)
