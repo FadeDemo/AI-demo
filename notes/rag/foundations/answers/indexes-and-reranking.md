@@ -37,7 +37,7 @@ tags:
 
 ## 任务 2　根据评测记录判断下一步是否需要改动
 
-q10 问的是“每一步抽词之前，怎样把候选的概率分布调得更集中或更分散？”温度参数文档直接回答了这个问题。降低温度通常会让概率更集中，升高温度通常会让更多候选有机会被选中。另一篇 top-p 文档讲的是按累计概率保留哪些候选。人工标注只把温度参数文档列为这道题的相关文档。[温度参数原文](../../../projects/rag-knowledge-base/data/docs/context/sampling-temperature.md)、[top-p 原文](../../../projects/rag-knowledge-base/data/docs/context/top-p.md)
+q10 问的是“每一步抽词之前，怎样把候选的概率分布调得更集中或更分散？”温度参数文档直接回答了这个问题。降低温度通常会让概率更集中，升高温度通常会让更多候选有机会被选中。另一篇 top-p 文档讲的是按累计概率保留哪些候选。人工标注只把温度参数文档列为这道题的相关文档。[温度参数原文](../../../../projects/rag-knowledge-base/data/docs/context/sampling-temperature.md)、[top-p 原文](../../../../projects/rag-knowledge-base/data/docs/context/top-p.md)
 
 如果只展示第一篇，我会保留现有的关键词检索。它把温度参数文档排在第 1 名，读者打开第一篇就能找到依据。向量检索把 top-p 文档排在第 1 名，温度参数文档排在第 2 名。看整组评测也能得到同样的判断。对这批有答案的 16 道题，关键词检索每次都把相关文档排在了首位。[第四课逐题分析](retrieval-evaluation.md#原文核对与排名分析)、[整组评测结果](retrieval-evaluation.md#指标与失败记录)
 

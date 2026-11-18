@@ -1,6 +1,6 @@
 # RAG Knowledge Base
 
-本项目配套 [RAG 检索基础](../../notes/rag/index.md)，使用 Python 读取本地文档，并通过关键词或向量方法检索。
+本项目配套 [RAG 检索基础](../../notes/rag/foundations/index.md)，使用 Python 读取本地文档，并通过关键词或向量方法检索。
 
 项目使用独立虚拟环境，包含 50 篇练习文档。命令行入口可以显示载入数量和文档编号、按编号查看原文，也可以根据查询展示文档排名和匹配分数。
 
@@ -135,7 +135,7 @@ print([document.doc_id for document in documents])
 uv run rag-knowledge-base data/docs --evaluate data/evaluation/v1/queries.json --method keyword --k 3
 ```
 
-要复现关键词和向量检索在 K 为 1、3、5 时的完整对比，见[第四课评测记录](../../notes/rag/answers/retrieval-evaluation.md)中的“复现命令”。同一份报告也保存了六次运行的逐题结果，以及分析中引用的原文。
+要复现关键词和向量检索在 K 为 1、3、5 时的完整对比，见[第四课评测记录](../../notes/rag/foundations/answers/retrieval-evaluation.md)中的“复现命令”。同一份报告也保存了六次运行的逐题结果，以及分析中引用的原文。
 
 ## 测试
 
@@ -167,9 +167,9 @@ uv run python -m unittest discover -s tests -p 'test_*.py' -v
 RAG_RUN_REAL_EMBEDDING_TESTS=1 uv run python -m unittest discover -s tests -p 'test_embedding_integration.py' -v
 ```
 
-测试固定模型修订并使用 CPU，首次运行会下载模型文件到仓库根目录的 `.cache/huggingface/`。模型已缓存时，可添加 Hugging Face Hub 的 `HF_HUB_OFFLINE=1` 设置离线复测。模型配置、实际维度、两种方法的真实语料试查结果及原文核对，见[Embedding 与逐篇检索任务验收记录](../../notes/rag/answers/embeddings-and-search.md)。
+测试固定模型修订并使用 CPU，首次运行会下载模型文件到仓库根目录的 `.cache/huggingface/`。模型已缓存时，可添加 Hugging Face Hub 的 `HF_HUB_OFFLINE=1` 设置离线复测。模型配置、实际维度、两种方法的真实语料试查结果及原文核对，见[Embedding 与逐篇检索任务验收记录](../../notes/rag/foundations/answers/embeddings-and-search.md)。
 
-任务验收与试查观察见[文档与关键词检索练习回答](../../notes/rag/answers/retrieval-and-documents.md)。
+任务验收与试查观察见[文档与关键词检索练习回答](../../notes/rag/foundations/answers/retrieval-and-documents.md)。
 
 ## 代码质量检查
 

@@ -132,7 +132,7 @@ c = 1
 
 ## 6. 交互观察
 
-打开[排名融合实验](../../projects/retrieval-usage-lab/index.html#fusion)。
+打开[排名融合实验](../../../projects/retrieval-usage-lab/index.html#fusion)。
 
 1. 把 c 设为 1，逐行核对上表与最终顺序。
 2. 把 c 调到 60，观察 B 与 A、D 的相对次序，并解释每一路贡献怎样变化。

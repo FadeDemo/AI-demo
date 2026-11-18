@@ -126,7 +126,7 @@ MRR@K = 所有有答案问题的 RR@K 之和 / 有答案问题数
 
 ## 6. 交互观察
 
-打开[排名与指标实验](../../projects/retrieval-usage-lab/index.html#metrics)。固定相关文档为第二、第四份资料，使用上移和下移按钮改变顺序。
+打开[排名与指标实验](../../../projects/retrieval-usage-lab/index.html#metrics)。固定相关文档为第二、第四份资料，使用上移和下移按钮改变顺序。
 
 1. 先把 K 设为 3，记录页面的三个指标，再手算一次。
 2. 把一篇相关文档从前三篇以外移到第 3，第一篇相关文档的位置保持不变，观察 Recall 与 RR 的区别。

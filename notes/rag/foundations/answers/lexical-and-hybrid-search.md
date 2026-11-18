@@ -136,7 +136,7 @@ E 只出现在词法排名的第五位，贡献为 `1 / (c + 5)`，向量贡献�
 
 > 聊天已经显示了一半，后面的读取突然报错，这半截内容和后续重发该怎样处理？
 
-固定标注中有两篇相关文档。流中断文档说明保留已展示内容、提示回答不完整，以及停止自动重试和释放资源。重试分类文档说明是否再次发送要考虑已展示内容、剩余时间和尝试次数。[流中断原文](../../../projects/rag-knowledge-base/data/docs/output/stream-failure.md)、[重试分类原文](../../../projects/rag-knowledge-base/data/docs/requests/retryable-errors.md)
+固定标注中有两篇相关文档。流中断文档说明保留已展示内容、提示回答不完整，以及停止自动重试和释放资源。重试分类文档说明是否再次发送要考虑已展示内容、剩余时间和尝试次数。[流中断原文](../../../../projects/rag-knowledge-base/data/docs/output/stream-failure.md)、[重试分类原文](../../../../projects/rag-knowledge-base/data/docs/requests/retryable-errors.md)
 
 | 相关文档                       | 关键词排名 | 向量排名 |
 | ------------------------------ | ---------- | -------- |
