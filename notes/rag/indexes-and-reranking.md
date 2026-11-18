@@ -204,4 +204,4 @@ ANN 对精确近邻的召回
 - [hnswlib 的参数说明](https://github.com/nmslib/hnswlib/blob/master/ALGO_PARAMS.md)。
 - [Sentence Transformers 的检索与重排说明](https://sbert.net/examples/sentence_transformer/applications/retrieve_rerank/README.html)。
 
-完成后，按[专题综合验收](index.md#本阶段的综合验收)整理已有实现、实验与书面结果，再继续 RAG 实战。
+打开 [RAG 检索基础目录](index.md)，按“本阶段的综合验收”一节整理已有实现、实验与书面结果，再继续 RAG 实战。

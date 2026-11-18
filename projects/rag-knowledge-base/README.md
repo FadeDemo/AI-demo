@@ -127,6 +127,16 @@ print([document.doc_id for document in documents])
 
 当前完整语料应返回 50 条文档记录。编号由相对路径生成，返回列表按文件遍历次序排列。
 
+## 批量评测
+
+在项目目录运行下面的命令，用固定的 20 道题评测关键词检索，每题最多取 3 篇文档。输出会列出每道题的排名、指标和查询耗时，最后分别统计有答案和无答案的题数，并汇总有答案题的指标。
+
+```shell
+uv run rag-knowledge-base data/docs --evaluate data/evaluation/v1/queries.json --method keyword --k 3
+```
+
+要复现关键词和向量检索在 K 为 1、3、5 时的完整对比，见[第四课评测记录](../../notes/rag/answers/retrieval-evaluation.md)中的“复现命令”。同一份报告也保存了六次运行的逐题结果，以及分析中引用的原文。
+
 ## 测试
 
 测试使用 Python 标准库 `unittest`，在项目目录执行以下命令。
@@ -135,7 +145,7 @@ print([document.doc_id for document in documents])
 uv run python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-默认套件发现 89 项测试，其中 88 项通过，1 项真实模型集成测试按默认设置跳过。离线测试覆盖单文件和目录读取、正文清理、子目录遍历、文件筛选、编号稳定性、空文件日志，以及读取和解码失败。命令行测试通过模块入口和 `main()` 验证列表、按编号查看、两种检索方法、帮助信息和失败退出。测试自行构造练习文件。
+默认套件共 126 项，离线运行时执行 125 项，另 1 项真实模型集成测试需要单独启用。离线测试覆盖单文件和目录读取、正文清理、子目录遍历、文件筛选、编号稳定性、空文件日志，以及读取和解码失败。命令行测试通过模块入口和 `main()` 验证列表、按编号查看、单次检索、批量评测、帮助信息和失败退出。测试自行构造练习文件。
 
 命令行检索测试从查询开始，实际加载测试文件并检查排名、分数和展示字段，覆盖默认参数、同分排序、K 超过匹配数、K 为 1、空查询、无匹配与空目录。错误用例检查无效 K、不支持的方法，以及查询与按编号查看互斥时的错误类别和退出状态。
 
@@ -160,6 +170,15 @@ RAG_RUN_REAL_EMBEDDING_TESTS=1 uv run python -m unittest discover -s tests -p 't
 测试固定模型修订并使用 CPU，首次运行会下载模型文件到仓库根目录的 `.cache/huggingface/`。模型已缓存时，可添加 Hugging Face Hub 的 `HF_HUB_OFFLINE=1` 设置离线复测。模型配置、实际维度、两种方法的真实语料试查结果及原文核对，见[Embedding 与逐篇检索任务验收记录](../../notes/rag/answers/embeddings-and-search.md)。
 
 任务验收与试查观察见[文档与关键词检索练习回答](../../notes/rag/answers/retrieval-and-documents.md)。
+
+## 代码质量检查
+
+在本项目目录运行以下命令。两条命令都使用仓库中 Python 基础项目锁定的 Ruff 版本。第一条检查当前目录下的 Python 文件是否符合格式要求，第二条运行 lint。
+
+```shell
+uv run --project ../python --locked ruff format --check .
+uv run --project ../python --locked ruff check .
+```
 
 ## 切换编辑器环境
 

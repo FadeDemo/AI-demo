@@ -2,7 +2,7 @@
 title: RAG 检索基础练习回答
 type: index
 area: rag
-status: learning
+status: completed
 created: 2026-11-07
 updated: 2026-11-18
 tags:
