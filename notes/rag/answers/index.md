@@ -4,7 +4,7 @@ type: index
 area: rag
 status: learning
 created: 2026-11-07
-updated: 2026-11-17
+updated: 2026-11-18
 tags:
   - rag
   - answers
@@ -21,3 +21,4 @@ tags:
 - [Embedding 与逐篇检索练习记录](embeddings-and-search.md)
 - [检索评测练习记录](retrieval-evaluation.md)
 - [词法检索与排名融合练习回答](lexical-and-hybrid-search.md)
+- [索引、近似检索与重排练习回答](indexes-and-reranking.md)
