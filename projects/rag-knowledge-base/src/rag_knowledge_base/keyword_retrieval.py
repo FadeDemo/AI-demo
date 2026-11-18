@@ -27,7 +27,7 @@ def score_document(query_terms: set[str], document: Document) -> int:
 def search_keywords(
     documents: list[Document], query: str, k: int
 ) -> list[tuple[Document, int]]:
-    if not type(k) == int or k <= 0:
+    if type(k) is not int or k <= 0:
         raise ValueError("k must be a positive integer")
     query_terms = tokenize(query)
     results = []

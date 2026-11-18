@@ -12,7 +12,7 @@ def search_vectors(
     query: str,
     k: int,
 ) -> list[tuple[Document, float]]:
-    if not type(k) == int or k <= 0:
+    if type(k) is not int or k <= 0:
         raise ValueError("k must be a positive integer")
     results = []
     if not query.strip() or not documents:
