@@ -1,10 +1,11 @@
-"""验证单文件和目录读取的文档字段与失败行为。"""
+"""验证文档读取与从目录准备片段。"""
 
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from rag_knowledge_base.chunking import prepare_chunks
 from rag_knowledge_base.document import Document
 from rag_knowledge_base.document_loader import load_document, load_documents
 
@@ -107,6 +108,38 @@ class DocumentLoaderTests(unittest.TestCase):
 
         self.assertEqual(len(documents), len(fixtures))
         self.assertEqual({doc.doc_id: doc for doc in documents}, expected)
+
+    def test_prepares_chunks_from_a_corpus_directory(self) -> None:
+        nested = self.corpus_root / "nested"
+        nested.mkdir()
+        (self.corpus_root / "guide.md").write_text("  ABCDEFG\n", encoding="utf-8")
+        (nested / "guide.md").write_text(" HIJKL \n", encoding="utf-8")
+
+        documents, chunks = prepare_chunks(
+            self.corpus_root, document_version="v2", chunk_size=4, overlap=1
+        )
+
+        documents_by_id = {document.doc_id: document for document in documents}
+        self.assertCountEqual(
+            [(document.doc_id, document.text) for document in documents],
+            [("guide.md", "ABCDEFG"), ("nested/guide.md", "HIJKL")],
+        )
+        self.assertCountEqual(
+            [(chunk.doc_id, chunk.start, chunk.end) for chunk in chunks],
+            [
+                ("guide.md", 0, 4),
+                ("guide.md", 3, 7),
+                ("nested/guide.md", 0, 4),
+                ("nested/guide.md", 3, 5),
+            ],
+        )
+        self.assertEqual(len({chunk.chunk_id for chunk in chunks}), len(chunks))
+        for chunk in chunks:
+            with self.subTest(doc_id=chunk.doc_id, start=chunk.start):
+                document = documents_by_id[chunk.doc_id]
+                self.assertEqual(chunk.text, document.text[chunk.start : chunk.end])
+                self.assertEqual(chunk.source, document.source)
+                self.assertEqual(chunk.document_version, "v2")
 
     def test_directory_filters_file_types_and_non_files(self) -> None:
         (self.corpus_root / "folder.md").mkdir()

@@ -1,8 +1,10 @@
-"""验证固定长度切分的片段区间与边界。"""
+"""验证固定长度切分和文档片段记录。"""
 
 import unittest
+from dataclasses import replace
 
-from rag_knowledge_base.chunking import split_text
+from rag_knowledge_base.chunking import Chunk, chunk_document, split_text
+from rag_knowledge_base.document import Document
 
 
 class SplitTextTests(unittest.TestCase):
@@ -58,3 +60,52 @@ class SplitTextTests(unittest.TestCase):
             with self.subTest(chunk_size=chunk_size, overlap=overlap):
                 with self.assertRaises(error):
                     split_text("", chunk_size, overlap)
+
+
+class ChunkDocumentTests(unittest.TestCase):
+    def test_returns_exact_slices_with_document_metadata(self) -> None:
+        document = Document(
+            doc_id="guide.md",
+            title="指南",
+            text="ABCD EFG",
+            source="docs/guide.md",
+        )
+
+        chunks = chunk_document(document, "v1", 6, 2)
+
+        self.assertEqual(
+            [(chunk.start, chunk.end, chunk.text) for chunk in chunks],
+            [(0, 6, "ABCD E"), (4, 8, " EFG")],
+        )
+        self.assertEqual(len({chunk.chunk_id for chunk in chunks}), len(chunks))
+        for chunk in chunks:
+            with self.subTest(start=chunk.start):
+                self.assertIsInstance(chunk, Chunk)
+                self.assertEqual(chunk.doc_id, document.doc_id)
+                self.assertEqual(chunk.document_version, "v1")
+                self.assertEqual(chunk.title, document.title)
+                self.assertEqual(chunk.source, document.source)
+                self.assertIsNone(chunk.section)
+
+    def test_chunk_id_is_stable_and_distinguishes_inputs(self) -> None:
+        document = Document("guide.md", "指南", "ABCD", "docs/guide.md")
+        base_id = chunk_document(document, "v1", 6, 2)[0].chunk_id
+        cases = (
+            ("doc_id", replace(document, doc_id="other/guide.md"), "v1", 6, 2),
+            ("version", document, "v2", 6, 2),
+            ("chunk_size", document, "v1", 7, 2),
+            ("overlap", document, "v1", 6, 1),
+        )
+        for changed, current_document, version, chunk_size, overlap in cases:
+            with self.subTest(changed=changed):
+                chunks = chunk_document(current_document, version, chunk_size, overlap)
+                self.assertNotEqual(chunks[0].chunk_id, base_id)
+
+        self.assertEqual(chunk_document(document, "v1", 6, 2)[0].chunk_id, base_id)
+
+    def test_empty_document_still_checks_chunking_parameters(self) -> None:
+        document = Document("empty.md", "空文档", "", "docs/empty.md")
+
+        self.assertEqual(chunk_document(document, "v1", 6, 2), [])
+        with self.assertRaisesRegex(ValueError, "Overlap must be less than chunk size"):
+            chunk_document(document, "v1", 6, 6)

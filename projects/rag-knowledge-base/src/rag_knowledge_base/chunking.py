@@ -1,4 +1,23 @@
+import json
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+from rag_knowledge_base.document import Document
+from rag_knowledge_base.document_loader import load_documents
+
+
+@dataclass
+class Chunk:
+    chunk_id: str
+    doc_id: str
+    document_version: str
+    title: str
+    source: str
+    start: int
+    end: int
+    text: str
+    section: str | None = None
 
 
 def split_text(text: str, chunk_size: int, overlap: int) -> list[tuple[int, int, str]]:
@@ -27,3 +46,47 @@ def split_text(text: str, chunk_size: int, overlap: int) -> list[tuple[int, int,
         if end == len(text):
             break
     return result
+
+
+def chunk_document(
+    document: Document,
+    document_version: str,
+    chunk_size: int,
+    overlap: int,
+) -> list[Chunk]:
+    chunks = []
+    splited_text = split_text(document.text, chunk_size, overlap)
+    for start, end, text in splited_text:
+        chunk_id = {
+            "doc_id": document.doc_id,
+            "document_version": document_version,
+            "chunk_size": chunk_size,
+            "overlap": overlap,
+            "start": start,
+            "end": end,
+        }
+        chunk = Chunk(
+            chunk_id=json.dumps(chunk_id),
+            doc_id=document.doc_id,
+            document_version=document_version,
+            title=document.title,
+            source=document.source,
+            start=start,
+            end=end,
+            text=text,
+        )
+        chunks.append(chunk)
+    return chunks
+
+
+def prepare_chunks(
+    corpus_root: Path,
+    document_version: str,
+    chunk_size: int,
+    overlap: int,
+) -> tuple[list[Document], list[Chunk]]:
+    documents = load_documents(corpus_root)
+    chunks = []
+    for document in documents:
+        chunks.extend(chunk_document(document, document_version, chunk_size, overlap))
+    return documents, chunks

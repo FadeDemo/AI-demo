@@ -127,6 +127,24 @@ print([document.doc_id for document in documents])
 
 当前完整语料应返回 50 条文档记录。编号由相对路径生成，返回列表按文件遍历次序排列。
 
+### 固定长度切块
+
+在项目目录运行 `uv run python`，用下面的调用复现切块。`prepare_chunks` 返回清理后的完整文档和片段，片段的起止位置对应完整文档的正文。
+
+```python
+from pathlib import Path
+
+from rag_knowledge_base.chunking import prepare_chunks
+
+documents, chunks = prepare_chunks(
+    Path("data/docs"), document_version="v1", chunk_size=100, overlap=20
+)
+```
+
+示例用 `v1` 标记这批资料的版本。`chunk_size` 和 `overlap` 分别指定块长和相邻片段的重叠量，单位都是 Unicode 码点。
+
+后续为片段生成向量时，沿用项目给 E5 模型拼接文档输入的规则。输入依次包含 `"passage: "`、文档标题、换行和片段正文。[现有文档编码](src/rag_knowledge_base/embedding.py)
+
 ## 批量评测
 
 在项目目录运行下面的命令，用固定的 20 道题评测关键词检索，每题最多取 3 篇文档。输出会列出每道题的排名、指标和查询耗时，最后分别统计有答案和无答案的题数，并汇总有答案题的指标。
