@@ -1,5 +1,6 @@
 import re
 
+from rag_knowledge_base.chunking import Chunk
 from rag_knowledge_base.document import Document
 
 
@@ -36,4 +37,21 @@ def search_keywords(
         if score > 0:
             results.append((document, score))
     results.sort(key=lambda x: (-x[1], x[0].doc_id))
+    return results[:k]
+
+
+def search_chunk_keywords(
+    chunks: list[Chunk], query: str, k: int
+) -> list[tuple[Chunk, int]]:
+    if type(k) is not int or k <= 0:
+        raise ValueError("k must be a positive integer")
+    query_terms = tokenize(query)
+    results = []
+    for chunk in chunks:
+        text = chunk.title + "\n" + chunk.text
+        text_terms = tokenize(text)
+        score = len(query_terms & text_terms)
+        if score > 0:
+            results.append((chunk, score))
+    results.sort(key=lambda x: (-x[1], x[0].chunk_id))
     return results[:k]

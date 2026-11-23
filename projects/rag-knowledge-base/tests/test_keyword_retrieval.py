@@ -2,9 +2,11 @@
 
 import unittest
 
+from rag_knowledge_base.chunking import chunk_document
 from rag_knowledge_base.document import Document
 from rag_knowledge_base.keyword_retrieval import (
     score_document,
+    search_chunk_keywords,
     search_keywords,
     tokenize,
 )
@@ -194,6 +196,49 @@ class SearchKeywordsTests(unittest.TestCase):
                         self.assertRaises(ValueError),
                     ):
                         search_keywords(documents, query, k)
+
+
+class SearchChunkKeywordsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        document = Document("retry.md", "指南", "retry retry stop", "retry.md")
+        self.first, self.second, self.tail = chunk_document(
+            document, "v1", chunk_size=6, overlap=0
+        )
+
+    def test_keeps_tied_chunks_from_one_document_before_limiting(self) -> None:
+        first, second = sorted(
+            (self.first, self.second), key=lambda chunk: chunk.chunk_id
+        )
+        chunks = [self.tail, second, first]
+
+        self.assertEqual(
+            search_chunk_keywords(chunks, "retry", k=3), [(first, 1), (second, 1)]
+        )
+        self.assertEqual(search_chunk_keywords(chunks, "retry", k=1), [(first, 1)])
+
+    def test_ranks_by_matching_terms_from_the_title_and_chunk_text(self) -> None:
+        document = Document("timeout.md", "timeout", "retry retry", "timeout.md")
+        (best,) = chunk_document(document, "v1", chunk_size=32, overlap=0)
+
+        self.assertEqual(
+            search_chunk_keywords([self.first, best], "retry timeout", k=2),
+            [(best, 2), (self.first, 1)],
+        )
+
+    def test_returns_empty_results_for_empty_or_unmatched_queries(self) -> None:
+        for query in ("", " \t\n", "missing"):
+            with self.subTest(query=query):
+                self.assertEqual(search_chunk_keywords([self.first], query, k=2), [])
+
+        self.assertEqual(search_chunk_keywords([], "retry", k=2), [])
+
+    def test_rejects_invalid_k_even_with_no_candidates_or_query_terms(self) -> None:
+        for k in (0, -1, True, 1.0):
+            with (
+                self.subTest(k=k),
+                self.assertRaisesRegex(ValueError, "k must be a positive integer"),
+            ):
+                search_chunk_keywords([], "", k=k)
 
 
 if __name__ == "__main__":

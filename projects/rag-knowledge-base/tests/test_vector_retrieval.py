@@ -6,8 +6,9 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
+from rag_knowledge_base.chunking import chunk_document
 from rag_knowledge_base.document import Document
-from rag_knowledge_base.vector_retrieval import search_vectors
+from rag_knowledge_base.vector_retrieval import search_chunk_vectors, search_vectors
 
 ABS_TOLERANCE = 1e-6
 
@@ -174,6 +175,97 @@ class SearchVectorsTests(unittest.TestCase):
                 self.model.encode.assert_called_once_with(
                     "query: 请求超时", normalize_embeddings=True
                 )
+
+
+class SearchChunkVectorsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        document = Document("retry.md", "重试", "one two bad stop", "retry.md")
+        self.negative, first, second, self.zero = chunk_document(
+            document, "v1", chunk_size=4, overlap=0
+        )
+        self.first, self.second = sorted(
+            (first, second), key=lambda chunk: chunk.chunk_id
+        )
+        self.chunks = [self.negative, self.second, self.zero, self.first]
+        self.embeddings = {
+            self.second.chunk_id: [1.0, 0.0],
+            self.zero.chunk_id: [0.0, 1.0],
+            self.first.chunk_id: [1.0, 0.0],
+            self.negative.chunk_id: [-1.0, 0.0],
+        }
+        self.model = Mock(spec=["encode", "get_embedding_dimension"])
+        self.model.encode.return_value = np.asarray([1.0, 0.0])
+        self.model.get_embedding_dimension.return_value = 2
+
+    def test_ranks_chunks_from_one_document_before_applying_k(self) -> None:
+        expected = [
+            (self.first, 1.0),
+            (self.second, 1.0),
+            (self.zero, 0.0),
+            (self.negative, -1.0),
+        ]
+        for k in (1, 2, 5):
+            with self.subTest(k=k):
+                self.model.reset_mock()
+                results = search_chunk_vectors(
+                    self.model, self.chunks, self.embeddings, "重试", k
+                )
+
+                self.assertEqual(results, expected[:k])
+                self.model.encode.assert_called_once_with(
+                    "query: 重试", normalize_embeddings=True
+                )
+
+    def test_skips_encoding_for_blank_queries_or_an_empty_chunk_list(self) -> None:
+        self.assertEqual(
+            search_chunk_vectors(self.model, self.chunks, self.embeddings, " \n", 2),
+            [],
+        )
+        self.assertEqual(search_chunk_vectors(self.model, [], {}, "重试", 2), [])
+        self.model.encode.assert_not_called()
+
+    def test_rejects_invalid_k_before_handling_empty_inputs(self) -> None:
+        for k in (0, -1, True, 1.0):
+            with (
+                self.subTest(k=k),
+                self.assertRaisesRegex(ValueError, "k must be a positive integer"),
+            ):
+                search_chunk_vectors(self.model, [], {}, "", k)
+
+        self.model.encode.assert_not_called()
+
+    def test_rejects_mismatched_chunk_ids_before_encoding(self) -> None:
+        missing = self.embeddings.copy()
+        missing.pop(self.first.chunk_id)
+        cases = (
+            ("missing", missing),
+            ("extra", {**self.embeddings, "other": [1.0, 0.0]}),
+            ("replaced", {**missing, "other": [1.0, 0.0]}),
+        )
+        for name, embeddings in cases:
+            with (
+                self.subTest(case=name),
+                self.assertRaisesRegex(ValueError, "Chunk IDs do not match"),
+            ):
+                search_chunk_vectors(self.model, self.chunks, embeddings, "重试", 2)
+
+        self.model.encode.assert_not_called()
+
+    def test_rejects_wrong_query_vector_dimension_before_scoring(self) -> None:
+        self.model.encode.return_value = np.asarray([1.0])
+
+        with patch(
+            "rag_knowledge_base.vector_retrieval.cosine_similarity_unchecked"
+        ) as scorer:
+            with self.assertRaisesRegex(ValueError, "Embedding dimension mismatch"):
+                search_chunk_vectors(
+                    self.model, self.chunks, self.embeddings, "重试", 2
+                )
+
+            scorer.assert_not_called()
+        self.model.encode.assert_called_once_with(
+            "query: 重试", normalize_embeddings=True
+        )
 
 
 if __name__ == "__main__":

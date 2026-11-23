@@ -1,10 +1,8 @@
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from rag_knowledge_base.document import Document
-from rag_knowledge_base.document_loader import load_documents
 
 
 @dataclass
@@ -80,13 +78,12 @@ def chunk_document(
 
 
 def prepare_chunks(
-    corpus_root: Path,
+    documents: list[Document],
     document_version: str,
     chunk_size: int,
     overlap: int,
-) -> tuple[list[Document], list[Chunk]]:
-    documents = load_documents(corpus_root)
+) -> list[Chunk]:
     chunks = []
     for document in documents:
         chunks.extend(chunk_document(document, document_version, chunk_size, overlap))
-    return documents, chunks
+    return chunks

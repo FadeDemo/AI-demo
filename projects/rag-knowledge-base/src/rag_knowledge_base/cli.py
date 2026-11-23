@@ -1,10 +1,12 @@
 import time
 from argparse import ArgumentParser
+from collections.abc import Sequence
 from pathlib import Path
 
+from rag_knowledge_base.chunking import Chunk, prepare_chunks
 from rag_knowledge_base.document import Document
 from rag_knowledge_base.document_loader import load_documents
-from rag_knowledge_base.keyword_retrieval import search_keywords
+from rag_knowledge_base.keyword_retrieval import search_chunk_keywords
 
 
 def print_result(results: list[tuple[Document, float]]) -> None:
@@ -17,6 +19,18 @@ def print_result(results: list[tuple[Document, float]]) -> None:
             )
     else:
         print("未找到匹配的文档")
+
+
+def print_chunk_results(results: Sequence[tuple[Chunk, int | float]]) -> None:
+    if results:
+        for chunk, score in results:
+            print(
+                f"编号为 {chunk.chunk_id} 的chunk，标题是 {chunk.title}，"
+                f"内容是 {chunk.text}，来源是 {chunk.source}，"
+                f"匹配得分：{score}，区间是 [{chunk.start}, {chunk.end})"
+            )
+    else:
+        print("未找到匹配的chunk")
 
 
 def main() -> None:
@@ -39,17 +53,18 @@ def main() -> None:
     documents = load_documents(args.corpus_root)
     if args.query is not None:
         try:
+            chunks = prepare_chunks(documents, "v1", 100, 20)
             if args.method == "keyword":
                 for query in args.query:
-                    results = search_keywords(documents, query, args.k)
+                    results = search_chunk_keywords(chunks, query, args.k)
                     if len(args.query) > 1:
                         print(f"查询 {query}")
-                    print_result(results)
+                    print_chunk_results(results)
             elif args.method == "vector":
                 from sentence_transformers import SentenceTransformer
 
-                from rag_knowledge_base.embedding import encode_documents
-                from rag_knowledge_base.vector_retrieval import search_vectors
+                from rag_knowledge_base.embedding import encode_chunks
+                from rag_knowledge_base.vector_retrieval import search_chunk_vectors
 
                 model = SentenceTransformer(
                     "intfloat/multilingual-e5-small",
@@ -60,14 +75,14 @@ def main() -> None:
                     device="cpu",
                     token=False,
                 )
-                document_embeddings = encode_documents(model, documents)
+                chunk_embeddings = encode_chunks(model, chunks)
                 for query in args.query:
-                    results = search_vectors(
-                        model, documents, document_embeddings, query, args.k
+                    results = search_chunk_vectors(
+                        model, chunks, chunk_embeddings, query, args.k
                     )
                     if len(args.query) > 1:
                         print(f"查询 {query}")
-                    print_result(results)
+                    print_chunk_results(results)
         except ValueError as error:
             parser.error(str(error))
     elif args.doc_id is not None:

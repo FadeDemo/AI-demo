@@ -1,12 +1,19 @@
-"""验证问题与文档编码的输入、长度限制、向量校验和返回格式。"""
+"""验证问题、文档和片段编码的输入、长度限制与向量校验。"""
 
 import unittest
 from unittest.mock import Mock, call
 
 import numpy as np
 
+from rag_knowledge_base.chunking import chunk_document
 from rag_knowledge_base.document import Document
-from rag_knowledge_base.embedding import encode_document, encode_documents, encode_query
+from rag_knowledge_base.embedding import (
+    encode_chunk,
+    encode_chunks,
+    encode_document,
+    encode_documents,
+    encode_query,
+)
 
 INVALID_EMBEDDINGS = (
     ([], "empty"),
@@ -265,6 +272,65 @@ class EncodeDocumentsTests(unittest.TestCase):
                         for text in self.input_texts
                     ],
                 )
+
+
+class ChunkEncodingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        document = Document("guide.md", "指南", "one two", "guide.md")
+        self.first, self.second = chunk_document(
+            document, "v1", chunk_size=4, overlap=0
+        )
+        self.first_input = "passage: 指南\none "
+        self.model = Mock(
+            spec=["tokenizer", "encode", "max_seq_length", "get_embedding_dimension"]
+        )
+        self.model.max_seq_length = 3
+        self.model.get_embedding_dimension.return_value = 2
+        self.model.tokenizer.return_value = {"input_ids": [101, 5, 102]}
+
+    def test_encodes_complete_inputs_and_maps_vectors_by_chunk_id(self) -> None:
+        second_input = "passage: 指南\ntwo"
+        self.model.encode.side_effect = [
+            np.asarray([1.0, 0.0]),
+            np.asarray([0.0, 1.0]),
+        ]
+
+        result = encode_chunks(self.model, [self.first, self.second])
+
+        self.assertEqual(
+            result,
+            {self.first.chunk_id: [1.0, 0.0], self.second.chunk_id: [0.0, 1.0]},
+        )
+        self.assertEqual(
+            self.model.tokenizer.call_args_list,
+            [
+                call(self.first_input, truncation=False),
+                call(second_input, truncation=False),
+            ],
+        )
+        self.assertEqual(
+            self.model.encode.call_args_list,
+            [
+                call(self.first_input, normalize_embeddings=True),
+                call(second_input, normalize_embeddings=True),
+            ],
+        )
+
+    def test_rejects_an_overlength_chunk_before_encoding(self) -> None:
+        self.model.tokenizer.return_value = {"input_ids": [101, 5, 6, 102]}
+
+        with self.assertRaisesRegex(ValueError, "is too long: 4 > 3") as error:
+            encode_chunks(self.model, [self.first, self.second])
+
+        self.assertIn(f"Chunk {self.first.chunk_id}", str(error.exception))
+        self.model.tokenizer.assert_called_once_with(self.first_input, truncation=False)
+        self.model.encode.assert_not_called()
+
+    def test_rejects_a_chunk_vector_with_the_wrong_dimension(self) -> None:
+        self.model.encode.return_value = np.asarray([1.0])
+
+        with self.assertRaisesRegex(ValueError, "Embedding dimension mismatch"):
+            encode_chunk(self.model, self.first)
 
 
 if __name__ == "__main__":

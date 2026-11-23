@@ -15,6 +15,8 @@ import numpy as np
 from rag_knowledge_base import cli, evaluation, vector_retrieval
 from rag_knowledge_base.cli import main
 
+CHUNK_SOURCE_PATTERN = r"来源是 ([^，\n]+)，匹配得分：[^，\n]+，区间是 "
+
 
 class CliTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -229,7 +231,7 @@ class CliTests(unittest.TestCase):
                 self.assertIn(f"未找到编号为 {doc_id} 的文档", result.stderr)
                 self.assertEqual(result.stdout, "")
 
-    def test_search_prints_course_ranking_scores_and_document_fields(self) -> None:
+    def test_keyword_search_prints_course_ranking_and_chunk_fields(self) -> None:
         fixtures = self.write_course_corpus()
 
         result = self.run_cli(
@@ -240,30 +242,57 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertNotRegex(result.stdout, r"(?m)^查询 ")
         self.assertEqual(
-            re.findall(r"^编号为 (\S+) 的文档", result.stdout, re.MULTILINE),
+            re.findall(CHUNK_SOURCE_PATTERN, result.stdout),
             ["超时.md", "日志.md"],
         )
         for doc_id, score in (("超时.md", 3), ("日志.md", 2)):
             with self.subTest(doc_id=doc_id):
                 self.assertIn(f"标题是 {Path(doc_id).stem}，", result.stdout)
                 self.assertIn(fixtures[doc_id], result.stdout)
-                self.assertIn(f"来源是 {doc_id}，匹配得分：{score}", result.stdout)
+                self.assertIn(
+                    f"来源是 {doc_id}，匹配得分：{score}，区间是 [0, {len(fixtures[doc_id])})",
+                    result.stdout,
+                )
         self.assertNotIn("预算.md", result.stdout)
+
+    def test_keyword_search_returns_two_chunks_with_their_source_slices(self) -> None:
+        body = "开头。" * 27 + "重试。" + "后续说明。" * 8
+        (self.corpus_root / "guide.md").write_text(f"  {body}\n", encoding="utf-8")
+
+        result = self.run_cli(
+            "docs", "--query", "重试", "--method", "keyword", "--k", "2"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        matches = re.findall(
+            r"^编号为 (.+?) 的chunk，标题是 guide，内容是 (.+)，来源是 guide\.md，"
+            r"匹配得分：1，区间是 \[(\d+), (\d+)\)$",
+            result.stdout,
+            re.MULTILINE,
+        )
+        self.assertEqual(
+            [(int(start), int(end), text) for _, text, start, end in matches],
+            [(0, 100, body[:100]), (80, len(body), body[80:])],
+        )
+        self.assertEqual(len({chunk_id for chunk_id, _, _, _ in matches}), 2)
 
     def test_repeated_keyword_queries_print_independent_result_groups(self) -> None:
         fixtures = self.write_course_corpus()
         queries = ("请求超时", "", "预算", "火山", "日志", "请求超时")
-        arguments = ["docs", "--method", "keyword", "--k", "1"]
+        arguments = ["--method", "keyword", "--k", "1"]
         for query in queries:
             arguments.extend(("--query", query))
 
-        result = self.run_cli(*arguments)
+        with patch.object(cli, "prepare_chunks", wraps=cli.prepare_chunks) as prepare:
+            returncode, stdout, stderr = self.run_main(*arguments)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr, "")
+        self.assertEqual(returncode, 0, stderr)
+        self.assertEqual(stderr, "")
+        prepare.assert_called_once()
         groups = re.findall(
             r"^查询 ([^\n]*)\n(.*?)(?=^查询 |\Z)",
-            result.stdout,
+            stdout,
             re.MULTILINE | re.DOTALL,
         )
         self.assertEqual([query for query, _ in groups], list(queries))
@@ -278,11 +307,11 @@ class CliTests(unittest.TestCase):
         for (query, output), expected_results in zip(groups, expected):
             with self.subTest(query=query):
                 self.assertEqual(
-                    re.findall(r"^编号为 (\S+) 的文档", output, re.MULTILINE),
+                    re.findall(CHUNK_SOURCE_PATTERN, output),
                     [doc_id for doc_id, _ in expected_results],
                 )
                 self.assertEqual(
-                    re.findall(r"匹配得分：([^\s]+)", output),
+                    re.findall(r"匹配得分：(\d+)，区间是 ", output),
                     [str(score) for _, score in expected_results],
                 )
                 for doc_id, _ in expected_results:
@@ -290,7 +319,7 @@ class CliTests(unittest.TestCase):
                     self.assertIn(f"标题是 {Path(doc_id).stem}，", output)
                     self.assertIn(f"来源是 {doc_id}，", output)
                 if not expected_results:
-                    self.assertEqual(output, "未找到匹配的文档\n")
+                    self.assertEqual(output, "未找到匹配的chunk\n")
 
     def test_search_defaults_to_keyword_and_five_results_with_stable_ties(self) -> None:
         for name in ("f", "e", "d", "c", "b", "a"):
@@ -301,12 +330,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
         self.assertEqual(
-            re.findall(r"^编号为 (\S+) 的文档", result.stdout, re.MULTILINE),
+            re.findall(CHUNK_SOURCE_PATTERN, result.stdout),
             ["a.md", "b.md", "c.md", "d.md", "e.md"],
         )
         self.assertEqual(result.stdout.count("匹配得分：1"), 5)
 
-    def test_search_k_one_returns_only_the_highest_scoring_document(self) -> None:
+    def test_keyword_search_k_one_returns_only_the_highest_scoring_chunk(self) -> None:
         self.write_course_corpus()
 
         result = self.run_cli("docs", "--query", "请求超时", "--k", "1")
@@ -314,7 +343,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
         self.assertEqual(
-            re.findall(r"^编号为 (\S+) 的文档", result.stdout, re.MULTILINE),
+            re.findall(CHUNK_SOURCE_PATTERN, result.stdout),
             ["超时.md"],
         )
         self.assertIn("来源是 超时.md，匹配得分：3", result.stdout)
@@ -327,14 +356,14 @@ class CliTests(unittest.TestCase):
                 result = self.run_cli("docs", "--query", query)
 
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout.strip(), "未找到匹配的文档")
+                self.assertEqual(result.stdout.strip(), "未找到匹配的chunk")
                 self.assertEqual(result.stderr, "")
 
     def test_search_empty_corpus_reports_no_matches(self) -> None:
         result = self.run_cli("docs", "--query", "请求超时")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "未找到匹配的文档")
+        self.assertEqual(result.stdout.strip(), "未找到匹配的chunk")
         self.assertEqual(result.stderr, "")
 
     def test_search_invalid_k_exits_with_the_expected_error(self) -> None:
@@ -381,16 +410,27 @@ class CliTests(unittest.TestCase):
         self.assertIn("unknown", result.stderr)
         self.assertEqual(result.stdout, "")
 
-    def test_vector_search_encodes_inputs_and_prints_ranked_document_fields(
-        self,
-    ) -> None:
+    def test_vector_search_encodes_and_prints_ranked_chunks(self) -> None:
         fixtures = self.write_course_corpus()
-        expected = [("日志.md", 1.0), ("超时.md", 1.0), ("预算.md", -1.0)]
+        log_body = fixtures["日志.md"] + "\n\n" + "记录耗时和结束原因。" * 12
+        (self.corpus_root / "日志.md").write_text(f"  {log_body}\n", encoding="utf-8")
+        bodies_by_source = {**fixtures, "日志.md": log_body}
+        expected = [
+            ("日志.md", 0, 100, 1.0),
+            ("日志.md", 80, len(log_body), 1.0),
+            ("超时.md", 0, len(fixtures["超时.md"]), 1.0),
+            ("预算.md", 0, len(fixtures["预算.md"]), -1.0),
+        ]
         expected_cache = Path(__file__).resolve().parents[3] / ".cache" / "huggingface"
 
         for k in (1, 2, 5):
             with self.subTest(k=k):
                 model, embeddings_by_input = self.make_vector_model(fixtures)
+                log_vector = embeddings_by_input.pop(
+                    f"passage: 日志\n{fixtures['日志.md']}"
+                )
+                embeddings_by_input[f"passage: 日志\n{log_body[:100]}"] = log_vector
+                embeddings_by_input[f"passage: 日志\n{log_body[80:]}"] = log_vector
                 with patch(
                     "sentence_transformers.SentenceTransformer", return_value=model
                 ) as constructor:
@@ -401,21 +441,24 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(returncode, 0, stderr)
                 self.assertEqual(stderr, "")
                 self.assertNotRegex(stdout, r"(?m)^查询 ")
-                self.assertEqual(
-                    re.findall(r"^编号为 (\S+) 的文档", stdout, re.MULTILINE),
-                    [doc_id for doc_id, _ in expected[:k]],
+                displayed_chunks = re.findall(
+                    r"^编号为 (.+?) 的chunk，(.*?)(?=\n编号为 |\n\Z)",
+                    stdout,
+                    re.MULTILINE | re.DOTALL,
                 )
                 self.assertEqual(
+                    [details for _, details in displayed_chunks],
                     [
-                        float(score)
-                        for score in re.findall(r"匹配得分：([^\s]+)", stdout)
+                        f"标题是 {Path(source).stem}，"
+                        f"内容是 {bodies_by_source[source][start:end]}，来源是 {source}，"
+                        f"匹配得分：{score}，区间是 [{start}, {end})"
+                        for source, start, end, score in expected[:k]
                     ],
-                    [score for _, score in expected[:k]],
                 )
-                for doc_id, _ in expected[:k]:
-                    self.assertIn(f"标题是 {Path(doc_id).stem}，", stdout)
-                    self.assertIn(fixtures[doc_id], stdout)
-                    self.assertIn(f"来源是 {doc_id}，", stdout)
+                self.assertEqual(
+                    len({chunk_id for chunk_id, _ in displayed_chunks}),
+                    len(expected[:k]),
+                )
 
                 constructor.assert_called_once()
                 self.assertEqual(
@@ -429,7 +472,7 @@ class CliTests(unittest.TestCase):
                     Path(constructor.call_args.kwargs["cache_folder"]).resolve(),
                     expected_cache,
                 )
-                self.assertEqual(model.encode.call_count, len(fixtures) + 1)
+                self.assertEqual(model.encode.call_count, len(embeddings_by_input))
                 model.encode.assert_has_calls(
                     [
                         call(text, normalize_embeddings=True)
@@ -441,17 +484,16 @@ class CliTests(unittest.TestCase):
                     model.encode.call_args_list[-1],
                     call("query: 请求超时", normalize_embeddings=True),
                 )
-                self.assertEqual(model.tokenizer.call_count, len(fixtures))
-                model.tokenizer.assert_has_calls(
+                self.assertCountEqual(
+                    model.tokenizer.call_args_list,
                     [
                         call(text, truncation=False)
                         for text in embeddings_by_input
                         if text.startswith("passage: ")
                     ],
-                    any_order=True,
                 )
 
-    def test_repeated_vector_queries_prepare_documents_once_and_print_each_ranking(
+    def test_repeated_vector_queries_prepare_chunks_once_and_print_each_ranking(
         self,
     ) -> None:
         fixtures = self.write_course_corpus()
@@ -468,13 +510,17 @@ class CliTests(unittest.TestCase):
             )
             arguments.extend(("--query", query))
 
-        with patch(
-            "sentence_transformers.SentenceTransformer", return_value=model
-        ) as constructor:
+        with (
+            patch(
+                "sentence_transformers.SentenceTransformer", return_value=model
+            ) as constructor,
+            patch.object(cli, "prepare_chunks", wraps=cli.prepare_chunks) as prepare,
+        ):
             returncode, stdout, stderr = self.run_main(*arguments)
 
         self.assertEqual(returncode, 0, stderr)
         self.assertEqual(stderr, "")
+        prepare.assert_called_once()
         groups = re.findall(
             r"^查询 ([^\n]*)\n(.*?)(?=^查询 |\Z)",
             stdout,
@@ -489,13 +535,15 @@ class CliTests(unittest.TestCase):
         for (query, output), expected_results in zip(groups, expected):
             with self.subTest(query=query):
                 self.assertEqual(
-                    re.findall(r"^编号为 (\S+) 的文档", output, re.MULTILINE),
+                    re.findall(CHUNK_SOURCE_PATTERN, output),
                     [doc_id for doc_id, _ in expected_results],
                 )
                 self.assertEqual(
                     [
                         float(score)
-                        for score in re.findall(r"匹配得分：([^\s]+)", output)
+                        for score in re.findall(
+                            r"匹配得分：([^，\n]+)，区间是 ", output
+                        )
                     ],
                     [score for _, score in expected_results],
                 )
@@ -505,21 +553,21 @@ class CliTests(unittest.TestCase):
                     self.assertIn(f"来源是 {doc_id}，", output)
 
         constructor.assert_called_once()
-        document_inputs = [
+        chunk_inputs = [
             text for text in embeddings_by_input if text.startswith("passage: ")
         ]
-        self.assertEqual(model.encode.call_count, len(fixtures) + len(queries))
+        self.assertEqual(model.encode.call_count, len(chunk_inputs) + len(queries))
         self.assertCountEqual(
-            model.encode.call_args_list[: len(fixtures)],
-            [call(text, normalize_embeddings=True) for text in document_inputs],
+            model.encode.call_args_list[: len(chunk_inputs)],
+            [call(text, normalize_embeddings=True) for text in chunk_inputs],
         )
         self.assertEqual(
-            model.encode.call_args_list[len(fixtures) :],
+            model.encode.call_args_list[len(chunk_inputs) :],
             [call(f"query: {query}", normalize_embeddings=True) for query in queries],
         )
         self.assertCountEqual(
             model.tokenizer.call_args_list,
-            [call(text, truncation=False) for text in document_inputs],
+            [call(text, truncation=False) for text in chunk_inputs],
         )
 
     def test_vector_query_batch_handles_blank_and_repeated_queries_independently(
@@ -547,11 +595,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual([query for query, _ in groups], list(queries))
         self.assertEqual(groups[0][1], groups[3][1])
         self.assertEqual(
-            re.findall(r"^编号为 (\S+) 的文档", groups[0][1], re.MULTILINE),
+            re.findall(CHUNK_SOURCE_PATTERN, groups[0][1]),
             ["日志.md"],
         )
         for _, output in groups[1:3]:
-            self.assertEqual(output, "未找到匹配的文档\n")
+            self.assertEqual(output, "未找到匹配的chunk\n")
 
         constructor.assert_called_once()
         self.assertEqual(model.encode.call_count, len(fixtures) + 2)
@@ -583,7 +631,7 @@ class CliTests(unittest.TestCase):
                     )
 
                 self.assertEqual(returncode, 0, stderr)
-                self.assertEqual(stdout.strip(), "未找到匹配的文档")
+                self.assertEqual(stdout.strip(), "未找到匹配的chunk")
                 self.assertEqual(stderr, "")
                 self.assertEqual(
                     [
@@ -602,7 +650,7 @@ class CliTests(unittest.TestCase):
             )
 
         self.assertEqual(returncode, 0, stderr)
-        self.assertEqual(stdout.strip(), "未找到匹配的文档")
+        self.assertEqual(stdout.strip(), "未找到匹配的chunk")
         self.assertEqual(stderr, "")
         model.encode.assert_not_called()
 
@@ -639,9 +687,32 @@ class CliTests(unittest.TestCase):
                         [],
                     )
 
-    def test_vector_search_document_validation_failure_stops_scoring(self) -> None:
+    def test_vector_search_rejects_overlong_chunk_input_before_encoding(self) -> None:
+        body = "请求超时后有限重试。" * 12
+        (self.corpus_root / "guide.md").write_text(body, encoding="utf-8")
+        model, _ = self.make_vector_model({})
+        model.max_seq_length = 3
+        model.tokenizer.return_value = {"input_ids": [101, 5, 6, 102]}
+
+        with patch("sentence_transformers.SentenceTransformer", return_value=model):
+            returncode, stdout, stderr = self.run_main(
+                "--query", "请求超时", "--method", "vector"
+            )
+
+        self.assertEqual(returncode, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("Chunk ", stderr)
+        self.assertIn("guide.md", stderr)
+        self.assertIn("is too long: 4 > 3", stderr)
+        self.assertNotIn("Traceback", stderr)
+        model.tokenizer.assert_called_once_with(
+            f"passage: guide\n{body[:100]}", truncation=False
+        )
+        model.encode.assert_not_called()
+
+    def test_vector_search_chunk_validation_failure_stops_scoring(self) -> None:
         fixtures = self.write_course_corpus()
-        document_input = f"passage: 预算\n{fixtures['预算.md']}"
+        chunk_input = f"passage: 预算\n{fixtures['预算.md']}"
         cases = (
             ([0.0, 0.0], "zero"),
             ([1.0, np.nan], "finite"),
@@ -651,7 +722,7 @@ class CliTests(unittest.TestCase):
         for values, reason in cases:
             with self.subTest(values=values, reason=reason):
                 model, embeddings_by_input = self.make_vector_model(fixtures)
-                embeddings_by_input[document_input] = np.asarray(values)
+                embeddings_by_input[chunk_input] = np.asarray(values)
                 with (
                     patch(
                         "sentence_transformers.SentenceTransformer", return_value=model
@@ -669,7 +740,7 @@ class CliTests(unittest.TestCase):
                 self.assertNotIn("Traceback", stderr)
                 self.assertEqual(stdout, "")
                 self.assertIn(
-                    call(document_input, normalize_embeddings=True),
+                    call(chunk_input, normalize_embeddings=True),
                     model.encode.call_args_list,
                 )
                 self.assertEqual(
@@ -727,7 +798,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(returncode, 0, stderr)
         self.assertEqual(stderr, "")
         self.assertEqual(
-            re.findall(r"^编号为 (\S+) 的文档", stdout, re.MULTILINE),
+            re.findall(CHUNK_SOURCE_PATTERN, stdout),
             ["超时.md", "日志.md"],
         )
         constructor.assert_not_called()

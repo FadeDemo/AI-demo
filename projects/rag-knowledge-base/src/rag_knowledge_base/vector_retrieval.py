@@ -1,5 +1,6 @@
 from sentence_transformers import SentenceTransformer
 
+from rag_knowledge_base.chunking import Chunk
 from rag_knowledge_base.document import Document
 from rag_knowledge_base.embedding import encode_query
 from rag_knowledge_base.similarity import cosine_similarity_unchecked
@@ -26,4 +27,28 @@ def search_vectors(
             (next(doc for doc in documents if doc.doc_id == doc_id), similarity)
         )
     results.sort(key=lambda x: (-x[1], x[0].doc_id))
+    return results[:k]
+
+
+def search_chunk_vectors(
+    model: SentenceTransformer,
+    chunks: list[Chunk],
+    chunk_embeddings: dict[str, list[float]],
+    query: str,
+    k: int,
+) -> list[tuple[Chunk, float]]:
+    if type(k) is not int or k <= 0:
+        raise ValueError("k must be a positive integer")
+    results = []
+    if not query.strip() or not chunks:
+        return results
+    if {chunk.chunk_id for chunk in chunks} != set(chunk_embeddings):
+        raise ValueError("Chunk IDs do not match")
+    query_embedding = encode_query(model, query)
+    for chunk_id, embedding in chunk_embeddings.items():
+        similarity = cosine_similarity_unchecked(query_embedding, embedding)
+        results.append(
+            (next(chunk for chunk in chunks if chunk.chunk_id == chunk_id), similarity)
+        )
+    results.sort(key=lambda x: (-x[1], x[0].chunk_id))
     return results[:k]

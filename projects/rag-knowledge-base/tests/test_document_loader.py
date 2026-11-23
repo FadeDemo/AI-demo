@@ -115,8 +115,9 @@ class DocumentLoaderTests(unittest.TestCase):
         (self.corpus_root / "guide.md").write_text("  ABCDEFG\n", encoding="utf-8")
         (nested / "guide.md").write_text(" HIJKL \n", encoding="utf-8")
 
-        documents, chunks = prepare_chunks(
-            self.corpus_root, document_version="v2", chunk_size=4, overlap=1
+        documents = load_documents(self.corpus_root)
+        chunks = prepare_chunks(
+            documents, document_version="v2", chunk_size=4, overlap=1
         )
 
         documents_by_id = {document.doc_id: document for document in documents}
