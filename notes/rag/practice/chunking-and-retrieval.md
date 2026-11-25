@@ -2,7 +2,7 @@
 title: 文档切块与片段检索
 type: concept
 area: rag
-status: learning
+status: completed
 created: 2026-11-18
 updated: 2026-11-20
 tags:

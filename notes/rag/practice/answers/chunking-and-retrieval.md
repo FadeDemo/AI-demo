@@ -2,7 +2,7 @@
 title: 文档切块与片段检索练习记录
 type: answer
 area: rag
-status: learning
+status: completed
 created: 2026-11-23
 updated: 2026-11-23
 tags:
