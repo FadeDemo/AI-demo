@@ -4,7 +4,7 @@
 
 ## 当前能力
 
-- 使用共享包的 `Message` 和终端助手的 `ModelRequest`、`ModelResponse`、`ModelClient`，业务对话逻辑不依赖 SDK 原始响应对象。
+- 使用共享包的 `Message`、`ModelRequest` 和终端助手的 `ModelResponse`、`ModelClient`，业务对话逻辑不依赖 SDK 原始响应对象。
 - 通过 `client_factory` 按配置选择 `FakeClient` 或 `OpenAIClient`；`FakeClient` 不导入 OpenAI SDK、不调用远程生成服务，也不产生模型费用，预算计数所需资源由 `MODEL` 独立决定。
 - 支持持续进行终端对话，按发生顺序保存并回放完整轮次，包括用户消息、中间助手正文、工具请求、对应工具结果和最终助手回答。
 - 在支持 bracketed paste 的终端中，可以直接粘贴多行文本；粘贴中的换行和空行保留在同一条消息内，按 Enter 后整段发送。
@@ -62,8 +62,7 @@ src/llm_terminal_assistant/
 ├── sampling_experiment.py
 ├── stream/
 │   ├── consumer.py
-│   ├── events.py
-│   └── timing.py
+│   └── events.py
 ├── structured_output/
 │   ├── business_rules.py
 │   ├── errors.py
@@ -96,7 +95,7 @@ tests/
 - `config.py`：加载项目根目录 `.env` 和进程环境变量。
 - `conversation.py`：完整问答轮次、候选请求组装、工具结果回传和历史裁剪策略。
 - `draft_store.py` 保存内存草稿、按幂等键复用已完成结果，并拒绝同键不同正文的请求。
-- `model.py`：服务商无关的请求、响应和 usage 类型；消息、工具定义和工具调用类型来自共享包 `llm-shared`。
+- `model.py`：服务商无关的响应类型；消息、模型请求、响应结束原因和详情、用量、工具定义和工具调用类型来自共享包 `llm-shared`。
 - `prompt_experiment.py`：组合零样本或少样本 Prompt 与固定评测集，执行独立请求并保存待人工评判的实验记录。
 - `request_control.py`：模型调用和工具流程共用的取消信号、总期限检查及停止原因。
 - `request_retry.py`：重试资格判断、退避时长计算，以及受取消和总期限约束的等待。
@@ -383,7 +382,7 @@ PROVIDER=faked MODEL=fake-model STREAM_OUTPUT_ENABLED=true \
 - `ttft_seconds`：从进入单轮处理函数、开始准备请求之前，到首次将非空正文交给展示回调之前。空字符串和用量事件不触发计时，空格和换行属于正文；没有非空正文时为 `None`。
 - `total_seconds`：从同一起点到本轮最终响应确定时，包含请求准备、预算检查、各次尝试的读取、展示回调、流关闭及重试等待。等待期间取消或总期限耗尽时，更新到实际停止时刻。
 
-两项测量共用 `time.monotonic` 时钟及起点，重试不会重置起点，因此 TTFT 也包含首个正文之前的失败尝试和退避等待；测试可以注入可控时钟，无需真实等待。这一 TTFT 口径不代表服务端生成首个 Token 的内部耗时。计时数据类型位于 `stream/timing.py`，非流式响应默认不携带计时数据。
+两项测量共用 `time.monotonic` 时钟及起点，重试不会重置起点，因此 TTFT 也包含首个正文之前的失败尝试和退避等待；测试可以注入可控时钟，无需真实等待。这一 TTFT 口径不代表服务端生成首个 Token 的内部耗时。计时数据类型位于共享包的 `llm_shared.stream.timing`，非流式响应默认不携带计时数据。
 
 默认 fake 正常响应只产生一个正文增量，因此上述命令用于确认入口、开关和输出，不能单独证明多片段展示时机。预设多个增量、用量、正常终止、截断、读取异常和无终止事件的路径，由下列离线测试验证。
 

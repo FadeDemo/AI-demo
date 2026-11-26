@@ -2,6 +2,7 @@ import json
 import unittest
 
 from llm_shared.message import Message
+from llm_shared.model import ModelRequest
 from llm_shared.tools.definition import ToolDefinition
 from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 
@@ -14,7 +15,7 @@ from llm_terminal_assistant.budgeter import (
     BudgetRejectedError,
     BudgetRejectionReason,
 )
-from llm_terminal_assistant.model import ModelLimits, ModelRequest
+from llm_terminal_assistant.model import ModelLimits
 
 
 class FakeModelRequestEncoderTests(unittest.TestCase):

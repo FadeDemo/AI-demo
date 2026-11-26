@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from llm_terminal_assistant.model import (
+from llm_shared.model import (
     ModelResponseEndReason,
     ModelResponseError,
     ModelResponseIncompleteDetails,

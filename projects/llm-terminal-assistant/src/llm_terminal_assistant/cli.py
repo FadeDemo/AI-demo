@@ -8,6 +8,13 @@ from threading import Event
 from time import monotonic
 
 from llm_shared.message import Message
+from llm_shared.model import (
+    ModelInputItem,
+    ModelRequest,
+    ModelResponseEndReason,
+    ModelResponseError,
+)
+from llm_shared.stream.timing import StreamResponseTiming
 from llm_shared.tools.definition import ToolDefinition
 from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 from prompt_toolkit import PromptSession
@@ -34,13 +41,7 @@ from llm_terminal_assistant.conversation import (
     build_tool_followup_request,
     trim_history,
 )
-from llm_terminal_assistant.model import (
-    ModelInputItem,
-    ModelRequest,
-    ModelResponse,
-    ModelResponseEndReason,
-    ModelResponseError,
-)
+from llm_terminal_assistant.model import ModelResponse
 from llm_terminal_assistant.observability import observe_request
 from llm_terminal_assistant.request_control import (
     RequestStoppedError,
@@ -54,7 +55,6 @@ from llm_terminal_assistant.request_retry import (
     wait_before_retry,
 )
 from llm_terminal_assistant.stream.consumer import consume_stream
-from llm_terminal_assistant.stream.timing import StreamResponseTiming
 from llm_terminal_assistant.terminal_output import TerminalLogHandler, TerminalOutput
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.executor import ToolExecutor

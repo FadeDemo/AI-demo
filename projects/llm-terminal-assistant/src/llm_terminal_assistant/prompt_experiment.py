@@ -13,14 +13,11 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from llm_shared.message import Message
+from llm_shared.model import ModelRequest, ModelResponseEndReason
 
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import PROJECT_ROOT, ModelConfig, load_model_config
-from llm_terminal_assistant.model import (
-    ModelRequest,
-    ModelResponseEndReason,
-)
 
 DEFAULT_EVALUATION_PATH = PROJECT_ROOT / "samples" / "prompt-design" / "evaluation.json"
 DEFAULT_PROMPTS_PATH = (

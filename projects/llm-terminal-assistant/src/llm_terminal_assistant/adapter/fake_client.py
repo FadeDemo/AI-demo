@@ -1,17 +1,18 @@
 from collections import deque
 from collections.abc import AsyncGenerator
 
-from llm_terminal_assistant.client import ModelClient
-from llm_terminal_assistant.config import ModelConfig
-from llm_terminal_assistant.model import (
+from llm_shared.model import (
     InputTokensDetails,
     ModelRequest,
-    ModelResponse,
     ModelResponseEndReason,
     ModelResponseIncompleteDetails,
     ModelUsage,
     OutputTokensDetails,
 )
+
+from llm_terminal_assistant.client import ModelClient
+from llm_terminal_assistant.config import ModelConfig
+from llm_terminal_assistant.model import ModelResponse
 from llm_terminal_assistant.stream.events import (
     EndEvent,
     StreamEvent,

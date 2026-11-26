@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from llm_terminal_assistant.model import ModelLimits, ModelRequest
+from llm_shared.model import ModelRequest
+
+from llm_terminal_assistant.model import ModelLimits
 from llm_terminal_assistant.request_encoder import RequestEncoder
 from llm_terminal_assistant.token_counter import TokenCounter
 

@@ -9,6 +9,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call, patch
 
 from llm_shared.message import Message
+from llm_shared.model import (
+    InputTokensDetails,
+    ModelResponseEndReason,
+    ModelResponseError,
+    ModelResponseIncompleteDetails,
+    ModelUsage,
+    OutputTokensDetails,
+)
 from prompt_toolkit.input import create_pipe_input
 
 from llm_terminal_assistant.adapter.fake_client import FakeClient
@@ -23,16 +31,7 @@ from llm_terminal_assistant.config import (
     RequestRetryConfig,
     RequestTimeoutConfig,
 )
-from llm_terminal_assistant.model import (
-    FAKE_MODEL_PROFILE,
-    InputTokensDetails,
-    ModelLimits,
-    ModelResponseEndReason,
-    ModelResponseError,
-    ModelResponseIncompleteDetails,
-    ModelUsage,
-    OutputTokensDetails,
-)
+from llm_terminal_assistant.model import FAKE_MODEL_PROFILE, ModelLimits
 from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 
 

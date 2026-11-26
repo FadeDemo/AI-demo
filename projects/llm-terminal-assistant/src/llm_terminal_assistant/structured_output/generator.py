@@ -2,14 +2,10 @@ from dataclasses import replace
 from typing import cast
 
 from llm_shared.message import Message
+from llm_shared.model import ModelOutputFormat, ModelRequest, ModelResponseEndReason
 
 from llm_terminal_assistant.client import ModelClient
-from llm_terminal_assistant.model import (
-    ModelOutputFormat,
-    ModelRequest,
-    ModelResponse,
-    ModelResponseEndReason,
-)
+from llm_terminal_assistant.model import ModelResponse
 from llm_terminal_assistant.structured_output.errors import (
     ErrorCategory,
     StructuredOutputError,

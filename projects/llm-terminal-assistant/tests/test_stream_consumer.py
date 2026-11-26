@@ -4,11 +4,7 @@ from functools import partial
 from unittest.mock import patch
 
 from llm_shared.message import Message
-
-from llm_terminal_assistant.adapter.fake_client import FakeClient
-from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
-from llm_terminal_assistant.model import (
-    FAKE_MODEL_PROFILE,
+from llm_shared.model import (
     InputTokensDetails,
     ModelRequest,
     ModelResponseEndReason,
@@ -17,6 +13,10 @@ from llm_terminal_assistant.model import (
     ModelUsage,
     OutputTokensDetails,
 )
+
+from llm_terminal_assistant.adapter.fake_client import FakeClient
+from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
+from llm_terminal_assistant.model import FAKE_MODEL_PROFILE
 from llm_terminal_assistant.stream.consumer import consume_stream
 from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 

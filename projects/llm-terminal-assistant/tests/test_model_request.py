@@ -1,6 +1,7 @@
 import unittest
 
-from llm_terminal_assistant.model import ModelRequest
+from llm_shared.model import ModelRequest
+
 from llm_terminal_assistant.tools.factory import create_default_tool_registry
 
 

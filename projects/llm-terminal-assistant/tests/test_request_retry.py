@@ -2,8 +2,10 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+from llm_shared.model import ModelResponseEndReason
+
 from llm_terminal_assistant.config import RequestRetryConfig
-from llm_terminal_assistant.model import ModelResponse, ModelResponseEndReason
+from llm_terminal_assistant.model import ModelResponse
 from llm_terminal_assistant.request_control import (
     RequestStoppedError,
     RequestStopReason,

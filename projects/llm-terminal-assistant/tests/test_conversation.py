@@ -7,6 +7,15 @@ from threading import Event
 from unittest.mock import Mock
 
 from llm_shared.message import Message
+from llm_shared.model import (
+    InputTokensDetails,
+    ModelInputItem,
+    ModelOutputFormat,
+    ModelRequest,
+    ModelResponseEndReason,
+    ModelUsage,
+    OutputTokensDetails,
+)
 from llm_shared.tools.definition import ToolDefinition
 from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 
@@ -24,18 +33,7 @@ from llm_terminal_assistant.conversation import (
     build_tool_followup_request,
     trim_history,
 )
-from llm_terminal_assistant.model import (
-    FAKE_MODEL_PROFILE,
-    InputTokensDetails,
-    ModelInputItem,
-    ModelLimits,
-    ModelOutputFormat,
-    ModelRequest,
-    ModelResponse,
-    ModelResponseEndReason,
-    ModelUsage,
-    OutputTokensDetails,
-)
+from llm_terminal_assistant.model import FAKE_MODEL_PROFILE, ModelLimits, ModelResponse
 from llm_terminal_assistant.request_control import (
     RequestStoppedError,
     RequestStopReason,

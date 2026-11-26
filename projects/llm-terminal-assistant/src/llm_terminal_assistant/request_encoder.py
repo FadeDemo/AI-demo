@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from llm_terminal_assistant.model import ModelRequest
+from llm_shared.model import ModelRequest
 
 
 class RequestEncoder(Protocol):

@@ -2,8 +2,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from llm_shared.model import ModelRequest
+
 from llm_terminal_assistant.adapter.protocol_mapping import to_deepseek_messages
-from llm_terminal_assistant.model import ModelProfile, ModelRequest, PromptFormat
+from llm_terminal_assistant.model import ModelProfile, PromptFormat
 from llm_terminal_assistant.request_encoder import RequestEncoder
 
 _REASONING_EFFORT_MAPPING = {

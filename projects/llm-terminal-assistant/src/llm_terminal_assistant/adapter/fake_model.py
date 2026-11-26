@@ -1,10 +1,11 @@
 import json
 from dataclasses import dataclass
 
+from llm_shared.model import ModelRequest
+
 from llm_terminal_assistant.adapter.protocol_mapping import (
     to_openai_responses_input_item,
 )
-from llm_terminal_assistant.model import ModelRequest
 from llm_terminal_assistant.request_encoder import RequestEncoder
 from llm_terminal_assistant.token_counter import TokenCounter
 

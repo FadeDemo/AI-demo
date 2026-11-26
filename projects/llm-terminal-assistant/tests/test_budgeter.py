@@ -1,6 +1,7 @@
 import unittest
 
 from llm_shared.message import Message
+from llm_shared.model import ModelRequest
 from llm_shared.tools.definition import ToolDefinition
 from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 
@@ -17,7 +18,6 @@ from llm_terminal_assistant.model import (
     DEEPSEEK_V41_FLASH,
     DEEPSEEK_V41_FLASH_1017,
     ModelLimits,
-    ModelRequest,
 )
 
 

@@ -2,6 +2,7 @@ import unittest
 from copy import deepcopy
 
 from llm_shared.message import Message
+from llm_shared.model import ModelRequest
 from llm_shared.tools.definition import ToolDefinition
 from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 
@@ -9,7 +10,6 @@ from llm_terminal_assistant.adapter.protocol_mapping import (
     to_deepseek_messages,
     to_openai_responses_input_item,
 )
-from llm_terminal_assistant.model import ModelRequest
 
 
 class SharedToolProtocolMappingTests(unittest.TestCase):
