@@ -91,6 +91,8 @@ use-venv
 
 脚本不会写入 `python.defaultInterpreterPath`（该设置只在工作区从未选择过解释器时生效）。`python-envs.pythonProjects` 与 `python-envs.workspaceSearchPaths` 中只保留目标项目与目标 `.venv`，使 Python Environments 扩展重新发现目标环境；`python.analysis.extraPaths` 与 `cursorpyright.analysis.extraPaths` 同步指向目标源码目录。`python.terminal.activateEnvironment` 会让随后新建的终端自动激活所选环境，已有终端不会被追溯修改。VS Code 保留读取选择状态和调用选择命令的流程；Cursor 通过 Python Environments 的环境 API 选择目标并回读结果。不能仅因没有找到选择状态就认定成功。
 
+在 Cursor 中，辅助扩展会等待目标项目配置和 Python Environments 的项目识别结果同步后，再选择解释器。编辑器处理结束后，脚本会重新读取工作区设置；如果设置与目标不一致，则报告失败，并按已有的事务规则处理配置文件。
+
 选择 Cursor 或 `both` 时，脚本先检查 Python 环境扫描工具 `pet` 能否运行并发现目标解释器。新终端由辅助扩展使用稳定的终端接口激活，普通切换不再检查或补写 `terminalDataWriteEvent` 授权，因此 Cursor 更新覆盖应用文件不会清除这条激活路径。扫描工具有问题时，仍须显式授权扩展包修复：
 
 ```shell

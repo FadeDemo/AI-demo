@@ -36,6 +36,19 @@ run_cursor_automation() {
     fi
     print 'Cursor API select-environment' >> "$VENV_TEST_CALLS"
     print -r -- "$USE_VENV_DIRECTORY/bin/python" > "$VENV_TEST_STATE/Cursor"
+    if [[ "${VENV_TEST_STALE_PROJECT:-false}" == true ]]; then
+      python3 - "$USE_VENV_WORKSPACE_DIRECTORY/.vscode/settings.json" <<'PYTHON'
+import sys
+from pathlib import Path
+
+settings = Path(sys.argv[1])
+source = settings.read_text()
+updated = source.replace('"path": "projects/demo project"', '"path": "projects/old"')
+if updated == source:
+    raise SystemExit("Test could not replace the target project")
+settings.write_text(updated)
+PYTHON
+    fi
     print "Selected: in Cursor"
     return 0
   fi
@@ -415,6 +428,14 @@ class UseVenvTests(unittest.TestCase):
         self.assertIn("Cursor API interpreter selection failed", result.stderr)
         self.assertNotIn("Selected:", result.stdout)
         self.assertEqual(self.settings.read_text(), self.original_settings)
+
+    def test_changed_project_configuration_is_not_reported_as_success(self):
+        result = self.run_switch("--editor", "cursor", VENV_TEST_STALE_PROJECT="true")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("python-envs.pythonProjects", result.stderr)
+        self.assertIn("not rolling back", result.stderr)
+        self.assertIn('"path": "projects/old"', self.settings.read_text())
 
     def test_invalid_editor_does_not_modify_shared_files(self):
         for arguments in (("--editor", "other"), ("--editor",)):

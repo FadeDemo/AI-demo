@@ -40,8 +40,14 @@ async function dispatch(request) {
       const extension = vscode.extensions.getExtension("ms-python.vscode-python-envs");
       if (!extension) throw new Error("Python Environments is not installed");
       const api = await extension.activate();
-      if (!api?.resolveEnvironment || !api?.setEnvironment || !api?.getEnvironment)
+      if (
+        !api?.resolveEnvironment ||
+        !api?.setEnvironment ||
+        !api?.getEnvironment ||
+        !api?.getPythonProject
+      )
         throw new Error("Python Environments does not expose the required selection API");
+      await waitForProjectConfiguration(api, request.workspace, project, request.interpreter);
       const environment = await api.resolveEnvironment(vscode.Uri.file(request.interpreter));
       if (!environment) throw new Error("Python Environments could not resolve the interpreter");
       const scope = vscode.Uri.file(project);
@@ -50,6 +56,8 @@ async function dispatch(request) {
       if (selected?.execInfo?.run?.executable !== request.interpreter)
         throw new Error("Interpreter selection read-back did not match the requested path");
       await synchronizeAnalysis(request.workspace, request.interpreter);
+      if (!projectConfigurationMatches(api, request.workspace, project, request.interpreter))
+        throw new Error("Python project configuration changed during interpreter selection");
       return { interpreter: selected.execInfo.run.executable };
     }
     case "terminal-status":
@@ -83,6 +91,40 @@ function checkedProject(request) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+
+function projectConfigurationMatches(api, workspace, project, interpreter) {
+  const configuration = vscode.workspace.getConfiguration(
+    "python-envs",
+    vscode.Uri.file(workspace),
+  );
+  const projects = configuration.get("pythonProjects");
+  const searchPaths = configuration.get("workspaceSearchPaths");
+  const relativeProject = path.relative(workspace, project).split(path.sep).join("/") || ".";
+  const venv = fs.realpathSync(path.dirname(path.dirname(interpreter)));
+  const relativeVenv = "./" + path.relative(workspace, venv).split(path.sep).join("/");
+  const tracked = api.getPythonProject(vscode.Uri.file(project));
+  return (
+    Array.isArray(projects) &&
+    projects.length === 1 &&
+    projects[0]?.path === relativeProject &&
+    projects[0]?.envManager === "ms-python.python:venv" &&
+    projects[0]?.packageManager === "ms-python.python:pip" &&
+    Array.isArray(searchPaths) &&
+    searchPaths.length === 1 &&
+    searchPaths[0] === relativeVenv &&
+    tracked?.uri?.fsPath === project
+  );
+}
+
+async function waitForProjectConfiguration(api, workspace, project, interpreter) {
+  // The disk write can precede Cursor's configuration and project updates.
+  // Selecting too early can make Python Environments persist the old project list.
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (projectConfigurationMatches(api, workspace, project, interpreter)) return;
+    await sleep(100);
+  }
+  throw new Error("Cursor did not load the target Python project configuration within 5 seconds");
+}
 
 async function probeTerminal(request) {
   const project = checkedProject(request);

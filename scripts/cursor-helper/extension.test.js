@@ -10,12 +10,22 @@ function fixture({
   venv = "/workspace/project/.venv",
   closeTerminal = true,
   analysisMatches = true,
+  configurationReadyAfter = 0,
+  projectReadyAfter = 0,
+  changeProjectsOnSelect = false,
+  searchPath = "./project/.venv",
+  venvRealPath = "/workspace/project/.venv",
 } = {}) {
   const commands = [];
   const sent = [];
   let closeListener;
   let disposed = false;
   let result;
+  let configurationChecks = 0;
+  let projectChecks = 0;
+  let selectionCalls = 0;
+  let selectionChecks;
+  let projectPath = "project";
   const terminal = {
     processId: Promise.resolve(123),
     sendText(command) {
@@ -29,8 +39,15 @@ function fixture({
   };
   const api = {
     resolveEnvironment: async () => ({ id: "environment" }),
-    setEnvironment: async () => {},
+    setEnvironment: async () => {
+      selectionCalls++;
+      selectionChecks = { configurationChecks, projectChecks };
+      if (changeProjectsOnSelect) projectPath = "old-project";
+    },
     getEnvironment: async () => ({ execInfo: { run: { executable: selected } } }),
+    getPythonProject: () => ({
+      uri: { fsPath: ++projectChecks > projectReadyAfter ? "/workspace/project" : "/workspace" },
+    }),
   };
   let analysisInterpreter;
   const analysisUpdates = [];
@@ -61,7 +78,22 @@ function fixture({
   const vscode = {
     workspace: {
       workspaceFolders: [{ uri: { fsPath: "/workspace" } }],
-      getConfiguration: () => ({ get: () => ["${workspaceFolder}/project/.venv/bin/python"] }),
+      getConfiguration: (section) => ({
+        get: (key) => {
+          if (section !== "python-envs") return ["${workspaceFolder}/project/.venv/bin/python"];
+          if (key === "pythonProjects") {
+            configurationChecks++;
+            return [
+              {
+                path: configurationChecks > configurationReadyAfter ? projectPath : "old-project",
+                envManager: "ms-python.python:venv",
+                packageManager: "ms-python.python:pip",
+              },
+            ];
+          }
+          return [searchPath];
+        },
+      }),
       onDidChangeConfiguration: (fn) => subscribe(configListeners, fn),
     },
     env: { appName: "Visual Studio Code" },
@@ -85,7 +117,7 @@ function fixture({
     },
   };
   const fakeFs = {
-    realpathSync: (value) => value,
+    realpathSync: (value) => (value === "/workspace/project/.venv" ? venvRealPath : value),
     existsSync: () => true,
     mkdtempSync: () => "/private/probe",
     readFileSync: () => JSON.stringify(result),
@@ -137,6 +169,10 @@ function fixture({
     warnings,
     sent,
     disposed: () => disposed,
+    configurationChecks: () => configurationChecks,
+    projectChecks: () => projectChecks,
+    selectionCalls: () => selectionCalls,
+    selectionChecks: () => selectionChecks,
   };
 }
 
@@ -162,6 +198,65 @@ test("project must belong to workspace", async () => {
     fixture().dispatch({ ...request, project: "/workspace-other", action: "select" }),
     /outside/,
   );
+});
+
+test("selection waits for both the target configuration and tracked project", async () => {
+  const value = fixture({ configurationReadyAfter: 2, projectReadyAfter: 3 });
+  await value.dispatch({ ...request, action: "select" });
+  assert.ok(value.configurationChecks() > 2);
+  assert.ok(value.projectChecks() > 3);
+  assert.ok(value.selectionChecks().configurationChecks > 2);
+  assert.ok(value.selectionChecks().projectChecks > 3);
+  assert.equal(value.selectionCalls(), 1);
+});
+
+test("selection fails without changing environment if the project configuration stays stale", async () => {
+  const value = fixture({ configurationReadyAfter: Infinity });
+  await assert.rejects(value.dispatch({ ...request, action: "select" }), /did not load/);
+  assert.equal(value.selectionCalls(), 0);
+});
+
+test("selection fails if the project configuration changes during the API call", async () => {
+  const value = fixture({ changeProjectsOnSelect: true });
+  await assert.rejects(value.dispatch({ ...request, action: "select" }), /configuration changed/);
+  assert.equal(value.selectionCalls(), 1);
+});
+
+test("selection waits for the target environment search path", async () => {
+  const value = fixture({ searchPath: "./old-project/.venv" });
+  await assert.rejects(value.dispatch({ ...request, action: "select" }), /did not load/);
+  assert.equal(value.selectionCalls(), 0);
+});
+
+test("selection supports a project at the workspace root", async () => {
+  const interpreter = "/workspace/.venv/bin/python";
+  const value = fixture({ selected: interpreter });
+  value.api.getPythonProject = () => ({ uri: { fsPath: "/workspace" } });
+  value.vscode.workspace.getConfiguration = () => ({
+    get: (key) =>
+      key === "pythonProjects"
+        ? [
+            {
+              path: ".",
+              envManager: "ms-python.python:venv",
+              packageManager: "ms-python.python:pip",
+            },
+          ]
+        : ["./.venv"],
+  });
+  await value.dispatch({
+    workspace: "/workspace",
+    project: "/workspace",
+    interpreter,
+    action: "select",
+  });
+  assert.equal(value.selectionCalls(), 1);
+});
+
+test("selection resolves a symlinked virtual environment in the search path", async () => {
+  const value = fixture({ searchPath: "./shared-venv", venvRealPath: "/workspace/shared-venv" });
+  await value.dispatch({ ...request, action: "select" });
+  assert.equal(value.selectionCalls(), 1);
 });
 
 test("probe observes activation and disposes only its terminal", async () => {
