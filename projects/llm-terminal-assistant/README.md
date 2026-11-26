@@ -4,7 +4,7 @@
 
 ## 当前能力
 
-- 使用共享包的 `Message`、`ModelRequest` 和终端助手的 `ModelResponse`、`ModelClient`，业务对话逻辑不依赖 SDK 原始响应对象。
+- 使用共享包的 `Message`、`ModelRequest`、`ModelResponse` 和终端助手的 `ModelClient`，业务对话逻辑不依赖 SDK 原始响应对象。
 - 通过 `client_factory` 按配置选择 `FakeClient` 或 `OpenAIClient`；`FakeClient` 不导入 OpenAI SDK、不调用远程生成服务，也不产生模型费用，预算计数所需资源由 `MODEL` 独立决定。
 - 支持持续进行终端对话，按发生顺序保存并回放完整轮次，包括用户消息、中间助手正文、工具请求、对应工具结果和最终助手回答。
 - 在支持 bracketed paste 的终端中，可以直接粘贴多行文本；粘贴中的换行和空行保留在同一条消息内，按 Enter 后整段发送。
@@ -61,8 +61,7 @@ src/llm_terminal_assistant/
 ├── request_retry.py
 ├── sampling_experiment.py
 ├── stream/
-│   ├── consumer.py
-│   └── events.py
+│   └── consumer.py
 ├── structured_output/
 │   ├── business_rules.py
 │   ├── errors.py
@@ -95,12 +94,12 @@ tests/
 - `config.py`：加载项目根目录 `.env` 和进程环境变量。
 - `conversation.py`：完整问答轮次、候选请求组装、工具结果回传和历史裁剪策略。
 - `draft_store.py` 保存内存草稿、按幂等键复用已完成结果，并拒绝同键不同正文的请求。
-- `model.py`：服务商无关的响应类型；消息、模型请求、响应结束原因和详情、用量、工具定义和工具调用类型来自共享包 `llm-shared`。
+- `model.py`：模型档案、限制和生成参数配置；消息、模型请求与响应、用量、工具定义和工具调用类型来自共享包 `llm-shared`。
 - `prompt_experiment.py`：组合零样本或少样本 Prompt 与固定评测集，执行独立请求并保存待人工评判的实验记录。
 - `request_control.py`：模型调用和工具流程共用的取消信号、总期限检查及停止原因。
 - `request_retry.py`：重试资格判断、退避时长计算，以及受取消和总期限约束的等待。
 - `sampling_experiment.py`：用固定输入重复执行彼此独立的单变量请求，并逐条保存实验记录。
-- `stream/`：应用流事件协议、增量消费与流关闭，以及流式响应的计时数据。
+- `stream/`：流式响应的增量消费与流关闭；事件协议和计时类型来自共享包 `llm-shared`。
 - `structured_output/`：学习卡片的四步验证流水线、稳定错误类别、安全日志和项目类型。
 - `token_counter.py`：Token 计数器协议。
 - `token_count_cli.py`：读取四类固定样本并输出字符数、Token 数和计数环境元数据。

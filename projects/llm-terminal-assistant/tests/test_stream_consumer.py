@@ -13,12 +13,12 @@ from llm_shared.model import (
     ModelUsage,
     OutputTokensDetails,
 )
+from llm_shared.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 
 from llm_terminal_assistant.adapter.fake_client import FakeClient
 from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
 from llm_terminal_assistant.model import FAKE_MODEL_PROFILE
 from llm_terminal_assistant.stream.consumer import consume_stream
-from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 
 
 async def recording_stream(events, reads, closures):

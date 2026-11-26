@@ -12,6 +12,7 @@ from llm_shared.model import (
     ModelInputItem,
     ModelOutputFormat,
     ModelRequest,
+    ModelResponse,
     ModelResponseEndReason,
     ModelUsage,
     OutputTokensDetails,
@@ -33,7 +34,7 @@ from llm_terminal_assistant.conversation import (
     build_tool_followup_request,
     trim_history,
 )
-from llm_terminal_assistant.model import FAKE_MODEL_PROFILE, ModelLimits, ModelResponse
+from llm_terminal_assistant.model import FAKE_MODEL_PROFILE, ModelLimits
 from llm_terminal_assistant.request_control import (
     RequestStoppedError,
     RequestStopReason,

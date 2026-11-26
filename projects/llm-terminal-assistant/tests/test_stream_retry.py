@@ -17,6 +17,7 @@ from llm_shared.model import (
     ModelUsage,
     OutputTokensDetails,
 )
+from llm_shared.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 from prompt_toolkit.input import create_pipe_input
 
 from llm_terminal_assistant.adapter.fake_client import FakeClient
@@ -32,7 +33,6 @@ from llm_terminal_assistant.config import (
     RequestTimeoutConfig,
 )
 from llm_terminal_assistant.model import FAKE_MODEL_PROFILE, ModelLimits
-from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 
 
 def failed_event(reason, retry_after=None):

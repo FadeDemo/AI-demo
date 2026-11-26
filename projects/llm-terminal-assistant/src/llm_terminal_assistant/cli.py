@@ -11,6 +11,7 @@ from llm_shared.message import Message
 from llm_shared.model import (
     ModelInputItem,
     ModelRequest,
+    ModelResponse,
     ModelResponseEndReason,
     ModelResponseError,
 )
@@ -41,7 +42,6 @@ from llm_terminal_assistant.conversation import (
     build_tool_followup_request,
     trim_history,
 )
-from llm_terminal_assistant.model import ModelResponse
 from llm_terminal_assistant.observability import observe_request
 from llm_terminal_assistant.request_control import (
     RequestStoppedError,

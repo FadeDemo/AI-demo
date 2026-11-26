@@ -2,10 +2,9 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from random import uniform
 
-from llm_shared.model import ModelResponseEndReason
+from llm_shared.model import ModelResponse, ModelResponseEndReason
 
 from llm_terminal_assistant.config import RequestRetryConfig
-from llm_terminal_assistant.model import ModelResponse
 from llm_terminal_assistant.request_control import (
     RequestStoppedError,
     RequestStopReason,

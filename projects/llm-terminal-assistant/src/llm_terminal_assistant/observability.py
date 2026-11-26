@@ -8,8 +8,9 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
+from llm_shared.model import ModelResponse
+
 from llm_terminal_assistant.budgeter import BudgetRejectedError
-from llm_terminal_assistant.model import ModelResponse
 from llm_terminal_assistant.request_control import RequestStoppedError
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError
 

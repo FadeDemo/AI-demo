@@ -3,7 +3,12 @@ from dataclasses import dataclass, replace
 from threading import Event
 
 from llm_shared.message import Message
-from llm_shared.model import ModelInputItem, ModelRequest, ModelResponseEndReason
+from llm_shared.model import (
+    ModelInputItem,
+    ModelRequest,
+    ModelResponse,
+    ModelResponseEndReason,
+)
 from llm_shared.tools.definition import ToolDefinition
 
 from llm_terminal_assistant.budgeter import (
@@ -12,7 +17,6 @@ from llm_terminal_assistant.budgeter import (
     BudgetRejectionReason,
     BudgetResult,
 )
-from llm_terminal_assistant.model import ModelResponse
 from llm_terminal_assistant.request_control import (
     check_request_cancelled,
     check_request_deadline,

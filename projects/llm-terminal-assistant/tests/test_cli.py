@@ -14,12 +14,14 @@ from llm_shared.message import Message
 from llm_shared.model import (
     InputTokensDetails,
     ModelRequest,
+    ModelResponse,
     ModelResponseEndReason,
     ModelResponseError,
     ModelResponseIncompleteDetails,
     ModelUsage,
     OutputTokensDetails,
 )
+from llm_shared.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import DummyInput, create_pipe_input
@@ -49,12 +51,11 @@ from llm_terminal_assistant.config import (
     RequestTimeoutConfig,
 )
 from llm_terminal_assistant.conversation import ConversationTurn
-from llm_terminal_assistant.model import FAKE_MODEL_PROFILE, ModelLimits, ModelResponse
+from llm_terminal_assistant.model import FAKE_MODEL_PROFILE, ModelLimits
 from llm_terminal_assistant.request_control import (
     RequestStoppedError,
     RequestStopReason,
 )
-from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.factory import create_default_tool_registry
 from llm_terminal_assistant.tools.loop import ToolLoopLimits

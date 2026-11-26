@@ -1,27 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
-
-from llm_shared.model import (
-    ModelResponseEndReason,
-    ModelResponseError,
-    ModelResponseIncompleteDetails,
-    ModelUsage,
-)
-from llm_shared.stream.timing import StreamResponseTiming
-from llm_shared.tools.protocol import ToolCallRequest
-
-
-@dataclass
-class ModelResponse:
-    text: str
-    reason: ModelResponseEndReason
-    usage: ModelUsage | None
-    tool_calls: list[ToolCallRequest] = field(default_factory=list)
-    error: ModelResponseError | None = None
-    incomplete_details: ModelResponseIncompleteDetails | None = None
-    timing: StreamResponseTiming | None = None
 
 
 @dataclass(frozen=True)

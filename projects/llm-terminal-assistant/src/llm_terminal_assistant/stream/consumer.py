@@ -1,17 +1,16 @@
 from asyncio import CancelledError, create_task, shield, timeout
 from collections.abc import AsyncGenerator, Callable
 
-from llm_shared.model import ModelResponseEndReason, ModelResponseError
-from llm_shared.stream.timing import StreamResponseTiming
-
-from llm_terminal_assistant.config import RequestTimeoutConfig
-from llm_terminal_assistant.model import ModelResponse
-from llm_terminal_assistant.stream.events import (
+from llm_shared.model import ModelResponse, ModelResponseEndReason, ModelResponseError
+from llm_shared.stream.events import (
     EndEvent,
     StreamEvent,
     TextDeltaEvent,
     UsageEvent,
 )
+from llm_shared.stream.timing import StreamResponseTiming
+
+from llm_terminal_assistant.config import RequestTimeoutConfig
 
 _TIMEOUT_MESSAGES = {
     ModelResponseEndReason.FIRST_EVENT_TIMEOUT: "Timed out waiting for the first stream event.",

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from llm_shared.model import (
     InputTokensDetails,
     ModelRequest,
+    ModelResponse,
     ModelResponseEndReason,
     ModelResponseIncompleteDetails,
     ModelUsage,
@@ -11,7 +12,7 @@ from llm_shared.model import (
 )
 
 from llm_terminal_assistant.config import ModelConfig
-from llm_terminal_assistant.model import DEEPSEEK_V41_FLASH, ModelResponse
+from llm_terminal_assistant.model import DEEPSEEK_V41_FLASH
 from llm_terminal_assistant.sampling_experiment import (
     ExperimentInput,
     run_experiment,

@@ -11,6 +11,7 @@ from llm_shared.model import (
     ModelResponseError,
     ModelResponseIncompleteDetails,
 )
+from llm_shared.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 from llm_shared.tools.definition import ToolDefinition
 from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 
@@ -23,7 +24,6 @@ from llm_terminal_assistant.model import (
     DEEPSEEK_V41_FLASH_1017,
 )
 from llm_terminal_assistant.stream.consumer import consume_stream
-from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 
 
 class RecordingStream:

@@ -10,11 +10,13 @@ from unittest.mock import Mock, patch
 from llm_shared.message import Message
 from llm_shared.model import (
     InputTokensDetails,
+    ModelResponse,
     ModelResponseEndReason,
     ModelResponseError,
     ModelUsage,
     OutputTokensDetails,
 )
+from llm_shared.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 from llm_shared.tools.definition import ToolDefinition
 from llm_shared.tools.protocol import ToolCallRequest
 
@@ -33,9 +35,8 @@ from llm_terminal_assistant.config import (
     RequestRetryConfig,
     RequestTimeoutConfig,
 )
-from llm_terminal_assistant.model import FAKE_MODEL_PROFILE, ModelLimits, ModelResponse
+from llm_terminal_assistant.model import FAKE_MODEL_PROFILE, ModelLimits
 from llm_terminal_assistant.request_control import RequestStoppedError
-from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
 from llm_terminal_assistant.tools.definition import RegisteredTool
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError
 from llm_terminal_assistant.tools.executor import ToolExecutor

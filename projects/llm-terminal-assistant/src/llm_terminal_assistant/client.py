@@ -1,11 +1,10 @@
 from collections.abc import AsyncGenerator
 from typing import Protocol
 
-from llm_shared.model import ModelRequest
+from llm_shared.model import ModelRequest, ModelResponse
+from llm_shared.stream.events import StreamEvent
 
 from llm_terminal_assistant.config import ModelConfig
-from llm_terminal_assistant.model import ModelResponse
-from llm_terminal_assistant.stream.events import StreamEvent
 
 
 class ModelClient(Protocol):

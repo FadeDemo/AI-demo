@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Literal
 
 from llm_shared.message import Message
+from llm_shared.stream.timing import StreamResponseTiming
 from llm_shared.tools.definition import ToolDefinition
 from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 
@@ -81,3 +82,14 @@ class ModelResponseError:
 @dataclass
 class ModelResponseIncompleteDetails:
     reason: Literal["max_output_tokens", "content_filter"]
+
+
+@dataclass
+class ModelResponse:
+    text: str
+    reason: ModelResponseEndReason
+    usage: ModelUsage | None
+    tool_calls: list[ToolCallRequest] = field(default_factory=list)
+    error: ModelResponseError | None = None
+    incomplete_details: ModelResponseIncompleteDetails | None = None
+    timing: StreamResponseTiming | None = None

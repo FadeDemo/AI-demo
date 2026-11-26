@@ -7,11 +7,18 @@ from httpx import ReadTimeout, Timeout
 from llm_shared.model import (
     InputTokensDetails,
     ModelRequest,
+    ModelResponse,
     ModelResponseEndReason,
     ModelResponseError,
     ModelResponseIncompleteDetails,
     ModelUsage,
     OutputTokensDetails,
+)
+from llm_shared.stream.events import (
+    EndEvent,
+    StreamEvent,
+    TextDeltaEvent,
+    UsageEvent,
 )
 from llm_shared.tools.protocol import ToolCallRequest
 from openai import APIConnectionError, APIStatusError
@@ -21,13 +28,6 @@ from llm_terminal_assistant.adapter.protocol_mapping import (
 )
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.config import ModelConfig
-from llm_terminal_assistant.model import ModelResponse
-from llm_terminal_assistant.stream.events import (
-    EndEvent,
-    StreamEvent,
-    TextDeltaEvent,
-    UsageEvent,
-)
 
 if TYPE_CHECKING:
     from openai.types.responses import Response

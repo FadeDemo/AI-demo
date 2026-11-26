@@ -5,13 +5,13 @@ from llm_shared.message import Message
 from llm_shared.model import (
     InputTokensDetails,
     ModelRequest,
+    ModelResponse,
     ModelResponseEndReason,
     ModelResponseIncompleteDetails,
     ModelUsage,
     OutputTokensDetails,
 )
 
-from llm_terminal_assistant.model import ModelResponse
 from llm_terminal_assistant.structured_output.errors import (
     ErrorCategory,
     StructuredOutputError,

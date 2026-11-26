@@ -9,6 +9,7 @@ from unittest.mock import Mock, mock_open, patch
 from llm_shared.model import (
     InputTokensDetails,
     ModelRequest,
+    ModelResponse,
     ModelResponseEndReason,
     ModelResponseIncompleteDetails,
     ModelUsage,
@@ -16,7 +17,7 @@ from llm_shared.model import (
 )
 
 from llm_terminal_assistant.config import ModelConfig
-from llm_terminal_assistant.model import DEEPSEEK_V41_FLASH, ModelResponse
+from llm_terminal_assistant.model import DEEPSEEK_V41_FLASH
 from llm_terminal_assistant.prompt_experiment import (
     DEFAULT_EVALUATION_PATH,
     DEFAULT_PROMPTS_PATH,
