@@ -7,6 +7,10 @@ from io import StringIO
 from threading import Event
 from unittest.mock import Mock, patch
 
+from llm_shared.message import Message
+from llm_shared.tools.definition import ToolDefinition
+from llm_shared.tools.protocol import ToolCallRequest
+
 from llm_terminal_assistant.adapter.fake_client import FakeClient
 from llm_terminal_assistant.adapter.fake_model import (
     CodePointTokenCounter,
@@ -22,7 +26,6 @@ from llm_terminal_assistant.config import (
     RequestRetryConfig,
     RequestTimeoutConfig,
 )
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     FAKE_MODEL_PROFILE,
     InputTokensDetails,
@@ -35,11 +38,10 @@ from llm_terminal_assistant.model import (
 )
 from llm_terminal_assistant.request_control import RequestStoppedError
 from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
-from llm_terminal_assistant.tools.definition import RegisteredTool, ToolDefinition
+from llm_terminal_assistant.tools.definition import RegisteredTool
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError
 from llm_terminal_assistant.tools.executor import ToolExecutor
 from llm_terminal_assistant.tools.loop import ToolLoopLimits
-from llm_terminal_assistant.tools.protocol import ToolCallRequest
 from llm_terminal_assistant.tools.registry import ToolRegistry
 
 AUTH = "FAKE_AUTH_KEY_TASK2_DO_NOT_LOG"

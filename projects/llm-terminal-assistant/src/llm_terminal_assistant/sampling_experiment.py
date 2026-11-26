@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from llm_shared.message import Message
+
 from llm_terminal_assistant.client import ModelClient
 from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import PROJECT_ROOT, ModelConfig, load_model_config
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     ModelRequest,
     ModelResponseEndReason,

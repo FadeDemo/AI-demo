@@ -2,10 +2,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from llm_shared.tools.definition import ToolDefinition
+
 from llm_terminal_assistant.tools.definition import (
     RegisteredTool,
     ToolArguments,
-    ToolDefinition,
     ToolOutput,
 )
 from llm_terminal_assistant.tools.errors import InvalidToolArgumentsError

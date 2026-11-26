@@ -10,6 +10,7 @@ requires-python = ">=3.13"
 dependencies = [
   "httpx>=0.28.1",
   "jsonschema>=4.25,<5",
+  "llm-shared",
   "prompt-toolkit>=3.0.50,<4",
   "python-dotenv>=1.2.2",
 ]
@@ -43,3 +44,6 @@ ignore = ["RUF002", "RUF003"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.uv.sources]
+llm-shared = { path = "../llm-shared", editable = true }

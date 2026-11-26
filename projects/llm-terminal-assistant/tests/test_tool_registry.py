@@ -1,9 +1,10 @@
 import unittest
 
+from llm_shared.tools.definition import ToolDefinition
+
 from llm_terminal_assistant.tools.definition import (
     RegisteredTool,
     ToolArguments,
-    ToolDefinition,
     ToolHandler,
     ToolOutput,
 )

@@ -1,6 +1,7 @@
-from llm_terminal_assistant.message import Message
+from llm_shared.message import Message
+from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
+
 from llm_terminal_assistant.model import ModelInputItem, ModelRequest
-from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 
 def to_openai_responses_input_item(item: ModelInputItem) -> dict[str, object]:

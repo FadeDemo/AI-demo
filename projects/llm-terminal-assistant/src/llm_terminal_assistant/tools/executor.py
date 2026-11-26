@@ -4,6 +4,10 @@ from dataclasses import dataclass
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
+from llm_shared.tools.protocol import (
+    ToolCallRequest,
+    ToolCallResult,
+)
 
 from llm_terminal_assistant.tools.definition import ToolArguments, ToolOutput
 from llm_terminal_assistant.tools.errors import (
@@ -14,10 +18,6 @@ from llm_terminal_assistant.tools.errors import (
     UnknownToolError,
 )
 from llm_terminal_assistant.tools.loop import ToolExecutionBudget
-from llm_terminal_assistant.tools.protocol import (
-    ToolCallRequest,
-    ToolCallResult,
-)
 from llm_terminal_assistant.tools.registry import RegisteredTool, ToolRegistry
 
 logger = logging.getLogger(__name__)

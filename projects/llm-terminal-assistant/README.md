@@ -4,7 +4,7 @@
 
 ## 当前能力
 
-- 使用项目自己的 `Message`、`ModelRequest`、`ModelResponse` 和 `ModelClient`，业务对话逻辑不依赖 SDK 原始响应对象。
+- 使用共享包的 `Message` 和终端助手的 `ModelRequest`、`ModelResponse`、`ModelClient`，业务对话逻辑不依赖 SDK 原始响应对象。
 - 通过 `client_factory` 按配置选择 `FakeClient` 或 `OpenAIClient`；`FakeClient` 不导入 OpenAI SDK、不调用远程生成服务，也不产生模型费用，预算计数所需资源由 `MODEL` 独立决定。
 - 支持持续进行终端对话，按发生顺序保存并回放完整轮次，包括用户消息、中间助手正文、工具请求、对应工具结果和最终助手回答。
 - 在支持 bracketed paste 的终端中，可以直接粘贴多行文本；粘贴中的换行和空行保留在同一条消息内，按 Enter 后整段发送。
@@ -33,6 +33,8 @@
 
 知识库独立运行时，RAG 实战第 2 课的 `/retrieve` 路由也会调用同一套检索逻辑。[基于资料回答与 API](../../notes/rag/practice/grounded-generation-and-api.md#5-用-http-把流程交给调用方)
 
+完成 RAG 实战七课和综合验收后，按[实战目录](../../notes/rag/practice/index.md)中的“综合接入任务”将文档搜索接入终端对话。
+
 ## 项目结构
 
 ```text
@@ -53,7 +55,6 @@ src/llm_terminal_assistant/
 ├── config.py
 ├── conversation.py
 ├── draft_store.py
-├── message.py
 ├── model.py
 ├── prompt_experiment.py
 ├── request_control.py
@@ -95,7 +96,7 @@ tests/
 - `config.py`：加载项目根目录 `.env` 和进程环境变量。
 - `conversation.py`：完整问答轮次、候选请求组装、工具结果回传和历史裁剪策略。
 - `draft_store.py` 保存内存草稿、按幂等键复用已完成结果，并拒绝同键不同正文的请求。
-- `message.py`、`model.py`：服务商无关的消息、请求、响应、usage 和工具请求结构。
+- `model.py`：服务商无关的请求、响应和 usage 类型；消息、工具定义和工具调用类型来自共享包 `llm-shared`。
 - `prompt_experiment.py`：组合零样本或少样本 Prompt 与固定评测集，执行独立请求并保存待人工评判的实验记录。
 - `request_control.py`：模型调用和工具流程共用的取消信号、总期限检查及停止原因。
 - `request_retry.py`：重试资格判断、退避时长计算，以及受取消和总期限约束的等待。
@@ -104,7 +105,7 @@ tests/
 - `structured_output/`：学习卡片的四步验证流水线、稳定错误类别、安全日志和项目类型。
 - `token_counter.py`：Token 计数器协议。
 - `token_count_cli.py`：读取四类固定样本并输出字符数、Token 数和计数环境元数据。
-- `tools/`：工具定义、注册表、参数校验与执行、调用与结果协议，以及循环限制和执行预算。
+- `tools/`：工具注册、注册表、参数校验与执行，以及循环限制和执行预算。
 - `adapter/`：fake、OpenAI、DeepSeek 请求编码和 Hugging Face tokenizer 的具体适配实现。
 - `tests/`：完全离线的预算边界、生成调用拦截、工具执行与连续回传、fake-model、OpenAI 请求映射、学习卡片 Schema 和验证流水线测试。
 

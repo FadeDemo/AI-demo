@@ -2,10 +2,11 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 
+from llm_shared.message import Message
+
 from llm_terminal_assistant.adapter.fake_client import FakeClient
 from llm_terminal_assistant.cli import output_model_response
 from llm_terminal_assistant.config import ModelConfig
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     FAKE_MODEL_PROFILE,
     InputTokensDetails,

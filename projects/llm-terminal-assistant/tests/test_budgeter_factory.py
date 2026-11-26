@@ -1,11 +1,12 @@
 import unittest
 from unittest.mock import patch
 
+from llm_shared.message import Message
+
 from llm_terminal_assistant.budgeter_factory import create_budgeter
 from llm_terminal_assistant.cli import send_conversation_turn
 from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import ModelConfig
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import FAKE_MODEL_ID, FAKE_MODEL_PROFILE
 
 

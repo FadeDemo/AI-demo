@@ -1,4 +1,6 @@
-from llm_terminal_assistant.tools.definition import RegisteredTool, ToolDefinition
+from llm_shared.tools.definition import ToolDefinition
+
+from llm_terminal_assistant.tools.definition import RegisteredTool
 from llm_terminal_assistant.tools.errors import UnknownToolError
 
 

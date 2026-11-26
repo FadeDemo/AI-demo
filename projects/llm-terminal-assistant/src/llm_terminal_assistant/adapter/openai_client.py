@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
 from httpx import ReadTimeout, Timeout
+from llm_shared.tools.protocol import ToolCallRequest
 from openai import APIConnectionError, APIStatusError
 
 from llm_terminal_assistant.adapter.protocol_mapping import (
@@ -27,7 +28,6 @@ from llm_terminal_assistant.stream.events import (
     TextDeltaEvent,
     UsageEvent,
 )
-from llm_terminal_assistant.tools.protocol import ToolCallRequest
 
 if TYPE_CHECKING:
     from openai.types.responses import Response

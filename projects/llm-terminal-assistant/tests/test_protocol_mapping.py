@@ -1,11 +1,39 @@
 import unittest
 from copy import deepcopy
 
-from llm_terminal_assistant.adapter.protocol_mapping import to_deepseek_messages
-from llm_terminal_assistant.message import Message
+from llm_shared.message import Message
+from llm_shared.tools.definition import ToolDefinition
+from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
+
+from llm_terminal_assistant.adapter.protocol_mapping import (
+    to_deepseek_messages,
+    to_openai_responses_input_item,
+)
 from llm_terminal_assistant.model import ModelRequest
-from llm_terminal_assistant.tools.definition import ToolDefinition
-from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
+
+
+class SharedToolProtocolMappingTests(unittest.TestCase):
+    def test_shared_call_and_result_can_be_mapped_to_model_input(self):
+        call = ToolCallRequest("call-1", "clock", '{"timezone":"UTC"}')
+        result = ToolCallResult(call.call_id, '{"time":"12:00"}')
+
+        self.assertEqual(
+            to_openai_responses_input_item(call),
+            {
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "clock",
+                "arguments": '{"timezone":"UTC"}',
+            },
+        )
+        self.assertEqual(
+            to_openai_responses_input_item(result),
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": '{"time":"12:00"}',
+            },
+        )
 
 
 class DeepSeekMessageMappingTests(unittest.TestCase):

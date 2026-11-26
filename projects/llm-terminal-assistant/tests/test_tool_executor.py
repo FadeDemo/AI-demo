@@ -1,10 +1,12 @@
 import json
 import unittest
 
+from llm_shared.tools.definition import ToolDefinition
+from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
+
 from llm_terminal_assistant.tools.definition import (
     RegisteredTool,
     ToolArguments,
-    ToolDefinition,
     ToolOutput,
 )
 from llm_terminal_assistant.tools.errors import (
@@ -15,7 +17,6 @@ from llm_terminal_assistant.tools.errors import (
 )
 from llm_terminal_assistant.tools.executor import ToolExecutor
 from llm_terminal_assistant.tools.loop import ToolExecutionBudget
-from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 from llm_terminal_assistant.tools.registry import ToolRegistry
 
 

@@ -7,6 +7,9 @@ from dataclasses import replace
 from threading import Event
 from time import monotonic
 
+from llm_shared.message import Message
+from llm_shared.tools.definition import ToolDefinition
+from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding.key_processor import KeyPress
 from prompt_toolkit.keys import Keys
@@ -31,7 +34,6 @@ from llm_terminal_assistant.conversation import (
     build_tool_followup_request,
     trim_history,
 )
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     ModelInputItem,
     ModelRequest,
@@ -54,7 +56,6 @@ from llm_terminal_assistant.request_retry import (
 from llm_terminal_assistant.stream.consumer import consume_stream
 from llm_terminal_assistant.stream.timing import StreamResponseTiming
 from llm_terminal_assistant.terminal_output import TerminalLogHandler, TerminalOutput
-from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.executor import ToolExecutor
 from llm_terminal_assistant.tools.factory import create_default_tool_registry
@@ -62,7 +63,6 @@ from llm_terminal_assistant.tools.loop import (
     ToolExecutionBudget,
     ToolLoopLimits,
 )
-from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 from llm_terminal_assistant.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)

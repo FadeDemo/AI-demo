@@ -2,13 +2,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from threading import Event
 
+from llm_shared.message import Message
+from llm_shared.tools.definition import ToolDefinition
+
 from llm_terminal_assistant.budgeter import (
     Budgeter,
     BudgetRejectedError,
     BudgetRejectionReason,
     BudgetResult,
 )
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     ModelInputItem,
     ModelRequest,
@@ -19,7 +21,6 @@ from llm_terminal_assistant.request_control import (
     check_request_cancelled,
     check_request_deadline,
 )
-from llm_terminal_assistant.tools.definition import ToolDefinition
 from llm_terminal_assistant.tools.executor import ToolExecutor
 from llm_terminal_assistant.tools.loop import ToolExecutionBudget
 

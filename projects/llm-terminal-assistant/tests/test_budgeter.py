@@ -1,5 +1,9 @@
 import unittest
 
+from llm_shared.message import Message
+from llm_shared.tools.definition import ToolDefinition
+from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
+
 from llm_terminal_assistant.adapter.deepseek_prompt_encoder import (
     create_deepseek_request_encoder,
 )
@@ -8,7 +12,6 @@ from llm_terminal_assistant.budgeter import (
     BudgetRejectedError,
     BudgetRejectionReason,
 )
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     DEEPSEEK_V4_FLASH,
     DEEPSEEK_V41_FLASH,
@@ -16,8 +19,6 @@ from llm_terminal_assistant.model import (
     ModelLimits,
     ModelRequest,
 )
-from llm_terminal_assistant.tools.definition import ToolDefinition
-from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 
 class FixedTokenCounter:

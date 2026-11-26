@@ -8,6 +8,7 @@ from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call, patch
 
+from llm_shared.message import Message
 from prompt_toolkit.input import create_pipe_input
 
 from llm_terminal_assistant.adapter.fake_client import FakeClient
@@ -22,7 +23,6 @@ from llm_terminal_assistant.config import (
     RequestRetryConfig,
     RequestTimeoutConfig,
 )
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     FAKE_MODEL_PROFILE,
     InputTokensDetails,

@@ -10,6 +10,8 @@ from threading import Event, get_ident
 from types import SimpleNamespace
 from unittest.mock import DEFAULT, AsyncMock, Mock, patch
 
+from llm_shared.message import Message
+from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import DummyInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -38,7 +40,6 @@ from llm_terminal_assistant.config import (
     RequestTimeoutConfig,
 )
 from llm_terminal_assistant.conversation import ConversationTurn
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     FAKE_MODEL_PROFILE,
     InputTokensDetails,
@@ -59,7 +60,6 @@ from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, Usage
 from llm_terminal_assistant.tools.errors import ToolLoopStoppedError, ToolLoopStopReason
 from llm_terminal_assistant.tools.factory import create_default_tool_registry
 from llm_terminal_assistant.tools.loop import ToolLoopLimits
-from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 
 def make_response(text: str, calls: list[ToolCallRequest] | None = None):

@@ -3,10 +3,13 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from llm_shared.message import Message
+from llm_shared.tools.definition import ToolDefinition
+from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
+
 from llm_terminal_assistant.adapter.openai_client import OpenAIClient
 from llm_terminal_assistant.client_factory import create_model_client
 from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     DEEPSEEK_V4_FLASH,
     DEEPSEEK_V41_FLASH,
@@ -19,8 +22,6 @@ from llm_terminal_assistant.model import (
 )
 from llm_terminal_assistant.stream.consumer import consume_stream
 from llm_terminal_assistant.stream.events import EndEvent, TextDeltaEvent, UsageEvent
-from llm_terminal_assistant.tools.definition import ToolDefinition
-from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 
 class RecordingStream:

@@ -1,6 +1,10 @@
 import json
 import unittest
 
+from llm_shared.message import Message
+from llm_shared.tools.definition import ToolDefinition
+from llm_shared.tools.protocol import ToolCallRequest, ToolCallResult
+
 from llm_terminal_assistant.adapter.fake_model import (
     CodePointTokenCounter,
     FakeModelRequestEncoder,
@@ -10,10 +14,7 @@ from llm_terminal_assistant.budgeter import (
     BudgetRejectedError,
     BudgetRejectionReason,
 )
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import ModelLimits, ModelRequest
-from llm_terminal_assistant.tools.definition import ToolDefinition
-from llm_terminal_assistant.tools.protocol import ToolCallRequest, ToolCallResult
 
 
 class FakeModelRequestEncoderTests(unittest.TestCase):

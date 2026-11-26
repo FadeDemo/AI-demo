@@ -1,7 +1,8 @@
 import json
 import unittest
 
-from llm_terminal_assistant.message import Message
+from llm_shared.message import Message
+
 from llm_terminal_assistant.model import (
     InputTokensDetails,
     ModelRequest,

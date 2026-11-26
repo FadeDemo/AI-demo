@@ -3,9 +3,10 @@ import unittest
 from functools import partial
 from unittest.mock import patch
 
+from llm_shared.message import Message
+
 from llm_terminal_assistant.adapter.fake_client import FakeClient
 from llm_terminal_assistant.config import ModelConfig, RequestTimeoutConfig
-from llm_terminal_assistant.message import Message
 from llm_terminal_assistant.model import (
     FAKE_MODEL_PROFILE,
     InputTokensDetails,
